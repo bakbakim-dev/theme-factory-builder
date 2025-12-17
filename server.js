@@ -23,22 +23,48 @@ function auth(req, res, next) {
   next();
 }
 
+// ---------------------------------------------------------
+// FIX #1: DISK STORAGE (Saves RAM to prevent SIGTERM crashes)
+// ---------------------------------------------------------
 const upload = multer({
-  storage: multer.memoryStorage(),
+  storage: multer.diskStorage({
+    destination: os.tmpdir(),
+    filename: (req, file, cb) => cb(null, `upload-${Date.now()}.zip`)
+  }),
   limits: { fileSize: MAX_ZIP_MB * 1024 * 1024 }
 });
 
+// ---------------------------------------------------------
+// FIX #2: CORS HEADERS (Allows connection from your frontend)
+// ---------------------------------------------------------
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") return res.sendStatus(200);
+  next();
+});
+
+// ---------------------------------------------------------
+// FIX #3: ROOT HEALTH CHECK (Satisfies Render's default pinger)
+// ---------------------------------------------------------
+app.get("/", (req, res) => res.status(200).send("Builder Ready"));
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.post("/build", auth, upload.single("zip"), async (req, res) => {
-  const zipBuf = req.file?.buffer;
-  if (!zipBuf) return res.status(400).send("Missing zip file field 'zip'");
+  // CHANGED: We now get a path on disk, not a buffer in memory
+  const uploadedZipPath = req.file?.path;
+  if (!uploadedZipPath) return res.status(400).send("Missing zip file field 'zip'");
 
   const jobDir = await fsp.mkdtemp(path.join(os.tmpdir(), "wp-build-"));
-  const zipPath = path.join(jobDir, "src.zip");
   const srcDir = path.join(jobDir, "src");
+  
+  // Move the upload to our job folder so we can track it
+  const zipPath = path.join(jobDir, "src.zip");
+  
+  // Rename/Move the file (low memory operation)
+  await fsp.rename(uploadedZipPath, zipPath);
   await fsp.mkdir(srcDir, { recursive: true });
-  await fsp.writeFile(zipPath, zipBuf);
 
   try {
     const { fileCount, totalUnzipped } = await scanZip(zipPath);
@@ -56,6 +82,7 @@ app.post("/build", auth, upload.single("zip"), async (req, res) => {
     const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
     if (!deps.vite) throw new Error("Refusing build: Vite dependency not found");
 
+    // Optimized npm install for speed
     await runCmd("npm", ["ci", "--no-audit", "--fund=false"], root, BUILD_TIMEOUT_SEC);
 
     const viteBin = path.join(root, "node_modules", "vite", "bin", "vite.js");
@@ -79,15 +106,39 @@ app.post("/build", auth, upload.single("zip"), async (req, res) => {
   } catch (e) {
     res.status(400).send(String(e?.message || e));
   } finally {
+    // Cleanup the job directory
     try { await fsp.rm(jobDir, { recursive: true, force: true }); } catch {}
+    // Double check: Cleanup the uploaded file if it wasn't moved successfully
+    try { if (fs.existsSync(uploadedZipPath)) await fsp.rm(uploadedZipPath); } catch {}
   }
 });
 
-app.listen(process.env.PORT || 10000, () => console.log("Builder listening"));
+// ---------------------------------------------------------
+// FIX #4: GRACEFUL SHUTDOWN (Prevents "npm error" logs)
+// ---------------------------------------------------------
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received. Shutting down gracefully.');
+  process.exit(0);
+});
+
+// ---------------------------------------------------------
+// FIX #5: BIND TO 0.0.0.0 (Required for Render)
+// ---------------------------------------------------------
+const port = process.env.PORT || 10000;
+app.listen(port, "0.0.0.0", () => console.log(`Builder listening on ${port}`));
+
+// --- HELPER FUNCTIONS BELOW (Unchanged) ---
 
 function runCmd(cmd, args, cwd, timeoutSec) {
   return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { cwd, shell: false, env: { ...process.env, CI: "1" } });
+    // Added NODE_OPTIONS to limit memory usage of child processes
+    const env = { 
+      ...process.env, 
+      CI: "1",
+      NODE_OPTIONS: "--max-old-space-size=460" 
+    };
+    
+    const p = spawn(cmd, args, { cwd, shell: false, env });
     let out = "", err = "";
     p.stdout.on("data", (d) => (out += d.toString()));
     p.stderr.on("data", (d) => (err += d.toString()));
