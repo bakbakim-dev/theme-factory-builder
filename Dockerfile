@@ -20,4 +20,4 @@ ENV PORT=10000
 EXPOSE 10000
 
 # Start the server
-CMD ["npm", "start"]
+CMD ["node", "server.js"]
