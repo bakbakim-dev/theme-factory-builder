@@ -1,4 +1,6 @@
-// server.js (ESM)
+// server.js (ESM) - Theme Factory Builder
+// Fixed version with proper prerendering for 100+ routes
+
 import express from "express";
 import multer from "multer";
 import fs from "fs";
@@ -9,24 +11,29 @@ import http from "http";
 import { spawn } from "child_process";
 import yauzl from "yauzl";
 import archiver from "archiver";
-
-// ✅ For prerendering (adds per-route HTML like /about/index.html)
 import { chromium } from "playwright-chromium";
 
 const app = express();
 
+// ─────────────────────────────────────────────────────────────
+// Configuration
+// ─────────────────────────────────────────────────────────────
 const BUILD_API_KEY = process.env.BUILD_API_KEY || "";
 const MAX_ZIP_MB = Number(process.env.MAX_ZIP_MB || "80");
 const MAX_FILES = Number(process.env.MAX_FILES || "6000");
 const MAX_UNZIPPED_MB = Number(process.env.MAX_UNZIPPED_MB || "400");
 const BUILD_TIMEOUT_SEC = Number(process.env.BUILD_TIMEOUT_SEC || "600");
 
-// Prerender controls
+// Prerender controls - INCREASED LIMITS
 const PRERENDER_ENABLED = (process.env.PRERENDER_ENABLED || "1") !== "0";
-const PRERENDER_MAX_ROUTES = Number(process.env.PRERENDER_MAX_ROUTES || "50");
-const PRERENDER_PAGE_TIMEOUT_MS = Number(process.env.PRERENDER_PAGE_TIMEOUT_MS || "60000");
-const PRERENDER_WAIT_ROOT_TIMEOUT_MS = Number(process.env.PRERENDER_WAIT_ROOT_TIMEOUT_MS || "20000");
+const PRERENDER_MAX_ROUTES = Number(process.env.PRERENDER_MAX_ROUTES || "150"); // Was 50, now 150
+const PRERENDER_PAGE_TIMEOUT_MS = Number(process.env.PRERENDER_PAGE_TIMEOUT_MS || "30000"); // Reduced from 60s to 30s per page
+const PRERENDER_WAIT_ROOT_TIMEOUT_MS = Number(process.env.PRERENDER_WAIT_ROOT_TIMEOUT_MS || "15000"); // Reduced from 20s to 15s
+const PRERENDER_CONCURRENCY = Number(process.env.PRERENDER_CONCURRENCY || "3"); // Parallel page renders
 
+// ─────────────────────────────────────────────────────────────
+// Middleware
+// ─────────────────────────────────────────────────────────────
 function auth(req, res, next) {
   if (!BUILD_API_KEY) return res.status(500).send("Server missing BUILD_API_KEY");
   const hdr = req.header("authorization") || "";
@@ -50,17 +57,23 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get("/", (_req, res) => res.status(200).send("Builder Ready"));
-app.get("/health", (_req, res) => res.json({ ok: true }));
-app.get("/healthz", (_req, res) => res.json({ ok: true })); // alias for your frontend
+// ─────────────────────────────────────────────────────────────
+// Routes
+// ─────────────────────────────────────────────────────────────
+app.get("/", (_req, res) => res.status(200).send("Theme Factory Builder Ready"));
+app.get("/health", (_req, res) => res.json({ ok: true, version: "2.0.0", maxRoutes: PRERENDER_MAX_ROUTES }));
+app.get("/healthz", (_req, res) => res.json({ ok: true }));
 
 app.post("/build", auth, upload.single("zip"), async (req, res) => {
   const uploadedZipPath = req.file?.path;
   if (!uploadedZipPath) return res.status(400).send("Missing zip file field 'zip'");
 
+  const jobId = `job-${Date.now()}`;
   const jobDir = await fsp.mkdtemp(path.join(os.tmpdir(), "wp-build-"));
   const srcDir = path.join(jobDir, "src");
   const zipPath = path.join(jobDir, "src.zip");
+
+  console.log(`[${jobId}] Build started`);
 
   await fsp.rename(uploadedZipPath, zipPath);
   await fsp.mkdir(srcDir, { recursive: true });
@@ -78,12 +91,13 @@ app.post("/build", auth, upload.single("zip"), async (req, res) => {
     } catch {}
   };
 
-  // If client disconnects mid-stream, stop work + cleanup
   res.on("close", () => {
     cleanup().catch(() => {});
   });
 
   try {
+    // 1. Validate ZIP
+    console.log(`[${jobId}] Scanning ZIP...`);
     const { fileCount, totalUnzipped } = await scanZip(zipPath);
     if (fileCount > MAX_FILES) throw new Error(`Too many files (${fileCount} > ${MAX_FILES})`);
     if (totalUnzipped > MAX_UNZIPPED_MB * 1024 * 1024) {
@@ -92,61 +106,79 @@ app.post("/build", auth, upload.single("zip"), async (req, res) => {
       );
     }
 
+    // 2. Extract
+    console.log(`[${jobId}] Extracting ${fileCount} files...`);
     await extractZip(zipPath, srcDir);
 
+    // 3. Find project root
     const root = await findProjectRoot(srcDir);
     if (!root) throw new Error("No package.json found in zip");
+    console.log(`[${jobId}] Project root: ${path.relative(jobDir, root)}`);
 
+    // 4. Validate it's a Vite project
     const pkg = JSON.parse(await fsp.readFile(path.join(root, "package.json"), "utf8"));
     const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
     if (!deps.vite) throw new Error("Refusing build: Vite dependency not found in package.json");
 
-    // Install deps (include devDeps)
+    // 5. Install dependencies
+    console.log(`[${jobId}] Installing dependencies...`);
     await runCmd("npm", ["install", "--include=dev", "--no-audit", "--fund=false"], root, BUILD_TIMEOUT_SEC);
 
-    // Smarter Vite binary detection
+    // 6. Find Vite binary
     const possibleVitePaths = [
       path.join(root, "node_modules", ".bin", "vite"),
       path.join(root, "node_modules", "vite", "bin", "vite.js"),
     ];
     const viteBin = possibleVitePaths.find((p) => fs.existsSync(p));
     if (!viteBin) {
-      throw new Error("Vite binary not found in node_modules after install. Ensure vite is in your dependencies.");
+      throw new Error("Vite binary not found in node_modules after install.");
     }
 
-    // Run build
+    // 7. Run Vite build
+    console.log(`[${jobId}] Running Vite build...`);
     await runCmd("node", [viteBin, "build"], root, BUILD_TIMEOUT_SEC);
 
+    // 8. Verify dist output
     const distDir = path.join(root, "dist");
     const distIndex = path.join(distDir, "index.html");
     if (!fs.existsSync(distIndex)) throw new Error("Build finished but dist/index.html not found");
 
-    // ✅ PRERENDER STEP (creates dist/about/index.html, etc.)
+    console.log(`[${jobId}] Build successful!`);
+
+    // 9. PRERENDER STEP
     if (PRERENDER_ENABLED) {
       const routes = parseRoutesFromRequest(req);
       if (routes.length > 0) {
-        console.log("Prerendering routes:", routes);
-        await prerenderDistToFiles(distDir, routes);
+        console.log(`[${jobId}] Prerendering ${routes.length} routes (max: ${PRERENDER_MAX_ROUTES})...`);
+        const startTime = Date.now();
+        
+        const result = await prerenderDistToFiles(distDir, routes, jobId);
+        
+        const duration = ((Date.now() - startTime) / 1000).toFixed(1);
+        console.log(`[${jobId}] Prerender complete: ${result.success}/${routes.length} succeeded in ${duration}s`);
+        
+        if (result.failed.length > 0) {
+          console.warn(`[${jobId}] Failed routes: ${result.failed.slice(0, 5).join(", ")}${result.failed.length > 5 ? "..." : ""}`);
+        }
       } else {
-        console.log("No routes provided; skipping prerender.");
+        console.log(`[${jobId}] No routes provided; skipping prerender.`);
       }
     }
 
-    // Stream dist as zip
+    // 10. Stream dist as ZIP
+    console.log(`[${jobId}] Packaging dist folder...`);
     res.setHeader("Content-Type", "application/zip");
     res.setHeader("Content-Disposition", 'attachment; filename="dist.zip"');
 
-    const archive = archiver("zip", { zlib: { level: 9 } });
+    const archive = archiver("zip", { zlib: { level: 6 } }); // Level 6 for speed vs size balance
     archive.on("error", (err) => {
-      console.error("Archive error:", err);
-      // If headers already sent, just destroy stream
+      console.error(`[${jobId}] Archive error:`, err);
       try { res.destroy(err); } catch {}
     });
 
     archive.pipe(res);
     archive.directory(distDir, false);
 
-    // Wait for zip stream to finish before cleanup
     const done = new Promise((resolve, reject) => {
       res.on("finish", resolve);
       res.on("error", reject);
@@ -155,8 +187,11 @@ app.post("/build", auth, upload.single("zip"), async (req, res) => {
 
     archive.finalize();
     await done;
+
+    console.log(`[${jobId}] Build complete and sent to client.`);
+
   } catch (e) {
-    console.error("Build Error:", e?.message || e);
+    console.error(`[${jobId}] Build Error:`, e?.message || e);
     if (!res.headersSent) {
       res.status(400).send(String(e?.message || e));
     } else {
@@ -167,17 +202,24 @@ app.post("/build", auth, upload.single("zip"), async (req, res) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────
+// Server Start
+// ─────────────────────────────────────────────────────────────
 process.on("SIGTERM", () => {
   console.log("SIGTERM received. Shutting down gracefully.");
   process.exit(0);
 });
 
 const port = process.env.PORT || 10000;
-app.listen(port, "0.0.0.0", () => console.log(`Builder listening on ${port}`));
+app.listen(port, "0.0.0.0", () => {
+  console.log(`Theme Factory Builder v2.0.0`);
+  console.log(`Listening on port ${port}`);
+  console.log(`Prerender: ${PRERENDER_ENABLED ? "ENABLED" : "DISABLED"} (max ${PRERENDER_MAX_ROUTES} routes, ${PRERENDER_CONCURRENCY} concurrent)`);
+});
 
-// -------------------------
-// Helpers
-// -------------------------
+// ─────────────────────────────────────────────────────────────
+// Helper Functions
+// ─────────────────────────────────────────────────────────────
 
 function runCmd(cmd, args, cwd, timeoutSec) {
   return new Promise((resolve, reject) => {
@@ -295,14 +337,13 @@ async function findProjectRoot(rootDir) {
   return hits[0];
 }
 
-// -------------------------
-// Prerender helpers
-// -------------------------
+// ─────────────────────────────────────────────────────────────
+// Prerender Functions
+// ─────────────────────────────────────────────────────────────
 
 function parseRoutesFromRequest(req) {
-  // Expect multipart field: routes='["/","/about","/pricing"]'
   const raw = req.body?.routes;
-  if (!raw) return []; // no routes => no prerender
+  if (!raw) return [];
 
   let parsed;
   try {
@@ -316,7 +357,7 @@ function parseRoutesFromRequest(req) {
     .map((r) => String(r).trim())
     .filter(Boolean)
     .map((r) => (r.startsWith("/") ? r : `/${r}`))
-    .map((r) => r.replace(/[?#].*$/, "")) // strip query/hash
+    .map((r) => r.replace(/[?#].*$/, ""))
     .map((r) => r.replace(/^\/+/, "/"))
     .map((r) => r.replace(/\s+/g, ""))
     .filter((r) => r.startsWith("/"))
@@ -324,49 +365,56 @@ function parseRoutesFromRequest(req) {
     .filter((r) => r.length < 200);
 
   const uniq = Array.from(new Set(cleaned));
-  if (uniq.length > PRERENDER_MAX_ROUTES) uniq.length = PRERENDER_MAX_ROUTES;
+  
+  // Apply limit
+  if (uniq.length > PRERENDER_MAX_ROUTES) {
+    console.warn(`Routes truncated: ${uniq.length} -> ${PRERENDER_MAX_ROUTES}`);
+    uniq.length = PRERENDER_MAX_ROUTES;
+  }
 
-  // Ensure "/" is present if any route is present
+  // Ensure "/" is always first
   if (uniq.length > 0 && !uniq.includes("/")) uniq.unshift("/");
+  
+  // Sort by path depth (shallow first) for better prerender order
+  uniq.sort((a, b) => {
+    const depthA = (a.match(/\//g) || []).length;
+    const depthB = (b.match(/\//g) || []).length;
+    return depthA - depthB;
+  });
 
   return uniq;
 }
 
 function makeContentType(filePath) {
   const ext = path.extname(filePath).toLowerCase();
-  switch (ext) {
-    case ".html":
-      return "text/html; charset=utf-8";
-    case ".js":
-      return "application/javascript; charset=utf-8";
-    case ".css":
-      return "text/css; charset=utf-8";
-    case ".json":
-      return "application/json; charset=utf-8";
-    case ".svg":
-      return "image/svg+xml";
-    case ".png":
-      return "image/png";
-    case ".jpg":
-    case ".jpeg":
-      return "image/jpeg";
-    case ".webp":
-      return "image/webp";
-    case ".ico":
-      return "image/x-icon";
-    default:
-      return "application/octet-stream";
-  }
+  const types = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "application/javascript; charset=utf-8",
+    ".mjs": "application/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+    ".ico": "image/x-icon",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+    ".ttf": "font/ttf",
+    ".eot": "application/vnd.ms-fontobject",
+  };
+  return types[ext] || "application/octet-stream";
 }
 
 async function startStaticDistServer(distDir) {
-  // Static server with SPA fallback to dist/index.html
   const server = http.createServer((req, res) => {
     try {
       const u = new URL(req.url || "/", "http://localhost");
       const reqPath = decodeURIComponent(u.pathname);
 
-      // 1) direct file
+      // 1) Direct file match
       const candidate = path.join(distDir, reqPath);
       if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
         res.writeHead(200, { "Content-Type": makeContentType(candidate) });
@@ -374,7 +422,7 @@ async function startStaticDistServer(distDir) {
         return;
       }
 
-      // 2) directory index
+      // 2) Directory index
       const dirIndex = path.join(distDir, reqPath, "index.html");
       if (fs.existsSync(dirIndex) && fs.statSync(dirIndex).isFile()) {
         res.writeHead(200, { "Content-Type": makeContentType(dirIndex) });
@@ -382,11 +430,11 @@ async function startStaticDistServer(distDir) {
         return;
       }
 
-      // 3) SPA fallback
+      // 3) SPA fallback - serve index.html for client-side routing
       const indexFile = path.join(distDir, "index.html");
       res.writeHead(200, { "Content-Type": makeContentType(indexFile) });
       fs.createReadStream(indexFile).pipe(res);
-    } catch {
+    } catch (err) {
       res.statusCode = 500;
       res.end("Server error");
     }
@@ -400,62 +448,132 @@ async function startStaticDistServer(distDir) {
 }
 
 function routeToOutfile(distDir, routePath) {
-  // "/about/team/" -> dist/about/team/index.html
   const clean = routePath.replace(/^\/+/, "").replace(/\/+$/, "");
   if (!clean) return path.join(distDir, "index.html");
   return path.join(distDir, clean, "index.html");
 }
 
-async function prerenderDistToFiles(distDir, routes) {
+/**
+ * Prerender routes with concurrency control
+ */
+async function prerenderDistToFiles(distDir, routes, jobId = "unknown") {
   const { server, port } = await startStaticDistServer(distDir);
   const base = `http://127.0.0.1:${port}`;
+  
+  const result = {
+    success: 0,
+    failed: [],
+  };
 
+  let browser;
   try {
-    const browser = await chromium.launch({
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+    browser = await chromium.launch({
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--disable-web-security",
+        "--disable-features=IsolateOrigins,site-per-process",
+      ],
     });
 
-    const page = await browser.newPage();
+    const context = await browser.newContext({
+      userAgent: "ThemeFactory-Prerenderer/2.0",
+      viewport: { width: 1280, height: 720 },
+    });
 
-    // Helpful: if your app uses relative asset URLs, this keeps it stable
-    page.setDefaultTimeout(PRERENDER_PAGE_TIMEOUT_MS);
-
-    for (const r of routes) {
-      const url = `${base}${r}`;
-      console.log(`[prerender] ${url}`);
-
-      try {
-        await page.goto(url, { waitUntil: "networkidle", timeout: PRERENDER_PAGE_TIMEOUT_MS });
-
-        // Wait until React actually painted something in #root (best-effort)
-        await page.waitForFunction(() => {
-          const el = document.querySelector("#root");
-          return el && el.innerHTML && el.innerHTML.trim().length > 0;
-        }, { timeout: PRERENDER_WAIT_ROOT_TIMEOUT_MS });
-
-        const html = await page.content();
-        const outFile = routeToOutfile(distDir, r);
-
-        await fsp.mkdir(path.dirname(outFile), { recursive: true });
-        await fsp.writeFile(outFile, html, "utf8");
-
-        console.log(`[prerender] wrote ${path.relative(distDir, outFile)}`);
-      } catch (err) {
-        // If prerender fails for a route, still create the file using base index.html
-        console.warn(`[prerender] failed for ${r}: ${err?.message || err}`);
-
-        const fallback = await fsp.readFile(path.join(distDir, "index.html"), "utf8");
-        const outFile = routeToOutfile(distDir, r);
-
-        await fsp.mkdir(path.dirname(outFile), { recursive: true });
-        await fsp.writeFile(outFile, fallback, "utf8");
-
-        console.log(`[prerender] fallback wrote ${path.relative(distDir, outFile)}`);
+    // Process routes in batches for controlled concurrency
+    const batchSize = PRERENDER_CONCURRENCY;
+    
+    for (let i = 0; i < routes.length; i += batchSize) {
+      const batch = routes.slice(i, i + batchSize);
+      
+      await Promise.all(
+        batch.map(async (route) => {
+          const page = await context.newPage();
+          page.setDefaultTimeout(PRERENDER_PAGE_TIMEOUT_MS);
+          
+          try {
+            await prerenderSingleRoute(page, base, distDir, route);
+            result.success++;
+          } catch (err) {
+            result.failed.push(route);
+            console.warn(`[${jobId}] Prerender failed for ${route}: ${err?.message || err}`);
+            
+            // Write fallback (copy of index.html)
+            await writeFallbackHtml(distDir, route);
+          } finally {
+            await page.close().catch(() => {});
+          }
+        })
+      );
+      
+      // Progress log every 10 routes
+      if ((i + batchSize) % 10 === 0 || i + batchSize >= routes.length) {
+        console.log(`[${jobId}] Prerender progress: ${Math.min(i + batchSize, routes.length)}/${routes.length}`);
       }
     }
 
-    await browser.close();
+    await context.close();
   } finally {
+    if (browser) await browser.close().catch(() => {});
     server.close();
+  }
+
+  return result;
+}
+
+async function prerenderSingleRoute(page, base, distDir, route) {
+  const url = `${base}${route}`;
+  
+  // Navigate to the page
+  await page.goto(url, { 
+    waitUntil: "networkidle",
+    timeout: PRERENDER_PAGE_TIMEOUT_MS 
+  });
+
+  // Wait for React to render content in #root
+  try {
+    await page.waitForFunction(
+      () => {
+        const el = document.querySelector("#root");
+        if (!el) return false;
+        const html = el.innerHTML || "";
+        // Check for actual content, not just loading spinners
+        return html.trim().length > 50 && !html.includes("Loading");
+      },
+      { timeout: PRERENDER_WAIT_ROOT_TIMEOUT_MS }
+    );
+  } catch {
+    // If #root check fails, wait a bit and continue anyway
+    await page.waitForTimeout(2000);
+  }
+
+  // Additional stabilization wait
+  await page.waitForTimeout(500);
+
+  // Get fully rendered HTML
+  const html = await page.content();
+  
+  // Validate we got real content
+  if (html.length < 500) {
+    throw new Error("Rendered HTML too short - likely empty page");
+  }
+
+  // Write to file
+  const outFile = routeToOutfile(distDir, route);
+  await fsp.mkdir(path.dirname(outFile), { recursive: true });
+  await fsp.writeFile(outFile, html, "utf8");
+}
+
+async function writeFallbackHtml(distDir, route) {
+  try {
+    const fallback = await fsp.readFile(path.join(distDir, "index.html"), "utf8");
+    const outFile = routeToOutfile(distDir, route);
+    await fsp.mkdir(path.dirname(outFile), { recursive: true });
+    await fsp.writeFile(outFile, fallback, "utf8");
+  } catch {
+    // Ignore fallback write errors
   }
 }
