@@ -1,23 +1,21 @@
-FROM node:20-bullseye-slim
-
-# ADDED: 'git' is essential for 'npm ci' if any dependency is hosted on GitHub/GitLab
-RUN apt-get update && apt-get install -y --no-install-recommends \
-  python3 make g++ ca-certificates git \
-  && rm -rf /var/lib/apt/lists/*
+# Playwright image includes Chromium + all required OS dependencies
+FROM mcr.microsoft.com/playwright:jammy
 
 WORKDIR /app
 
-# Install dependencies for the BUILDER itself (express, multer, etc.)
+# Copy dependency manifests first for better Docker layer caching
 COPY package.json package-lock.json* ./
-RUN npm install --no-audit --fund=false
 
-# Copy the server code
+# Install builder dependencies (include dev deps because your builder runs `npm install --include=dev`
+# inside the container when building uploaded projects)
+RUN npm ci --include=dev --no-audit --fund=false
+
+# Copy the rest of your builder code (server.js, etc.)
 COPY . .
 
 ENV NODE_ENV=production
-# Render automatically sets PORT, but this is a good fallback documentation
 ENV PORT=10000
 EXPOSE 10000
 
-# Start the server
 CMD ["node", "server.js"]
+
