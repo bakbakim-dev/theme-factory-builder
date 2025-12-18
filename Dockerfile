@@ -7,7 +7,7 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 
 # Install builder dependencies (production install; playwright-chromium is in dependencies)
-RUN npm ci --no-audit --fund=false
+RUN npm install
 
 # Copy the rest of your builder code (server.js, etc.)
 COPY . .
