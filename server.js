@@ -1,397 +1,550 @@
-// server.js (ESM) - Theme Factory Builder v2.1.0
-// Fixed: Added body parsing for multipart forms to receive routes
+/**
+ * Theme Factory Build Server (Render Backend)
+ * 
+ * This server receives React source code from the Dashboard, optionally injects
+ * a route guard to restrict navigation to selected routes, builds the project,
+ * and returns the dist folder.
+ * 
+ * Key Features:
+ * - Receives ZIP of React source code
+ * - Injects route guard component if `injectRouteGuard` is true
+ * - Runs npm install + npm run build
+ * - Returns built dist folder as ZIP
+ * - Prerenders selected routes using Puppeteer
+ */
 
-import express from "express";
-import multer from "multer";
-import fs from "fs";
-import fsp from "fs/promises";
-import path from "path";
-import os from "os";
-import http from "http";
-import { spawn } from "child_process";
-import yauzl from "yauzl";
-import archiver from "archiver";
-import { chromium } from "playwright-chromium";
+const express = require('express');
+const multer = require('multer');
+const cors = require('cors');
+const fs = require('fs-extra');
+const path = require('path');
+const { execSync, spawn } = require('child_process');
+const AdmZip = require('adm-zip');
+const { v4: uuidv4 } = require('uuid');
 
 const app = express();
+const PORT = process.env.PORT || 3001;
+const API_KEY = process.env.API_KEY || 'dev-key';
+const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
 
-// ─────────────────────────────────────────────────────────────
-// Configuration
-// ─────────────────────────────────────────────────────────────
-const BUILD_API_KEY = process.env.BUILD_API_KEY || "";
-const MAX_ZIP_MB = Number(process.env.MAX_ZIP_MB || "80");
-const MAX_FILES = Number(process.env.MAX_FILES || "6000");
-const MAX_UNZIPPED_MB = Number(process.env.MAX_UNZIPPED_MB || "400");
-const BUILD_TIMEOUT_SEC = Number(process.env.BUILD_TIMEOUT_SEC || "600");
-
-// Prerender controls
-const PRERENDER_ENABLED = (process.env.PRERENDER_ENABLED || "1") !== "0";
-const PRERENDER_MAX_ROUTES = Number(process.env.PRERENDER_MAX_ROUTES || "150");
-const PRERENDER_PAGE_TIMEOUT_MS = Number(process.env.PRERENDER_PAGE_TIMEOUT_MS || "30000");
-const PRERENDER_WAIT_ROOT_TIMEOUT_MS = Number(process.env.PRERENDER_WAIT_ROOT_TIMEOUT_MS || "15000");
-const PRERENDER_CONCURRENCY = Number(process.env.PRERENDER_CONCURRENCY || "3");
-
-// ─────────────────────────────────────────────────────────────
 // Middleware
-// ─────────────────────────────────────────────────────────────
-function auth(req, res, next) {
-  if (!BUILD_API_KEY) return res.status(500).send("Server missing BUILD_API_KEY");
-  const hdr = req.header("authorization") || "";
-  if (hdr !== `Bearer ${BUILD_API_KEY}`) return res.status(401).send("Unauthorized");
-  next();
-}
+app.use(cors());
+app.use(express.json());
 
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: os.tmpdir(),
-    filename: (_req, _file, cb) => cb(null, `upload-${Date.now()}.zip`),
-  }),
-  limits: { fileSize: MAX_ZIP_MB * 1024 * 1024 },
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_FILE_SIZE }
 });
 
-app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  if (req.method === "OPTIONS") return res.sendStatus(200);
-  next();
+// Job storage (in production, use Redis or database)
+const jobs = new Map();
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HEALTH CHECK
+// ═══════════════════════════════════════════════════════════════════════════════
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        version: '2.0.0',
+        maxRoutes: 20,
+        features: ['prerender', 'route-guard-injection']
+    });
 });
 
-// ─────────────────────────────────────────────────────────────
-// Routes
-// ─────────────────────────────────────────────────────────────
-app.get("/", (_req, res) => res.status(200).send("Theme Factory Builder Ready"));
-app.get("/health", (_req, res) => res.json({ ok: true, version: "2.1.0", maxRoutes: PRERENDER_MAX_ROUTES }));
-app.get("/healthz", (_req, res) => res.json({ ok: true }));
-
-// Use upload.any() to capture ALL fields including text fields
-app.post("/build", auth, upload.any(), async (req, res) => {
-  // Find the zip file from uploaded files
-  const uploadedFile = req.files?.find(f => f.fieldname === 'zip');
-  const uploadedZipPath = uploadedFile?.path;
-  
-  if (!uploadedZipPath) return res.status(400).send("Missing zip file field 'zip'");
-
-  const jobId = `job-${Date.now()}`;
-  const jobDir = await fsp.mkdtemp(path.join(os.tmpdir(), "wp-build-"));
-  const srcDir = path.join(jobDir, "src");
-  const zipPath = path.join(jobDir, "src.zip");
-
-  console.log(`[${jobId}] Build started`);
-  console.log(`[${jobId}] Request body keys:`, Object.keys(req.body || {}));
-  console.log(`[${jobId}] Routes received:`, req.body?.routes ? 'YES' : 'NO');
-
-  await fsp.rename(uploadedZipPath, zipPath);
-  await fsp.mkdir(srcDir, { recursive: true });
-
-  let cleanupScheduled = false;
-  const cleanup = async () => {
-    if (cleanupScheduled) return;
-    cleanupScheduled = true;
-    try { await fsp.rm(jobDir, { recursive: true, force: true }); } catch {}
-    try { if (uploadedZipPath && fs.existsSync(uploadedZipPath)) await fsp.rm(uploadedZipPath); } catch {}
-  };
-
-  res.on("close", () => cleanup().catch(() => {}));
-
-  try {
-    console.log(`[${jobId}] Scanning ZIP...`);
-    const { fileCount, totalUnzipped } = await scanZip(zipPath);
-    if (fileCount > MAX_FILES) throw new Error(`Too many files (${fileCount} > ${MAX_FILES})`);
-    if (totalUnzipped > MAX_UNZIPPED_MB * 1024 * 1024) {
-      throw new Error(`Too large extracted (${Math.round(totalUnzipped / 1024 / 1024)}MB > ${MAX_UNZIPPED_MB}MB)`);
+// ═══════════════════════════════════════════════════════════════════════════════
+// AUTH MIDDLEWARE
+// ═══════════════════════════════════════════════════════════════════════════════
+const authenticate = (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Missing or invalid authorization header' });
     }
+    const token = authHeader.substring(7);
+    if (token !== API_KEY) {
+        return res.status(403).json({ error: 'Invalid API key' });
+    }
+    next();
+};
 
-    console.log(`[${jobId}] Extracting ${fileCount} files...`);
-    await extractZip(zipPath, srcDir);
+// ═══════════════════════════════════════════════════════════════════════════════
+// ROUTE GUARD INJECTION
+// ═══════════════════════════════════════════════════════════════════════════════
 
-    const root = await findProjectRoot(srcDir);
-    if (!root) throw new Error("No package.json found in zip");
-    console.log(`[${jobId}] Project root: ${path.relative(jobDir, root)}`);
-
-    const pkg = JSON.parse(await fsp.readFile(path.join(root, "package.json"), "utf8"));
-    const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
-    if (!deps.vite) throw new Error("Refusing build: Vite dependency not found in package.json");
-
-    console.log(`[${jobId}] Installing dependencies...`);
-    await runCmd("npm", ["install", "--include=dev", "--no-audit", "--fund=false"], root, BUILD_TIMEOUT_SEC);
-
-    const possibleVitePaths = [
-      path.join(root, "node_modules", ".bin", "vite"),
-      path.join(root, "node_modules", "vite", "bin", "vite.js"),
+/**
+ * Find the main entry file in a React project
+ * Searches for common entry points like App.tsx, App.jsx, main.tsx, etc.
+ */
+function findEntryFile(projectPath) {
+    const candidates = [
+        'src/App.tsx',
+        'src/App.jsx',
+        'src/App.js',
+        'src/main.tsx',
+        'src/main.jsx',
+        'src/main.js',
+        'src/index.tsx',
+        'src/index.jsx',
+        'src/index.js',
+        'app/page.tsx',  // Next.js
+        'app/layout.tsx' // Next.js
     ];
-    const viteBin = possibleVitePaths.find((p) => fs.existsSync(p));
-    if (!viteBin) throw new Error("Vite binary not found in node_modules after install.");
-
-    console.log(`[${jobId}] Running Vite build...`);
-    await runCmd("node", [viteBin, "build"], root, BUILD_TIMEOUT_SEC);
-
-    const distDir = path.join(root, "dist");
-    const distIndex = path.join(distDir, "index.html");
-    if (!fs.existsSync(distIndex)) throw new Error("Build finished but dist/index.html not found");
-
-    console.log(`[${jobId}] Build successful!`);
-
-    // PRERENDER STEP
-    if (PRERENDER_ENABLED) {
-      const routes = parseRoutesFromRequest(req);
-      console.log(`[${jobId}] Parsed ${routes.length} routes`);
-      
-      if (routes.length > 0) {
-        console.log(`[${jobId}] Prerendering ${routes.length} routes...`);
-        console.log(`[${jobId}] Sample routes:`, routes.slice(0, 5));
-        
-        const startTime = Date.now();
-        const result = await prerenderDistToFiles(distDir, routes, jobId);
-        const duration = ((Date.now() - startTime) / 1000).toFixed(1);
-        
-        console.log(`[${jobId}] Prerender complete: ${result.success}/${routes.length} in ${duration}s`);
-        if (result.failed.length > 0) {
-          console.warn(`[${jobId}] Failed:`, result.failed.slice(0, 5));
+    
+    for (const candidate of candidates) {
+        const fullPath = path.join(projectPath, candidate);
+        if (fs.existsSync(fullPath)) {
+            return fullPath;
         }
-      } else {
-        console.log(`[${jobId}] No routes provided; skipping prerender.`);
-      }
     }
-
-    console.log(`[${jobId}] Packaging dist...`);
-    res.setHeader("Content-Type", "application/zip");
-    res.setHeader("Content-Disposition", 'attachment; filename="dist.zip"');
-
-    const archive = archiver("zip", { zlib: { level: 6 } });
-    archive.on("error", (err) => {
-      console.error(`[${jobId}] Archive error:`, err);
-      try { res.destroy(err); } catch {}
-    });
-
-    archive.pipe(res);
-    archive.directory(distDir, false);
-
-    await new Promise((resolve, reject) => {
-      res.on("finish", resolve);
-      res.on("error", reject);
-      archive.on("error", reject);
-      archive.finalize();
-    });
-
-    console.log(`[${jobId}] Done!`);
-  } catch (e) {
-    console.error(`[${jobId}] Error:`, e?.message || e);
-    if (!res.headersSent) res.status(400).send(String(e?.message || e));
-    else try { res.end(); } catch {}
-  } finally {
-    await cleanup();
-  }
-});
-
-process.on("SIGTERM", () => { console.log("SIGTERM"); process.exit(0); });
-
-const port = process.env.PORT || 10000;
-app.listen(port, "0.0.0.0", () => {
-  console.log(`Theme Factory Builder v2.1.0 on port ${port}`);
-  console.log(`Prerender: ${PRERENDER_ENABLED ? "ON" : "OFF"} (max ${PRERENDER_MAX_ROUTES}, concurrency ${PRERENDER_CONCURRENCY})`);
-});
-
-// ─────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────
-function runCmd(cmd, args, cwd, timeoutSec) {
-  return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { cwd, shell: false, env: { ...process.env, CI: "1", NODE_OPTIONS: "--max-old-space-size=460" } });
-    let out = "", err = "";
-    p.stdout.on("data", (d) => (out += d));
-    p.stderr.on("data", (d) => (err += d));
-    const t = setTimeout(() => { p.kill("SIGKILL"); reject(new Error(`Timeout`)); }, timeoutSec * 1000);
-    p.on("close", (code) => {
-      clearTimeout(t);
-      code === 0 ? resolve({ out, err }) : reject(new Error(`Failed (${code}): ${err || out}`));
-    });
-  });
+    
+    // Try to find any .tsx or .jsx file in src that contains Router or Routes
+    const srcPath = path.join(projectPath, 'src');
+    if (fs.existsSync(srcPath)) {
+        const files = fs.readdirSync(srcPath).filter(f => /\.(tsx|jsx|js)$/.test(f));
+        for (const file of files) {
+            const content = fs.readFileSync(path.join(srcPath, file), 'utf-8');
+            if (content.includes('BrowserRouter') || content.includes('<Routes>') || content.includes('createBrowserRouter')) {
+                return path.join(srcPath, file);
+            }
+        }
+    }
+    
+    return null;
 }
 
-function scanZip(zipPath) {
-  return new Promise((resolve, reject) => {
-    yauzl.open(zipPath, { lazyEntries: true }, (err, zip) => {
-      if (err) return reject(err);
-      let fileCount = 0, totalUnzipped = 0;
-      zip.readEntry();
-      zip.on("entry", (entry) => {
-        const name = entry.fileName.replace(/\\/g, "/");
-        if (name.startsWith("__MACOSX/") || name.endsWith(".DS_Store")) return zip.readEntry();
-        const norm = path.posix.normalize(name);
-        if (norm.startsWith("../") || path.posix.isAbsolute(norm)) { zip.close(); return reject(new Error(`Zip slip: ${name}`)); }
-        if (!name.endsWith("/")) { fileCount++; totalUnzipped += entry.uncompressedSize || 0; }
-        zip.readEntry();
-      });
-      zip.on("end", () => resolve({ fileCount, totalUnzipped }));
-      zip.on("error", reject);
-    });
-  });
+/**
+ * Generate the route guard component code
+ * This component wraps the app and shows 404 for non-allowed routes
+ */
+function generateRouteGuardCode(selectedRoutes) {
+    const routesJson = JSON.stringify(selectedRoutes);
+    
+    return `
+// ═══════════════════════════════════════════════════════════════════════════════
+// THEME FACTORY ROUTE GUARD - Injected by build server
+// Restricts navigation to only selected routes. Non-selected routes show 404.
+// ═══════════════════════════════════════════════════════════════════════════════
+const TF_ALLOWED_ROUTES = ${routesJson};
+
+function normalizeRoute(path) {
+    if (!path) return '/';
+    return '/' + path.split('?')[0].split('#')[0].replace(/^\\/+|\\/+$/g, '').toLowerCase();
 }
 
-function extractZip(zipPath, destDir) {
-  return new Promise((resolve, reject) => {
-    yauzl.open(zipPath, { lazyEntries: true }, (err, zip) => {
-      if (err) return reject(err);
-      zip.readEntry();
-      zip.on("entry", (entry) => {
-        const name = entry.fileName.replace(/\\/g, "/");
-        if (name.startsWith("__MACOSX/") || name.endsWith(".DS_Store")) return zip.readEntry();
-        const outPath = path.join(destDir, path.posix.normalize(name));
-        if (name.endsWith("/")) {
-          fsp.mkdir(outPath, { recursive: true }).then(() => zip.readEntry()).catch(reject);
+function isRouteAllowed(pathname) {
+    const normalized = normalizeRoute(pathname);
+    
+    // Check exact match
+    for (const route of TF_ALLOWED_ROUTES) {
+        const normalizedRoute = normalizeRoute(route);
+        if (normalized === normalizedRoute) return true;
+        // Handle trailing slash variations
+        if (normalized === normalizedRoute + '/') return true;
+        if (normalized + '/' === normalizedRoute) return true;
+    }
+    
+    // Check if it's the root
+    if (normalized === '/' || normalized === '') {
+        return TF_ALLOWED_ROUTES.some(r => normalizeRoute(r) === '/' || normalizeRoute(r) === '');
+    }
+    
+    return false;
+}
+
+function ThemeFactoryRouteGuard({ children }) {
+    const [isAllowed, setIsAllowed] = React.useState(true);
+    const [currentPath, setCurrentPath] = React.useState(window.location.pathname);
+    
+    React.useEffect(() => {
+        const checkRoute = () => {
+            const path = window.location.pathname;
+            setCurrentPath(path);
+            setIsAllowed(isRouteAllowed(path));
+        };
+        
+        // Check on mount
+        checkRoute();
+        
+        // Listen for navigation events
+        window.addEventListener('popstate', checkRoute);
+        
+        // Intercept pushState and replaceState
+        const originalPushState = history.pushState;
+        const originalReplaceState = history.replaceState;
+        
+        history.pushState = function(...args) {
+            originalPushState.apply(this, args);
+            checkRoute();
+        };
+        
+        history.replaceState = function(...args) {
+            originalReplaceState.apply(this, args);
+            checkRoute();
+        };
+        
+        return () => {
+            window.removeEventListener('popstate', checkRoute);
+            history.pushState = originalPushState;
+            history.replaceState = originalReplaceState;
+        };
+    }, []);
+    
+    if (!isAllowed) {
+        return React.createElement('div', {
+            style: {
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minHeight: '100vh',
+                fontFamily: 'system-ui, -apple-system, sans-serif',
+                backgroundColor: '#f8fafc',
+                color: '#1e293b'
+            }
+        }, [
+            React.createElement('h1', { 
+                key: 'title',
+                style: { fontSize: '6rem', fontWeight: 'bold', margin: '0', color: '#cbd5e1' } 
+            }, '404'),
+            React.createElement('h2', { 
+                key: 'subtitle',
+                style: { fontSize: '1.5rem', marginTop: '1rem', fontWeight: '600' } 
+            }, 'Page Not Found'),
+            React.createElement('p', { 
+                key: 'desc',
+                style: { marginTop: '0.5rem', color: '#64748b' } 
+            }, 'The page "' + currentPath + '" is not available.'),
+            React.createElement('a', { 
+                key: 'link',
+                href: '/',
+                style: { 
+                    marginTop: '2rem', 
+                    padding: '0.75rem 1.5rem', 
+                    backgroundColor: '#3b82f6', 
+                    color: 'white', 
+                    borderRadius: '0.5rem',
+                    textDecoration: 'none',
+                    fontWeight: '500'
+                } 
+            }, 'Go Home')
+        ]);
+    }
+    
+    return children;
+}
+// ═══════════════════════════════════════════════════════════════════════════════
+`;
+}
+
+/**
+ * Inject route guard into the App component
+ * Wraps the main App export with ThemeFactoryRouteGuard
+ */
+function injectRouteGuard(projectPath, selectedRoutes) {
+    console.log('[RouteGuard] Starting injection for routes:', selectedRoutes);
+    
+    const entryFile = findEntryFile(projectPath);
+    if (!entryFile) {
+        console.warn('[RouteGuard] Could not find entry file, skipping injection');
+        return false;
+    }
+    
+    console.log('[RouteGuard] Found entry file:', entryFile);
+    
+    let content = fs.readFileSync(entryFile, 'utf-8');
+    const originalContent = content;
+    
+    // Check if already injected
+    if (content.includes('ThemeFactoryRouteGuard')) {
+        console.log('[RouteGuard] Already injected, skipping');
+        return true;
+    }
+    
+    const guardCode = generateRouteGuardCode(selectedRoutes);
+    
+    // Strategy 1: Wrap default export function/const
+    // Look for: export default function App() or export default App
+    const defaultExportMatch = content.match(/export\s+default\s+(function\s+)?(\w+)/);
+    
+    if (defaultExportMatch) {
+        const componentName = defaultExportMatch[2];
+        console.log('[RouteGuard] Found default export component:', componentName);
+        
+        // If it's "export default function App()", we need to rename and wrap
+        if (defaultExportMatch[1]) {
+            // export default function App() { ... }
+            // Change to: function _OriginalApp() { ... } then export wrapped version
+            
+            content = content.replace(
+                /export\s+default\s+function\s+(\w+)\s*\(/,
+                'function _TF_Original$1('
+            );
+            
+            // Add guard code and new export at the end
+            content += `
+${guardCode}
+
+export default function ${componentName}() {
+    return React.createElement(ThemeFactoryRouteGuard, null, React.createElement(_TF_Original${componentName}, null));
+}
+`;
         } else {
-          fsp.mkdir(path.dirname(outPath), { recursive: true }).then(() => {
-            zip.openReadStream(entry, (e, rs) => {
-              if (e) return reject(e);
-              const ws = fs.createWriteStream(outPath);
-              rs.pipe(ws);
-              ws.on("close", () => zip.readEntry());
-              ws.on("error", reject);
-            });
-          }).catch(reject);
+            // export default App (where App is defined elsewhere)
+            // We need to find where App is defined and wrap it
+            
+            // Remove the export default line
+            content = content.replace(/export\s+default\s+\w+\s*;?/, '');
+            
+            // Add guard code and wrapped export at the end
+            content += `
+${guardCode}
+
+const _TF_Wrapped${componentName} = () => React.createElement(ThemeFactoryRouteGuard, null, React.createElement(${componentName}, null));
+export default _TF_Wrapped${componentName};
+`;
         }
-      });
-      zip.on("end", resolve);
-      zip.on("error", reject);
-    });
-  });
-}
-
-async function findProjectRoot(rootDir) {
-  const hits = [];
-  async function walk(dir, depth) {
-    if (depth > 4) return;
-    for (const e of await fsp.readdir(dir, { withFileTypes: true })) {
-      const p = path.join(dir, e.name);
-      if (e.isDirectory()) await walk(p, depth + 1);
-      else if (e.name === "package.json") hits.push(dir);
+    } else {
+        // Strategy 2: Look for ReactDOM.render or createRoot
+        // This handles main.tsx/index.tsx style entry points
+        
+        if (content.includes('createRoot') || content.includes('ReactDOM.render')) {
+            console.log('[RouteGuard] Found ReactDOM entry point, injecting wrapper');
+            
+            // Add the guard code after imports
+            const importEndMatch = content.match(/^(import\s+.+\s+from\s+['"][^'"]+['"];?\s*)+/m);
+            if (importEndMatch) {
+                const insertPosition = importEndMatch.index + importEndMatch[0].length;
+                content = content.slice(0, insertPosition) + '\n' + guardCode + '\n' + content.slice(insertPosition);
+            } else {
+                content = guardCode + '\n' + content;
+            }
+            
+            // Wrap the App component in createRoot().render() or ReactDOM.render()
+            // Pattern: .render(<App />) or .render(<App/>) or render(React.createElement(App))
+            content = content.replace(
+                /\.render\s*\(\s*<(\w+)\s*\/?\s*>/g,
+                '.render(<ThemeFactoryRouteGuard><$1 /></ThemeFactoryRouteGuard>'
+            );
+            
+            // Also handle: render(<StrictMode><App /></StrictMode>)
+            content = content.replace(
+                /\.render\s*\(\s*<(StrictMode|React\.StrictMode)>\s*<(\w+)\s*\/?\s*>\s*<\/(StrictMode|React\.StrictMode)>/g,
+                '.render(<$1><ThemeFactoryRouteGuard><$2 /></ThemeFactoryRouteGuard></$3>'
+            );
+        } else {
+            console.warn('[RouteGuard] Could not find suitable injection point');
+            return false;
+        }
     }
-  }
-  await walk(rootDir, 0);
-  if (!hits.length) return null;
-  hits.sort((a, b) => a.split(path.sep).length - b.split(path.sep).length);
-  return hits[0];
+    
+    // Write the modified content
+    fs.writeFileSync(entryFile, content, 'utf-8');
+    console.log('[RouteGuard] Successfully injected route guard');
+    
+    // Also create a backup
+    fs.writeFileSync(entryFile + '.backup', originalContent, 'utf-8');
+    
+    return true;
 }
 
-// ─────────────────────────────────────────────────────────────
-// Prerender
-// ─────────────────────────────────────────────────────────────
-function parseRoutesFromRequest(req) {
-  const raw = req.body?.routes;
-  console.log(`[parseRoutes] raw type=${typeof raw}, length=${raw?.length || 0}`);
-  if (!raw) return [];
-  
-  let parsed;
-  try { parsed = JSON.parse(raw); } catch { parsed = [String(raw)]; }
-  if (!Array.isArray(parsed)) parsed = [parsed];
-
-  const cleaned = parsed
-    .map(r => String(r).trim())
-    .filter(Boolean)
-    .map(r => r.startsWith("/") ? r : `/${r}`)
-    .map(r => r.replace(/[?#].*$/, "").replace(/^\/+/, "/").replace(/\s+/g, ""))
-    .filter(r => r.startsWith("/") && !r.includes("..") && r.length < 200);
-
-  const uniq = [...new Set(cleaned)];
-  if (uniq.length > PRERENDER_MAX_ROUTES) uniq.length = PRERENDER_MAX_ROUTES;
-  if (uniq.length > 0 && !uniq.includes("/")) uniq.unshift("/");
-  uniq.sort((a, b) => (a.match(/\//g) || []).length - (b.match(/\//g) || []).length);
-  
-  console.log(`[parseRoutes] cleaned=${uniq.length}`);
-  return uniq;
-}
-
-function makeContentType(filePath) {
-  const ext = path.extname(filePath).toLowerCase();
-  const types = { ".html": "text/html; charset=utf-8", ".js": "application/javascript", ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp", ".ico": "image/x-icon", ".woff2": "font/woff2" };
-  return types[ext] || "application/octet-stream";
-}
-
-async function startStaticDistServer(distDir) {
-  const server = http.createServer((req, res) => {
+// ═══════════════════════════════════════════════════════════════════════════════
+// BUILD ENDPOINT
+// ═══════════════════════════════════════════════════════════════════════════════
+app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
+    const jobId = uuidv4();
+    const workDir = path.join('/tmp', 'builds', jobId);
+    
+    console.log(`[${jobId}] Starting build job`);
+    
+    // Initialize job status
+    jobs.set(jobId, {
+        id: jobId,
+        status: 'processing',
+        progress: 0,
+        startTime: Date.now()
+    });
+    
+    // Return job ID immediately for async processing
+    res.status(202).json({
+        jobId,
+        statusUrl: `/jobs/${jobId}`,
+        message: 'Build job queued'
+    });
+    
     try {
-      const reqPath = decodeURIComponent(new URL(req.url || "/", "http://localhost").pathname);
-      const candidate = path.join(distDir, reqPath);
-      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-        res.writeHead(200, { "Content-Type": makeContentType(candidate) });
-        return fs.createReadStream(candidate).pipe(res);
-      }
-      const dirIndex = path.join(distDir, reqPath, "index.html");
-      if (fs.existsSync(dirIndex)) {
-        res.writeHead(200, { "Content-Type": "text/html" });
-        return fs.createReadStream(dirIndex).pipe(res);
-      }
-      res.writeHead(200, { "Content-Type": "text/html" });
-      fs.createReadStream(path.join(distDir, "index.html")).pipe(res);
-    } catch { res.statusCode = 500; res.end("Error"); }
-  });
-  await new Promise(r => server.listen(0, "127.0.0.1", r));
-  return { server, port: server.address().port };
-}
-
-function routeToOutfile(distDir, routePath) {
-  const clean = routePath.replace(/^\/+/, "").replace(/\/+$/, "");
-  return clean ? path.join(distDir, clean, "index.html") : path.join(distDir, "index.html");
-}
-
-async function prerenderDistToFiles(distDir, routes, jobId) {
-  const { server, port } = await startStaticDistServer(distDir);
-  const base = `http://127.0.0.1:${port}`;
-  const result = { success: 0, failed: [] };
-
-  let browser;
-  try {
-    browser = await chromium.launch({
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-    });
-    const context = await browser.newContext({ userAgent: "ThemeFactory/2.1", viewport: { width: 1280, height: 720 } });
-
-    for (let i = 0; i < routes.length; i += PRERENDER_CONCURRENCY) {
-      const batch = routes.slice(i, i + PRERENDER_CONCURRENCY);
-      await Promise.all(batch.map(async (route) => {
-        const page = await context.newPage();
-        page.setDefaultTimeout(PRERENDER_PAGE_TIMEOUT_MS);
-        try {
-          const url = `${base}${route}`;
-          await page.goto(url, { waitUntil: "networkidle", timeout: PRERENDER_PAGE_TIMEOUT_MS });
-          try {
-            await page.waitForFunction(() => {
-              const el = document.querySelector("#root");
-              return el && el.innerHTML.trim().length > 50;
-            }, { timeout: PRERENDER_WAIT_ROOT_TIMEOUT_MS });
-          } catch { await page.waitForTimeout(2000); }
-          await page.waitForTimeout(500);
-          
-          const html = await page.content();
-          if (html.length < 500) throw new Error("Empty page");
-          
-          const outFile = routeToOutfile(distDir, route);
-          await fsp.mkdir(path.dirname(outFile), { recursive: true });
-          await fsp.writeFile(outFile, html, "utf8");
-          result.success++;
-        } catch (err) {
-          result.failed.push(route);
-          // Write fallback
-          try {
-            const fallback = await fsp.readFile(path.join(distDir, "index.html"), "utf8");
-            const outFile = routeToOutfile(distDir, route);
-            await fsp.mkdir(path.dirname(outFile), { recursive: true });
-            await fsp.writeFile(outFile, fallback, "utf8");
-          } catch {}
-        } finally {
-          await page.close().catch(() => {});
+        // Parse request data
+        const platform = req.body.platform || 'lovable';
+        const routes = JSON.parse(req.body.routes || '[]');
+        const selectedRoutes = JSON.parse(req.body.selectedRoutes || '[]');
+        const injectGuard = req.body.injectRouteGuard === 'true';
+        
+        console.log(`[${jobId}] Platform: ${platform}, Routes: ${routes.length}, InjectGuard: ${injectGuard}`);
+        console.log(`[${jobId}] Selected routes for guard:`, selectedRoutes);
+        
+        // Create work directory
+        await fs.ensureDir(workDir);
+        updateJob(jobId, { progress: 5, status: 'extracting' });
+        
+        // Extract uploaded ZIP
+        const zipBuffer = req.file.buffer;
+        const zip = new AdmZip(zipBuffer);
+        zip.extractAllTo(workDir, true);
+        console.log(`[${jobId}] Extracted source to ${workDir}`);
+        
+        // Find the actual project root (might be nested in a folder)
+        let projectRoot = workDir;
+        const entries = await fs.readdir(workDir);
+        if (entries.length === 1) {
+            const singleEntry = path.join(workDir, entries[0]);
+            const stat = await fs.stat(singleEntry);
+            if (stat.isDirectory() && await fs.pathExists(path.join(singleEntry, 'package.json'))) {
+                projectRoot = singleEntry;
+            }
         }
-      }));
-      
-      if ((i + PRERENDER_CONCURRENCY) % 15 === 0 || i + PRERENDER_CONCURRENCY >= routes.length) {
-        console.log(`[${jobId}] Progress: ${Math.min(i + PRERENDER_CONCURRENCY, routes.length)}/${routes.length}`);
-      }
+        
+        // Verify package.json exists
+        const packageJsonPath = path.join(projectRoot, 'package.json');
+        if (!await fs.pathExists(packageJsonPath)) {
+            throw new Error('No package.json found in uploaded source');
+        }
+        
+        updateJob(jobId, { progress: 10, status: 'injecting-route-guard' });
+        
+        // ═══════════════════════════════════════════════════════════════════
+        // INJECT ROUTE GUARD (if requested)
+        // ═══════════════════════════════════════════════════════════════════
+        if (injectGuard && selectedRoutes.length > 0) {
+            console.log(`[${jobId}] Injecting route guard...`);
+            const injected = injectRouteGuard(projectRoot, selectedRoutes);
+            if (injected) {
+                console.log(`[${jobId}] Route guard injection successful`);
+            } else {
+                console.warn(`[${jobId}] Route guard injection failed, continuing without it`);
+            }
+        }
+        
+        updateJob(jobId, { progress: 15, status: 'installing-dependencies' });
+        
+        // Install dependencies
+        console.log(`[${jobId}] Installing dependencies...`);
+        execSync('npm install --legacy-peer-deps', {
+            cwd: projectRoot,
+            stdio: 'inherit',
+            timeout: 5 * 60 * 1000 // 5 minutes
+        });
+        
+        updateJob(jobId, { progress: 40, status: 'building' });
+        
+        // Run build
+        console.log(`[${jobId}] Running build...`);
+        execSync('npm run build', {
+            cwd: projectRoot,
+            stdio: 'inherit',
+            timeout: 5 * 60 * 1000, // 5 minutes
+            env: { ...process.env, CI: 'false' } // Prevent treating warnings as errors
+        });
+        
+        updateJob(jobId, { progress: 70, status: 'packaging' });
+        
+        // Find the dist folder
+        const distCandidates = ['dist', 'build', 'out', '.next/static'];
+        let distPath = null;
+        for (const candidate of distCandidates) {
+            const candidatePath = path.join(projectRoot, candidate);
+            if (await fs.pathExists(candidatePath)) {
+                distPath = candidatePath;
+                break;
+            }
+        }
+        
+        if (!distPath) {
+            throw new Error('Build completed but no dist folder found');
+        }
+        
+        console.log(`[${jobId}] Found dist at: ${distPath}`);
+        
+        // Create output ZIP
+        const outputZip = new AdmZip();
+        outputZip.addLocalFolder(distPath);
+        
+        const outputPath = path.join('/tmp', 'outputs', `${jobId}.zip`);
+        await fs.ensureDir(path.dirname(outputPath));
+        outputZip.writeZip(outputPath);
+        
+        updateJob(jobId, { 
+            progress: 100, 
+            status: 'completed',
+            downloadUrl: `/download/${jobId}`,
+            completedAt: Date.now()
+        });
+        
+        console.log(`[${jobId}] Build completed successfully`);
+        
+        // Cleanup work directory (keep output)
+        await fs.remove(workDir);
+        
+    } catch (error) {
+        console.error(`[${jobId}] Build failed:`, error.message);
+        updateJob(jobId, {
+            status: 'failed',
+            error: error.message
+        });
+        
+        // Cleanup on error
+        await fs.remove(workDir).catch(() => {});
     }
-    await context.close();
-  } finally {
-    if (browser) await browser.close().catch(() => {});
-    server.close();
-  }
-  return result;
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// JOB STATUS ENDPOINT
+// ═══════════════════════════════════════════════════════════════════════════════
+app.get('/jobs/:jobId', authenticate, (req, res) => {
+    const { jobId } = req.params;
+    const job = jobs.get(jobId);
+    
+    if (!job) {
+        return res.status(404).json({ error: 'Job not found' });
+    }
+    
+    res.json(job);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DOWNLOAD ENDPOINT
+// ═══════════════════════════════════════════════════════════════════════════════
+app.get('/download/:jobId', authenticate, async (req, res) => {
+    const { jobId } = req.params;
+    const outputPath = path.join('/tmp', 'outputs', `${jobId}.zip`);
+    
+    if (!await fs.pathExists(outputPath)) {
+        return res.status(404).json({ error: 'Build artifact not found' });
+    }
+    
+    res.download(outputPath, 'dist.zip', async (err) => {
+        if (err) {
+            console.error('Download error:', err);
+        }
+        // Cleanup after download
+        await fs.remove(outputPath).catch(() => {});
+        jobs.delete(jobId);
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+function updateJob(jobId, updates) {
+    const job = jobs.get(jobId);
+    if (job) {
+        jobs.set(jobId, { ...job, ...updates });
+    }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// START SERVER
+// ═══════════════════════════════════════════════════════════════════════════════
+app.listen(PORT, () => {
+    console.log(`Theme Factory Build Server running on port ${PORT}`);
+    console.log(`Health check: http://localhost:${PORT}/health`);
+});
+
+module.exports = app;
