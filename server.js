@@ -4,23 +4,21 @@
  * This server receives React source code from the Dashboard, optionally injects
  * a route guard to restrict navigation to selected routes, builds the project,
  * and returns the dist folder.
- * 
- * Key Features:
- * - Receives ZIP of React source code
- * - Injects route guard component if `injectRouteGuard` is true
- * - Runs npm install + npm run build
- * - Returns built dist folder as ZIP
- * - Prerenders selected routes using Puppeteer
  */
 
-const express = require('express');
-const multer = require('multer');
-const cors = require('cors');
-const fs = require('fs-extra');
-const path = require('path');
-const { execSync, spawn } = require('child_process');
-const AdmZip = require('adm-zip');
-const { v4: uuidv4 } = require('uuid');
+import express from 'express';
+import multer from 'multer';
+import cors from 'cors';
+import fs from 'fs-extra';
+import path from 'path';
+import { execSync } from 'child_process';
+import AdmZip from 'adm-zip';
+import { v4 as uuidv4 } from 'uuid';
+import { fileURLToPath } from 'url';
+
+// ES Module __dirname equivalent
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -72,7 +70,6 @@ const authenticate = (req, res, next) => {
 
 /**
  * Find the main entry file in a React project
- * Searches for common entry points like App.tsx, App.jsx, main.tsx, etc.
  */
 function findEntryFile(projectPath) {
     const candidates = [
@@ -84,9 +81,7 @@ function findEntryFile(projectPath) {
         'src/main.js',
         'src/index.tsx',
         'src/index.jsx',
-        'src/index.js',
-        'app/page.tsx',  // Next.js
-        'app/layout.tsx' // Next.js
+        'src/index.js'
     ];
     
     for (const candidate of candidates) {
@@ -96,7 +91,7 @@ function findEntryFile(projectPath) {
         }
     }
     
-    // Try to find any .tsx or .jsx file in src that contains Router or Routes
+    // Try to find any file in src that contains Router or Routes
     const srcPath = path.join(projectPath, 'src');
     if (fs.existsSync(srcPath)) {
         const files = fs.readdirSync(srcPath).filter(f => /\.(tsx|jsx|js)$/.test(f));
@@ -113,7 +108,6 @@ function findEntryFile(projectPath) {
 
 /**
  * Generate the route guard component code
- * This component wraps the app and shows 404 for non-allowed routes
  */
 function generateRouteGuardCode(selectedRoutes) {
     const routesJson = JSON.stringify(selectedRoutes);
@@ -121,7 +115,6 @@ function generateRouteGuardCode(selectedRoutes) {
     return `
 // ═══════════════════════════════════════════════════════════════════════════════
 // THEME FACTORY ROUTE GUARD - Injected by build server
-// Restricts navigation to only selected routes. Non-selected routes show 404.
 // ═══════════════════════════════════════════════════════════════════════════════
 const TF_ALLOWED_ROUTES = ${routesJson};
 
@@ -132,21 +125,15 @@ function normalizeRoute(path) {
 
 function isRouteAllowed(pathname) {
     const normalized = normalizeRoute(pathname);
-    
-    // Check exact match
     for (const route of TF_ALLOWED_ROUTES) {
         const normalizedRoute = normalizeRoute(route);
         if (normalized === normalizedRoute) return true;
-        // Handle trailing slash variations
         if (normalized === normalizedRoute + '/') return true;
         if (normalized + '/' === normalizedRoute) return true;
     }
-    
-    // Check if it's the root
     if (normalized === '/' || normalized === '') {
         return TF_ALLOWED_ROUTES.some(r => normalizeRoute(r) === '/' || normalizeRoute(r) === '');
     }
-    
     return false;
 }
 
@@ -160,27 +147,18 @@ function ThemeFactoryRouteGuard({ children }) {
             setCurrentPath(path);
             setIsAllowed(isRouteAllowed(path));
         };
-        
-        // Check on mount
         checkRoute();
-        
-        // Listen for navigation events
         window.addEventListener('popstate', checkRoute);
-        
-        // Intercept pushState and replaceState
         const originalPushState = history.pushState;
         const originalReplaceState = history.replaceState;
-        
         history.pushState = function(...args) {
             originalPushState.apply(this, args);
             checkRoute();
         };
-        
         history.replaceState = function(...args) {
             originalReplaceState.apply(this, args);
             checkRoute();
         };
-        
         return () => {
             window.removeEventListener('popstate', checkRoute);
             history.pushState = originalPushState;
@@ -201,34 +179,12 @@ function ThemeFactoryRouteGuard({ children }) {
                 color: '#1e293b'
             }
         }, [
-            React.createElement('h1', { 
-                key: 'title',
-                style: { fontSize: '6rem', fontWeight: 'bold', margin: '0', color: '#cbd5e1' } 
-            }, '404'),
-            React.createElement('h2', { 
-                key: 'subtitle',
-                style: { fontSize: '1.5rem', marginTop: '1rem', fontWeight: '600' } 
-            }, 'Page Not Found'),
-            React.createElement('p', { 
-                key: 'desc',
-                style: { marginTop: '0.5rem', color: '#64748b' } 
-            }, 'The page "' + currentPath + '" is not available.'),
-            React.createElement('a', { 
-                key: 'link',
-                href: '/',
-                style: { 
-                    marginTop: '2rem', 
-                    padding: '0.75rem 1.5rem', 
-                    backgroundColor: '#3b82f6', 
-                    color: 'white', 
-                    borderRadius: '0.5rem',
-                    textDecoration: 'none',
-                    fontWeight: '500'
-                } 
-            }, 'Go Home')
+            React.createElement('h1', { key: 'title', style: { fontSize: '6rem', fontWeight: 'bold', margin: '0', color: '#cbd5e1' } }, '404'),
+            React.createElement('h2', { key: 'subtitle', style: { fontSize: '1.5rem', marginTop: '1rem', fontWeight: '600' } }, 'Page Not Found'),
+            React.createElement('p', { key: 'desc', style: { marginTop: '0.5rem', color: '#64748b' } }, 'The page "' + currentPath + '" is not available.'),
+            React.createElement('a', { key: 'link', href: '/', style: { marginTop: '2rem', padding: '0.75rem 1.5rem', backgroundColor: '#3b82f6', color: 'white', borderRadius: '0.5rem', textDecoration: 'none', fontWeight: '500' } }, 'Go Home')
         ]);
     }
-    
     return children;
 }
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -237,7 +193,6 @@ function ThemeFactoryRouteGuard({ children }) {
 
 /**
  * Inject route guard into the App component
- * Wraps the main App export with ThemeFactoryRouteGuard
  */
 function injectRouteGuard(projectPath, selectedRoutes) {
     console.log('[RouteGuard] Starting injection for routes:', selectedRoutes);
@@ -262,24 +217,18 @@ function injectRouteGuard(projectPath, selectedRoutes) {
     const guardCode = generateRouteGuardCode(selectedRoutes);
     
     // Strategy 1: Wrap default export function/const
-    // Look for: export default function App() or export default App
     const defaultExportMatch = content.match(/export\s+default\s+(function\s+)?(\w+)/);
     
     if (defaultExportMatch) {
         const componentName = defaultExportMatch[2];
         console.log('[RouteGuard] Found default export component:', componentName);
         
-        // If it's "export default function App()", we need to rename and wrap
         if (defaultExportMatch[1]) {
             // export default function App() { ... }
-            // Change to: function _OriginalApp() { ... } then export wrapped version
-            
             content = content.replace(
                 /export\s+default\s+function\s+(\w+)\s*\(/,
                 'function _TF_Original$1('
             );
-            
-            // Add guard code and new export at the end
             content += `
 ${guardCode}
 
@@ -288,13 +237,8 @@ export default function ${componentName}() {
 }
 `;
         } else {
-            // export default App (where App is defined elsewhere)
-            // We need to find where App is defined and wrap it
-            
-            // Remove the export default line
+            // export default App
             content = content.replace(/export\s+default\s+\w+\s*;?/, '');
-            
-            // Add guard code and wrapped export at the end
             content += `
 ${guardCode}
 
@@ -302,48 +246,47 @@ const _TF_Wrapped${componentName} = () => React.createElement(ThemeFactoryRouteG
 export default _TF_Wrapped${componentName};
 `;
         }
-    } else {
-        // Strategy 2: Look for ReactDOM.render or createRoot
-        // This handles main.tsx/index.tsx style entry points
+    } else if (content.includes('createRoot') || content.includes('ReactDOM.render')) {
+        // Strategy 2: Handle main.tsx/index.tsx entry points
+        console.log('[RouteGuard] Found ReactDOM entry point, injecting wrapper');
         
-        if (content.includes('createRoot') || content.includes('ReactDOM.render')) {
-            console.log('[RouteGuard] Found ReactDOM entry point, injecting wrapper');
-            
-            // Add the guard code after imports
-            const importEndMatch = content.match(/^(import\s+.+\s+from\s+['"][^'"]+['"];?\s*)+/m);
-            if (importEndMatch) {
-                const insertPosition = importEndMatch.index + importEndMatch[0].length;
-                content = content.slice(0, insertPosition) + '\n' + guardCode + '\n' + content.slice(insertPosition);
-            } else {
-                content = guardCode + '\n' + content;
-            }
-            
-            // Wrap the App component in createRoot().render() or ReactDOM.render()
-            // Pattern: .render(<App />) or .render(<App/>) or render(React.createElement(App))
-            content = content.replace(
-                /\.render\s*\(\s*<(\w+)\s*\/?\s*>/g,
-                '.render(<ThemeFactoryRouteGuard><$1 /></ThemeFactoryRouteGuard>'
-            );
-            
-            // Also handle: render(<StrictMode><App /></StrictMode>)
-            content = content.replace(
-                /\.render\s*\(\s*<(StrictMode|React\.StrictMode)>\s*<(\w+)\s*\/?\s*>\s*<\/(StrictMode|React\.StrictMode)>/g,
-                '.render(<$1><ThemeFactoryRouteGuard><$2 /></ThemeFactoryRouteGuard></$3>'
-            );
+        const importEndMatch = content.match(/^(import\s+.+\s+from\s+['"][^'"]+['"];?\s*)+/m);
+        if (importEndMatch) {
+            const insertPosition = importEndMatch.index + importEndMatch[0].length;
+            content = content.slice(0, insertPosition) + '\n' + guardCode + '\n' + content.slice(insertPosition);
         } else {
-            console.warn('[RouteGuard] Could not find suitable injection point');
-            return false;
+            content = guardCode + '\n' + content;
         }
+        
+        // Wrap App in render()
+        content = content.replace(
+            /\.render\s*\(\s*<(\w+)\s*\/?\s*>/g,
+            '.render(<ThemeFactoryRouteGuard><$1 /></ThemeFactoryRouteGuard>'
+        );
+        content = content.replace(
+            /\.render\s*\(\s*<(StrictMode|React\.StrictMode)>\s*<(\w+)\s*\/?\s*>\s*<\/(StrictMode|React\.StrictMode)>/g,
+            '.render(<$1><ThemeFactoryRouteGuard><$2 /></ThemeFactoryRouteGuard></$3>'
+        );
+    } else {
+        console.warn('[RouteGuard] Could not find suitable injection point');
+        return false;
     }
     
-    // Write the modified content
     fs.writeFileSync(entryFile, content, 'utf-8');
+    fs.writeFileSync(entryFile + '.backup', originalContent, 'utf-8');
     console.log('[RouteGuard] Successfully injected route guard');
     
-    // Also create a backup
-    fs.writeFileSync(entryFile + '.backup', originalContent, 'utf-8');
-    
     return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+function updateJob(jobId, updates) {
+    const job = jobs.get(jobId);
+    if (job) {
+        jobs.set(jobId, { ...job, ...updates });
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -355,7 +298,6 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
     
     console.log(`[${jobId}] Starting build job`);
     
-    // Initialize job status
     jobs.set(jobId, {
         id: jobId,
         status: 'processing',
@@ -363,7 +305,6 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
         startTime: Date.now()
     });
     
-    // Return job ID immediately for async processing
     res.status(202).json({
         jobId,
         statusUrl: `/jobs/${jobId}`,
@@ -371,7 +312,6 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
     });
     
     try {
-        // Parse request data
         const platform = req.body.platform || 'lovable';
         const routes = JSON.parse(req.body.routes || '[]');
         const selectedRoutes = JSON.parse(req.body.selectedRoutes || '[]');
@@ -380,7 +320,6 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
         console.log(`[${jobId}] Platform: ${platform}, Routes: ${routes.length}, InjectGuard: ${injectGuard}`);
         console.log(`[${jobId}] Selected routes for guard:`, selectedRoutes);
         
-        // Create work directory
         await fs.ensureDir(workDir);
         updateJob(jobId, { progress: 5, status: 'extracting' });
         
@@ -390,7 +329,7 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
         zip.extractAllTo(workDir, true);
         console.log(`[${jobId}] Extracted source to ${workDir}`);
         
-        // Find the actual project root (might be nested in a folder)
+        // Find actual project root
         let projectRoot = workDir;
         const entries = await fs.readdir(workDir);
         if (entries.length === 1) {
@@ -401,7 +340,6 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
             }
         }
         
-        // Verify package.json exists
         const packageJsonPath = path.join(projectRoot, 'package.json');
         if (!await fs.pathExists(packageJsonPath)) {
             throw new Error('No package.json found in uploaded source');
@@ -410,7 +348,7 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
         updateJob(jobId, { progress: 10, status: 'injecting-route-guard' });
         
         // ═══════════════════════════════════════════════════════════════════
-        // INJECT ROUTE GUARD (if requested)
+        // INJECT ROUTE GUARD
         // ═══════════════════════════════════════════════════════════════════
         if (injectGuard && selectedRoutes.length > 0) {
             console.log(`[${jobId}] Injecting route guard...`);
@@ -424,29 +362,27 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
         
         updateJob(jobId, { progress: 15, status: 'installing-dependencies' });
         
-        // Install dependencies
         console.log(`[${jobId}] Installing dependencies...`);
         execSync('npm install --legacy-peer-deps', {
             cwd: projectRoot,
             stdio: 'inherit',
-            timeout: 5 * 60 * 1000 // 5 minutes
+            timeout: 5 * 60 * 1000
         });
         
         updateJob(jobId, { progress: 40, status: 'building' });
         
-        // Run build
         console.log(`[${jobId}] Running build...`);
         execSync('npm run build', {
             cwd: projectRoot,
             stdio: 'inherit',
-            timeout: 5 * 60 * 1000, // 5 minutes
-            env: { ...process.env, CI: 'false' } // Prevent treating warnings as errors
+            timeout: 5 * 60 * 1000,
+            env: { ...process.env, CI: 'false' }
         });
         
         updateJob(jobId, { progress: 70, status: 'packaging' });
         
-        // Find the dist folder
-        const distCandidates = ['dist', 'build', 'out', '.next/static'];
+        // Find dist folder
+        const distCandidates = ['dist', 'build', 'out'];
         let distPath = null;
         for (const candidate of distCandidates) {
             const candidatePath = path.join(projectRoot, candidate);
@@ -478,18 +414,11 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
         });
         
         console.log(`[${jobId}] Build completed successfully`);
-        
-        // Cleanup work directory (keep output)
         await fs.remove(workDir);
         
     } catch (error) {
         console.error(`[${jobId}] Build failed:`, error.message);
-        updateJob(jobId, {
-            status: 'failed',
-            error: error.message
-        });
-        
-        // Cleanup on error
+        updateJob(jobId, { status: 'failed', error: error.message });
         await fs.remove(workDir).catch(() => {});
     }
 });
@@ -523,21 +452,10 @@ app.get('/download/:jobId', authenticate, async (req, res) => {
         if (err) {
             console.error('Download error:', err);
         }
-        // Cleanup after download
         await fs.remove(outputPath).catch(() => {});
         jobs.delete(jobId);
     });
 });
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// HELPER FUNCTIONS
-// ═══════════════════════════════════════════════════════════════════════════════
-function updateJob(jobId, updates) {
-    const job = jobs.get(jobId);
-    if (job) {
-        jobs.set(jobId, { ...job, ...updates });
-    }
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // START SERVER
@@ -547,4 +465,4 @@ app.listen(PORT, () => {
     console.log(`Health check: http://localhost:${PORT}/health`);
 });
 
-module.exports = app;
+export default app;
