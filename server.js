@@ -1,11 +1,7 @@
 /**
- * Theme Factory Build Server v2.4.0 (Render Backend)
+ * Theme Factory Build Server v2.5.0 (Render Backend)
  * 
- * v2.4.0 Fixes:
- * - Route stripping to reduce memory usage
- * - Compatibility routes for /build/jobs/:id polling
- * - React import fix in injected guard code
- * - Returns absolute URLs in responses
+ * v2.5.0 Fix: Corrected route stripping logic - '/' no longer keeps all routes
  */
 
 import express from 'express';
@@ -94,10 +90,10 @@ function runCommand(command, args, cwd, timeoutMs = 10 * 60 * 1000) {
 app.get('/health', (req, res) => {
     res.json({
         status: 'ok',
-        version: '2.4.0',
+        version: '2.5.0',
         maxRoutes: 20,
         activeJobs: jobs.size,
-        features: ['route-stripping', 'route-guard-injection', 'async-builds', 'compat-routes']
+        features: ['route-stripping-v2', 'route-guard-injection', 'async-builds', 'compat-routes']
     });
 });
 
@@ -117,7 +113,7 @@ const authenticate = (req, res, next) => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ROUTE STRIPPING - Remove unused routes to reduce build size!
+// ROUTE STRIPPING v2 - FIXED LOGIC
 // ═══════════════════════════════════════════════════════════════════════════════
 function stripUnusedRoutes(projectPath, selectedRoutes) {
     console.log('[RouteStrip] Starting route stripping for:', selectedRoutes);
@@ -136,7 +132,7 @@ function stripUnusedRoutes(projectPath, selectedRoutes) {
     
     // Normalize selected routes for comparison
     const normalizedSelected = selectedRoutes.map(r => {
-        if (r === '/') return '/';
+        if (r === '/' || r === '') return '/';
         return '/' + r.replace(/^\/+|\/+$/g, '').toLowerCase();
     });
     
@@ -147,75 +143,127 @@ function stripUnusedRoutes(projectPath, selectedRoutes) {
     
     let match;
     const routesToRemove = [];
+    const routesKept = [];
     
     while ((match = routeRegex.exec(content)) !== null) {
         const fullMatch = match[0];
         const routePath = match[1];
         
-        let normalizedPath = routePath === '/' ? '/' : '/' + routePath.replace(/^\/+|\/+$/g, '').toLowerCase();
+        // Normalize the current route path
+        let normalizedPath;
+        if (routePath === '/' || routePath === '') {
+            normalizedPath = '/';
+        } else {
+            normalizedPath = '/' + routePath.replace(/^\/+|\/+$/g, '').toLowerCase();
+        }
         
+        // Special routes that should always be kept
+        const isSpecialRoute = routePath === '*' || routePath === 'index';
+        
+        if (isSpecialRoute) {
+            console.log(`[RouteStrip] Keeping special route: ${routePath}`);
+            routesKept.push(routePath);
+            continue;
+        }
+        
+        // FIXED LOGIC: Check if this route should be kept
         const shouldKeep = normalizedSelected.some(selected => {
-            if (selected === normalizedPath) return true;
-            if (normalizedPath === '/' && selected === '/') return true;
-            if (selected.startsWith(normalizedPath + '/')) return true;
-            if (normalizedPath.startsWith(selected)) return true;
+            // Exact match - keep if route exactly matches a selected route
+            if (selected === normalizedPath) {
+                return true;
+            }
+            
+            // Parent route check - keep if a selected route is a CHILD of this route
+            // e.g., if '/edmonton/services' is selected, keep '/edmonton' (its parent)
+            // But '/' should NOT keep everything - only exact '/' if selected
+            if (normalizedPath !== '/' && selected.startsWith(normalizedPath + '/')) {
+                return true;
+            }
+            
             return false;
         });
         
-        const isSpecialRoute = routePath === '*' || routePath === '' || routePath === 'index';
-        
-        if (!shouldKeep && !isSpecialRoute) {
-            console.log(`[RouteStrip] Removing route: ${routePath}`);
-            routesToRemove.push(fullMatch);
+        if (shouldKeep) {
+            console.log(`[RouteStrip] KEEPING route: ${routePath}`);
+            routesKept.push(routePath);
         } else {
-            console.log(`[RouteStrip] Keeping route: ${routePath}`);
+            console.log(`[RouteStrip] REMOVING route: ${routePath}`);
+            routesToRemove.push(fullMatch);
         }
     }
     
+    console.log(`[RouteStrip] Summary: Keeping ${routesKept.length} routes, Removing ${routesToRemove.length} routes`);
+    
+    // Remove the routes from content
     for (const route of routesToRemove) {
         content = content.replace(route, '');
     }
     
+    // Clean up multiple empty lines
     content = content.replace(/\n\s*\n\s*\n/g, '\n\n');
     
+    // Find components used in removed routes
     const componentRegex = /element\s*=\s*\{?\s*<(\w+)/g;
     const removedComponents = new Set();
     
     for (const route of routesToRemove) {
         let compMatch;
-        while ((compMatch = componentRegex.exec(route)) !== null) {
+        const tempRegex = /element\s*=\s*\{?\s*<(\w+)/g;
+        while ((compMatch = tempRegex.exec(route)) !== null) {
             removedComponents.add(compMatch[1]);
         }
     }
     
     console.log('[RouteStrip] Components from removed routes:', [...removedComponents]);
     
+    // Remove unused imports
     for (const comp of removedComponents) {
-        const regex = new RegExp(`<${comp}[\\s/>]`, 'g');
-        const matches = content.match(regex);
+        // Check if component is still used in remaining content
+        const usageRegex = new RegExp(`<${comp}[\\s/>]`, 'g');
+        const matches = content.match(usageRegex);
         
         if (!matches || matches.length === 0) {
-            const importRegex = new RegExp(`import\\s+(?:\\{[^}]*\\b${comp}\\b[^}]*\\}|${comp})\\s+from\\s+["'][^"']+["'];?\\n?`, 'g');
-            content = content.replace(importRegex, '');
+            console.log(`[RouteStrip] Removing unused import: ${comp}`);
             
-            const destructuredRegex = new RegExp(`(import\\s+\\{[^}]*)\\b${comp}\\b,?\\s*([^}]*\\}\\s+from)`, 'g');
-            content = content.replace(destructuredRegex, '$1$2');
+            // Remove standalone import: import Component from '...'
+            const standaloneImport = new RegExp(`import\\s+${comp}\\s+from\\s+["'][^"']+["'];?\\n?`, 'g');
+            content = content.replace(standaloneImport, '');
+            
+            // Remove from destructured import: import { Component } from '...'
+            // This is tricky - we need to handle various cases
+            const destructuredSingle = new RegExp(`import\\s+\\{\\s*${comp}\\s*\\}\\s+from\\s+["'][^"']+["'];?\\n?`, 'g');
+            content = content.replace(destructuredSingle, '');
+            
+            // Remove component from multi-import: import { A, Component, B } from '...'
+            const multiImport = new RegExp(`(import\\s+\\{[^}]*)\\b${comp}\\b\\s*,?\\s*([^}]*\\})`, 'g');
+            content = content.replace(multiImport, (match, before, after) => {
+                // Clean up double commas or leading/trailing commas
+                let result = before + after;
+                result = result.replace(/,\s*,/g, ',');
+                result = result.replace(/\{\s*,/g, '{');
+                result = result.replace(/,\s*\}/g, '}');
+                return result;
+            });
         }
     }
     
+    // Clean up empty imports: import { } from '...'
+    content = content.replace(/import\s+\{\s*\}\s+from\s+["'][^"']+["'];?\n?/g, '');
+    
+    // Save modified file
     if (content !== originalContent) {
         fs.writeFileSync(appPath + '.original', originalContent, 'utf-8');
         fs.writeFileSync(appPath, content, 'utf-8');
-        console.log(`[RouteStrip] Stripped ${routesToRemove.length} unused routes`);
+        console.log(`[RouteStrip] Successfully stripped ${routesToRemove.length} routes!`);
         return true;
     }
     
-    console.log('[RouteStrip] No routes removed');
+    console.log('[RouteStrip] No changes made');
     return false;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ROUTE GUARD INJECTION (with React import fix!)
+// ROUTE GUARD INJECTION
 // ═══════════════════════════════════════════════════════════════════════════════
 function findEntryFile(projectPath) {
     const candidates = [
@@ -224,10 +272,7 @@ function findEntryFile(projectPath) {
         'src/App.js',
         'src/main.tsx',
         'src/main.jsx',
-        'src/main.js',
-        'src/index.tsx',
-        'src/index.jsx',
-        'src/index.js'
+        'src/main.js'
     ];
     
     for (const candidate of candidates) {
@@ -243,9 +288,8 @@ function findEntryFile(projectPath) {
 function generateRouteGuardCode(selectedRoutes) {
     const routesJson = JSON.stringify(selectedRoutes);
     
-    // NOTE: Uses React.* syntax - we ensure React is imported in injectRouteGuard()
     return `
-// THEME FACTORY ROUTE GUARD - Injected by build server
+// THEME FACTORY ROUTE GUARD
 const TF_ALLOWED_ROUTES = ${routesJson};
 
 function normalizeRoute(path) {
@@ -325,7 +369,7 @@ function injectRouteGuard(projectPath, selectedRoutes) {
     
     const entryFile = findEntryFile(projectPath);
     if (!entryFile) {
-        console.warn('[RouteGuard] Could not find entry file, skipping injection');
+        console.warn('[RouteGuard] Could not find entry file, skipping');
         return false;
     }
     
@@ -339,15 +383,12 @@ function injectRouteGuard(projectPath, selectedRoutes) {
         return true;
     }
     
-    // ═══════════════════════════════════════════════════════════════════
-    // FIX: Ensure React is imported (needed for React.useState etc.)
-    // ═══════════════════════════════════════════════════════════════════
+    // Ensure React is imported
     const hasReactImport = /import\s+(\*\s+as\s+)?React[\s,{]/.test(content) || 
                           /import\s+React\s+from/.test(content);
     
     if (!hasReactImport) {
         console.log('[RouteGuard] Adding React import');
-        // Add at the very top of the file
         content = `import * as React from 'react';\n${content}`;
     }
     
@@ -434,12 +475,13 @@ async function processBuild(jobId, workDir, platform, routes, selectedRoutes, in
 
         console.log(`[${jobId}] Project root: ${projectRoot}`);
         
-        // STEP 1: STRIP UNUSED ROUTES
+        // STEP 1: STRIP UNUSED ROUTES (CRITICAL for memory!)
         updateJob(jobId, { progress: 8, status: 'stripping-unused-routes' });
         
         if (selectedRoutes.length > 0) {
-            console.log(`[${jobId}] Stripping unused routes to reduce build size...`);
-            stripUnusedRoutes(projectRoot, selectedRoutes);
+            console.log(`[${jobId}] Stripping unused routes...`);
+            const stripped = stripUnusedRoutes(projectRoot, selectedRoutes);
+            console.log(`[${jobId}] Route stripping result: ${stripped ? 'Routes removed' : 'No changes'}`);
         }
 
         // STEP 2: INJECT ROUTE GUARD
@@ -495,7 +537,7 @@ async function processBuild(jobId, workDir, platform, routes, selectedRoutes, in
             completedAt: Date.now()
         });
 
-        console.log(`[${jobId}] Build completed successfully`);
+        console.log(`[${jobId}] Build completed successfully!`);
         await fs.remove(workDir);
 
     } catch (error) {
@@ -522,7 +564,6 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
         startTime: Date.now()
     });
 
-    // Return ABSOLUTE URLs so clients can't mess up concatenation
     res.status(202).json({
         jobId,
         statusUrl: `${baseUrl}/jobs/${jobId}`,
@@ -588,10 +629,9 @@ app.get('/download/:jobId', authenticate, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// COMPATIBILITY ROUTES (if client wrongly polls /build/jobs/:id)
+// COMPATIBILITY ROUTES
 // ═══════════════════════════════════════════════════════════════════════════════
 app.get('/build/jobs/:jobId', authenticate, (req, res) => {
-    console.log(`[Compat] Redirecting /build/jobs/${req.params.jobId} to /jobs/${req.params.jobId}`);
     const job = jobs.get(req.params.jobId);
     if (!job) {
         return res.status(404).json({ error: 'Job not found', jobId: req.params.jobId });
@@ -600,7 +640,6 @@ app.get('/build/jobs/:jobId', authenticate, (req, res) => {
 });
 
 app.get('/build/download/:jobId', authenticate, async (req, res) => {
-    console.log(`[Compat] Redirecting /build/download/${req.params.jobId} to /download/${req.params.jobId}`);
     const outputPath = path.join('/tmp', 'outputs', `${req.params.jobId}.zip`);
     if (!await fs.pathExists(outputPath)) {
         return res.status(404).json({ error: 'Build artifact not found' });
@@ -616,9 +655,9 @@ app.get('/build/download/:jobId', authenticate, async (req, res) => {
 // START SERVER
 // ═══════════════════════════════════════════════════════════════════════════════
 app.listen(PORT, () => {
-    console.log(`Theme Factory Build Server v2.4.0 running on port ${PORT}`);
+    console.log(`Theme Factory Build Server v2.5.0 running on port ${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/health`);
-    console.log(`Features: route-stripping, React import fix, compat routes`);
+    console.log(`Route stripping v2: Now correctly handles '/' route`);
 });
 
 export default app;
