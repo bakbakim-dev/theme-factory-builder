@@ -1,11 +1,11 @@
 /**
- * Theme Factory Build Server v2.2.0 (Render Backend)
+ * Theme Factory Build Server v2.4.0 (Render Backend)
  * 
- * This server receives React source code from the Dashboard, optionally injects
- * a route guard to restrict navigation to selected routes, builds the project,
- * and returns the dist folder.
- * 
- * v2.2.0: Added NODE_OPTIONS for increased memory during builds
+ * v2.4.0 Fixes:
+ * - Route stripping to reduce memory usage
+ * - Compatibility routes for /build/jobs/:id polling
+ * - React import fix in injected guard code
+ * - Returns absolute URLs in responses
  */
 
 import express from 'express';
@@ -18,16 +18,14 @@ import AdmZip from 'adm-zip';
 import { v4 as uuidv4 } from 'uuid';
 import { fileURLToPath } from 'url';
 
-// ES Module __dirname equivalent
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 const API_KEY = process.env.API_KEY || 'dev-key';
-const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+const MAX_FILE_SIZE = 100 * 1024 * 1024;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
@@ -36,11 +34,10 @@ const upload = multer({
     limits: { fileSize: MAX_FILE_SIZE }
 });
 
-// Job storage (in production, use Redis or database)
 const jobs = new Map();
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ASYNC COMMAND EXECUTION (Non-blocking!)
+// ASYNC COMMAND EXECUTION
 // ═══════════════════════════════════════════════════════════════════════════════
 function runCommand(command, args, cwd, timeoutMs = 10 * 60 * 1000) {
     return new Promise((resolve, reject) => {
@@ -53,8 +50,7 @@ function runCommand(command, args, cwd, timeoutMs = 10 * 60 * 1000) {
                 ...process.env, 
                 CI: 'false', 
                 NODE_ENV: 'development',
-                // IMPORTANT: Increase Node.js memory limit for large builds
-                NODE_OPTIONS: '--max-old-space-size=4096'
+                NODE_OPTIONS: '--max-old-space-size=2048'
             }
         });
 
@@ -98,10 +94,10 @@ function runCommand(command, args, cwd, timeoutMs = 10 * 60 * 1000) {
 app.get('/health', (req, res) => {
     res.json({
         status: 'ok',
-        version: '2.2.0',
+        version: '2.4.0',
         maxRoutes: 20,
         activeJobs: jobs.size,
-        features: ['prerender', 'route-guard-injection', 'async-builds', 'high-memory']
+        features: ['route-stripping', 'route-guard-injection', 'async-builds', 'compat-routes']
     });
 });
 
@@ -121,12 +117,106 @@ const authenticate = (req, res, next) => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ROUTE GUARD INJECTION
+// ROUTE STRIPPING - Remove unused routes to reduce build size!
 // ═══════════════════════════════════════════════════════════════════════════════
+function stripUnusedRoutes(projectPath, selectedRoutes) {
+    console.log('[RouteStrip] Starting route stripping for:', selectedRoutes);
+    
+    const appTsxPath = path.join(projectPath, 'src', 'App.tsx');
+    const appJsxPath = path.join(projectPath, 'src', 'App.jsx');
+    const appPath = fs.existsSync(appTsxPath) ? appTsxPath : (fs.existsSync(appJsxPath) ? appJsxPath : null);
+    
+    if (!appPath) {
+        console.log('[RouteStrip] No App.tsx/jsx found, skipping');
+        return false;
+    }
+    
+    let content = fs.readFileSync(appPath, 'utf-8');
+    const originalContent = content;
+    
+    // Normalize selected routes for comparison
+    const normalizedSelected = selectedRoutes.map(r => {
+        if (r === '/') return '/';
+        return '/' + r.replace(/^\/+|\/+$/g, '').toLowerCase();
+    });
+    
+    console.log('[RouteStrip] Normalized selected routes:', normalizedSelected);
+    
+    // Find all Route elements
+    const routeRegex = /<Route\s+[^>]*path\s*=\s*["']([^"']+)["'][^>]*(?:\/>|>[\s\S]*?<\/Route>)/g;
+    
+    let match;
+    const routesToRemove = [];
+    
+    while ((match = routeRegex.exec(content)) !== null) {
+        const fullMatch = match[0];
+        const routePath = match[1];
+        
+        let normalizedPath = routePath === '/' ? '/' : '/' + routePath.replace(/^\/+|\/+$/g, '').toLowerCase();
+        
+        const shouldKeep = normalizedSelected.some(selected => {
+            if (selected === normalizedPath) return true;
+            if (normalizedPath === '/' && selected === '/') return true;
+            if (selected.startsWith(normalizedPath + '/')) return true;
+            if (normalizedPath.startsWith(selected)) return true;
+            return false;
+        });
+        
+        const isSpecialRoute = routePath === '*' || routePath === '' || routePath === 'index';
+        
+        if (!shouldKeep && !isSpecialRoute) {
+            console.log(`[RouteStrip] Removing route: ${routePath}`);
+            routesToRemove.push(fullMatch);
+        } else {
+            console.log(`[RouteStrip] Keeping route: ${routePath}`);
+        }
+    }
+    
+    for (const route of routesToRemove) {
+        content = content.replace(route, '');
+    }
+    
+    content = content.replace(/\n\s*\n\s*\n/g, '\n\n');
+    
+    const componentRegex = /element\s*=\s*\{?\s*<(\w+)/g;
+    const removedComponents = new Set();
+    
+    for (const route of routesToRemove) {
+        let compMatch;
+        while ((compMatch = componentRegex.exec(route)) !== null) {
+            removedComponents.add(compMatch[1]);
+        }
+    }
+    
+    console.log('[RouteStrip] Components from removed routes:', [...removedComponents]);
+    
+    for (const comp of removedComponents) {
+        const regex = new RegExp(`<${comp}[\\s/>]`, 'g');
+        const matches = content.match(regex);
+        
+        if (!matches || matches.length === 0) {
+            const importRegex = new RegExp(`import\\s+(?:\\{[^}]*\\b${comp}\\b[^}]*\\}|${comp})\\s+from\\s+["'][^"']+["'];?\\n?`, 'g');
+            content = content.replace(importRegex, '');
+            
+            const destructuredRegex = new RegExp(`(import\\s+\\{[^}]*)\\b${comp}\\b,?\\s*([^}]*\\}\\s+from)`, 'g');
+            content = content.replace(destructuredRegex, '$1$2');
+        }
+    }
+    
+    if (content !== originalContent) {
+        fs.writeFileSync(appPath + '.original', originalContent, 'utf-8');
+        fs.writeFileSync(appPath, content, 'utf-8');
+        console.log(`[RouteStrip] Stripped ${routesToRemove.length} unused routes`);
+        return true;
+    }
+    
+    console.log('[RouteStrip] No routes removed');
+    return false;
+}
 
-/**
- * Find the main entry file in a React project
- */
+// ═══════════════════════════════════════════════════════════════════════════════
+// ROUTE GUARD INJECTION (with React import fix!)
+// ═══════════════════════════════════════════════════════════════════════════════
 function findEntryFile(projectPath) {
     const candidates = [
         'src/App.tsx',
@@ -147,31 +237,15 @@ function findEntryFile(projectPath) {
         }
     }
     
-    // Try to find any file in src that contains Router or Routes
-    const srcPath = path.join(projectPath, 'src');
-    if (fs.existsSync(srcPath)) {
-        const files = fs.readdirSync(srcPath).filter(f => /\.(tsx|jsx|js)$/.test(f));
-        for (const file of files) {
-            const content = fs.readFileSync(path.join(srcPath, file), 'utf-8');
-            if (content.includes('BrowserRouter') || content.includes('<Routes>') || content.includes('createBrowserRouter')) {
-                return path.join(srcPath, file);
-            }
-        }
-    }
-    
     return null;
 }
 
-/**
- * Generate the route guard component code
- */
 function generateRouteGuardCode(selectedRoutes) {
     const routesJson = JSON.stringify(selectedRoutes);
     
+    // NOTE: Uses React.* syntax - we ensure React is imported in injectRouteGuard()
     return `
-// ═══════════════════════════════════════════════════════════════════════════════
 // THEME FACTORY ROUTE GUARD - Injected by build server
-// ═══════════════════════════════════════════════════════════════════════════════
 const TF_ALLOWED_ROUTES = ${routesJson};
 
 function normalizeRoute(path) {
@@ -243,13 +317,9 @@ function ThemeFactoryRouteGuard({ children }) {
     }
     return children;
 }
-// ═══════════════════════════════════════════════════════════════════════════════
 `;
 }
 
-/**
- * Inject route guard into the App component
- */
 function injectRouteGuard(projectPath, selectedRoutes) {
     console.log('[RouteGuard] Starting injection for routes:', selectedRoutes);
     
@@ -264,15 +334,24 @@ function injectRouteGuard(projectPath, selectedRoutes) {
     let content = fs.readFileSync(entryFile, 'utf-8');
     const originalContent = content;
     
-    // Check if already injected
     if (content.includes('ThemeFactoryRouteGuard')) {
         console.log('[RouteGuard] Already injected, skipping');
         return true;
     }
     
-    const guardCode = generateRouteGuardCode(selectedRoutes);
+    // ═══════════════════════════════════════════════════════════════════
+    // FIX: Ensure React is imported (needed for React.useState etc.)
+    // ═══════════════════════════════════════════════════════════════════
+    const hasReactImport = /import\s+(\*\s+as\s+)?React[\s,{]/.test(content) || 
+                          /import\s+React\s+from/.test(content);
     
-    // Strategy 1: Wrap default export function/const
+    if (!hasReactImport) {
+        console.log('[RouteGuard] Adding React import');
+        // Add at the very top of the file
+        content = `import * as React from 'react';\n${content}`;
+    }
+    
+    const guardCode = generateRouteGuardCode(selectedRoutes);
     const defaultExportMatch = content.match(/export\s+default\s+(function\s+)?(\w+)/);
     
     if (defaultExportMatch) {
@@ -280,7 +359,6 @@ function injectRouteGuard(projectPath, selectedRoutes) {
         console.log('[RouteGuard] Found default export component:', componentName);
         
         if (defaultExportMatch[1]) {
-            // export default function App() { ... }
             content = content.replace(
                 /export\s+default\s+function\s+(\w+)\s*\(/,
                 'function _TF_Original$1('
@@ -293,7 +371,6 @@ export default function ${componentName}() {
 }
 `;
         } else {
-            // export default App
             content = content.replace(/export\s+default\s+\w+\s*;?/, '');
             content += `
 ${guardCode}
@@ -302,27 +379,6 @@ const _TF_Wrapped${componentName} = () => React.createElement(ThemeFactoryRouteG
 export default _TF_Wrapped${componentName};
 `;
         }
-    } else if (content.includes('createRoot') || content.includes('ReactDOM.render')) {
-        // Strategy 2: Handle main.tsx/index.tsx entry points
-        console.log('[RouteGuard] Found ReactDOM entry point, injecting wrapper');
-        
-        const importEndMatch = content.match(/^(import\s+.+\s+from\s+['"][^'"]+['"];?\s*)+/m);
-        if (importEndMatch) {
-            const insertPosition = importEndMatch.index + importEndMatch[0].length;
-            content = content.slice(0, insertPosition) + '\n' + guardCode + '\n' + content.slice(insertPosition);
-        } else {
-            content = guardCode + '\n' + content;
-        }
-        
-        // Wrap App in render()
-        content = content.replace(
-            /\.render\s*\(\s*<(\w+)\s*\/?\s*>/g,
-            '.render(<ThemeFactoryRouteGuard><$1 /></ThemeFactoryRouteGuard>'
-        );
-        content = content.replace(
-            /\.render\s*\(\s*<(StrictMode|React\.StrictMode)>\s*<(\w+)\s*\/?\s*>\s*<\/(StrictMode|React\.StrictMode)>/g,
-            '.render(<$1><ThemeFactoryRouteGuard><$2 /></ThemeFactoryRouteGuard></$3>'
-        );
     } else {
         console.warn('[RouteGuard] Could not find suitable injection point');
         return false;
@@ -345,6 +401,12 @@ function updateJob(jobId, updates) {
     }
 }
 
+function getBaseUrl(req) {
+    const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    return `${protocol}://${host}`;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // ASYNC BUILD PROCESS
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -355,7 +417,6 @@ async function processBuild(jobId, workDir, platform, routes, selectedRoutes, in
         await fs.ensureDir(workDir);
         updateJob(jobId, { progress: 5, status: 'extracting' });
 
-        // Find actual project root
         let projectRoot = workDir;
         const entries = await fs.readdir(workDir);
         if (entries.length === 1) {
@@ -372,34 +433,32 @@ async function processBuild(jobId, workDir, platform, routes, selectedRoutes, in
         }
 
         console.log(`[${jobId}] Project root: ${projectRoot}`);
+        
+        // STEP 1: STRIP UNUSED ROUTES
+        updateJob(jobId, { progress: 8, status: 'stripping-unused-routes' });
+        
+        if (selectedRoutes.length > 0) {
+            console.log(`[${jobId}] Stripping unused routes to reduce build size...`);
+            stripUnusedRoutes(projectRoot, selectedRoutes);
+        }
+
+        // STEP 2: INJECT ROUTE GUARD
         updateJob(jobId, { progress: 10, status: 'injecting-route-guard' });
 
-        // ═══════════════════════════════════════════════════════════════════
-        // INJECT ROUTE GUARD
-        // ═══════════════════════════════════════════════════════════════════
         if (injectGuard && selectedRoutes.length > 0) {
             console.log(`[${jobId}] Injecting route guard...`);
-            const injected = injectRouteGuard(projectRoot, selectedRoutes);
-            if (injected) {
-                console.log(`[${jobId}] Route guard injection successful`);
-            } else {
-                console.warn(`[${jobId}] Route guard injection failed, continuing without it`);
-            }
+            injectRouteGuard(projectRoot, selectedRoutes);
         }
 
         updateJob(jobId, { progress: 15, status: 'installing-dependencies' });
 
-        // ═══════════════════════════════════════════════════════════════════
-        // INSTALL DEPENDENCIES (async - won't block health checks!)
-        // ═══════════════════════════════════════════════════════════════════
+        // STEP 3: INSTALL DEPENDENCIES
         console.log(`[${jobId}] Installing dependencies...`);
         await runCommand('npm', ['install', '--legacy-peer-deps', '--include=dev'], projectRoot, 10 * 60 * 1000);
 
         updateJob(jobId, { progress: 40, status: 'building' });
 
-        // ═══════════════════════════════════════════════════════════════════
-        // BUILD PROJECT (async - won't block health checks!)
-        // ═══════════════════════════════════════════════════════════════════
+        // STEP 4: BUILD PROJECT
         console.log(`[${jobId}] Running build...`);
         await runCommand('npm', ['run', 'build'], projectRoot, 10 * 60 * 1000);
 
@@ -422,7 +481,6 @@ async function processBuild(jobId, workDir, platform, routes, selectedRoutes, in
 
         console.log(`[${jobId}] Found dist at: ${distPath}`);
 
-        // Create output ZIP
         const outputZip = new AdmZip();
         outputZip.addLocalFolder(distPath);
 
@@ -453,6 +511,7 @@ async function processBuild(jobId, workDir, platform, routes, selectedRoutes, in
 app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
     const jobId = uuidv4();
     const workDir = path.join('/tmp', 'builds', jobId);
+    const baseUrl = getBaseUrl(req);
 
     console.log(`[${jobId}] Starting build job`);
 
@@ -463,10 +522,11 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
         startTime: Date.now()
     });
 
-    // Return immediately - don't wait for build
+    // Return ABSOLUTE URLs so clients can't mess up concatenation
     res.status(202).json({
         jobId,
-        statusUrl: `/jobs/${jobId}`,
+        statusUrl: `${baseUrl}/jobs/${jobId}`,
+        downloadUrl: `${baseUrl}/download/${jobId}`,
         message: 'Build job queued'
     });
 
@@ -479,14 +539,12 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
         console.log(`[${jobId}] Platform: ${platform}, Routes: ${routes.length}, InjectGuard: ${injectGuard}`);
         console.log(`[${jobId}] Selected routes for guard:`, selectedRoutes);
 
-        // Extract uploaded ZIP first (this is fast)
         await fs.ensureDir(workDir);
         const zipBuffer = req.file.buffer;
         const zip = new AdmZip(zipBuffer);
         zip.extractAllTo(workDir, true);
         console.log(`[${jobId}] Extracted source to ${workDir}`);
 
-        // Start async build process (don't await - let it run in background)
         processBuild(jobId, workDir, platform, routes, selectedRoutes, injectGuard);
 
     } catch (error) {
@@ -503,7 +561,7 @@ app.get('/jobs/:jobId', authenticate, (req, res) => {
     const job = jobs.get(jobId);
 
     if (!job) {
-        return res.status(404).json({ error: 'Job not found' });
+        return res.status(404).json({ error: 'Job not found', jobId });
     }
 
     res.json(job);
@@ -530,13 +588,37 @@ app.get('/download/:jobId', authenticate, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// COMPATIBILITY ROUTES (if client wrongly polls /build/jobs/:id)
+// ═══════════════════════════════════════════════════════════════════════════════
+app.get('/build/jobs/:jobId', authenticate, (req, res) => {
+    console.log(`[Compat] Redirecting /build/jobs/${req.params.jobId} to /jobs/${req.params.jobId}`);
+    const job = jobs.get(req.params.jobId);
+    if (!job) {
+        return res.status(404).json({ error: 'Job not found', jobId: req.params.jobId });
+    }
+    res.json(job);
+});
+
+app.get('/build/download/:jobId', authenticate, async (req, res) => {
+    console.log(`[Compat] Redirecting /build/download/${req.params.jobId} to /download/${req.params.jobId}`);
+    const outputPath = path.join('/tmp', 'outputs', `${req.params.jobId}.zip`);
+    if (!await fs.pathExists(outputPath)) {
+        return res.status(404).json({ error: 'Build artifact not found' });
+    }
+    res.download(outputPath, 'dist.zip', async (err) => {
+        if (err) console.error('Download error:', err);
+        await fs.remove(outputPath).catch(() => {});
+        jobs.delete(req.params.jobId);
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // START SERVER
 // ═══════════════════════════════════════════════════════════════════════════════
 app.listen(PORT, () => {
-    console.log(`Theme Factory Build Server v2.2.0 running on port ${PORT}`);
+    console.log(`Theme Factory Build Server v2.4.0 running on port ${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/health`);
-    console.log(`Async builds enabled - health checks will not timeout during builds`);
-    console.log(`High memory mode: NODE_OPTIONS=--max-old-space-size=4096`);
+    console.log(`Features: route-stripping, React import fix, compat routes`);
 });
 
 export default app;
