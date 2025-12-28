@@ -11,7 +11,7 @@ import multer from 'multer';
 import cors from 'cors';
 import fs from 'fs-extra';
 import path from 'path';
-import { execSync } from 'child_process';
+import { spawn } from 'child_process';
 import AdmZip from 'adm-zip';
 import { v4 as uuidv4 } from 'uuid';
 import { fileURLToPath } from 'url';
@@ -21,7 +21,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 10000;
 const API_KEY = process.env.API_KEY || 'dev-key';
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
 
@@ -38,14 +38,62 @@ const upload = multer({
 const jobs = new Map();
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// ASYNC COMMAND EXECUTION (Non-blocking!)
+// ═══════════════════════════════════════════════════════════════════════════════
+function runCommand(command, args, cwd, timeoutMs = 5 * 60 * 1000) {
+    return new Promise((resolve, reject) => {
+        console.log(`[CMD] Running: ${command} ${args.join(' ')} in ${cwd}`);
+        
+        const proc = spawn(command, args, {
+            cwd,
+            shell: true,
+            env: { ...process.env, CI: 'false', NODE_ENV: 'development' }
+        });
+
+        let stdout = '';
+        let stderr = '';
+
+        proc.stdout.on('data', (data) => {
+            stdout += data.toString();
+            console.log(data.toString());
+        });
+
+        proc.stderr.on('data', (data) => {
+            stderr += data.toString();
+            console.log(data.toString());
+        });
+
+        const timeout = setTimeout(() => {
+            proc.kill('SIGTERM');
+            reject(new Error(`Command timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+
+        proc.on('close', (code) => {
+            clearTimeout(timeout);
+            if (code === 0) {
+                resolve({ stdout, stderr });
+            } else {
+                reject(new Error(`Command failed with code ${code}: ${stderr}`));
+            }
+        });
+
+        proc.on('error', (err) => {
+            clearTimeout(timeout);
+            reject(err);
+        });
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // HEALTH CHECK
 // ═══════════════════════════════════════════════════════════════════════════════
 app.get('/health', (req, res) => {
     res.json({
         status: 'ok',
-        version: '2.0.0',
+        version: '2.1.0',
         maxRoutes: 20,
-        features: ['prerender', 'route-guard-injection']
+        activeJobs: jobs.size,
+        features: ['prerender', 'route-guard-injection', 'async-builds']
     });
 });
 
@@ -290,45 +338,15 @@ function updateJob(jobId, updates) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// BUILD ENDPOINT
+// ASYNC BUILD PROCESS
 // ═══════════════════════════════════════════════════════════════════════════════
-app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
-    const jobId = uuidv4();
-    const workDir = path.join('/tmp', 'builds', jobId);
-    
-    console.log(`[${jobId}] Starting build job`);
-    
-    jobs.set(jobId, {
-        id: jobId,
-        status: 'processing',
-        progress: 0,
-        startTime: Date.now()
-    });
-    
-    res.status(202).json({
-        jobId,
-        statusUrl: `/jobs/${jobId}`,
-        message: 'Build job queued'
-    });
-    
+async function processBuild(jobId, workDir, platform, routes, selectedRoutes, injectGuard) {
     try {
-        const platform = req.body.platform || 'lovable';
-        const routes = JSON.parse(req.body.routes || '[]');
-        const selectedRoutes = JSON.parse(req.body.selectedRoutes || '[]');
-        const injectGuard = req.body.injectRouteGuard === 'true';
-        
-        console.log(`[${jobId}] Platform: ${platform}, Routes: ${routes.length}, InjectGuard: ${injectGuard}`);
-        console.log(`[${jobId}] Selected routes for guard:`, selectedRoutes);
+        console.log(`[${jobId}] Starting async build process`);
         
         await fs.ensureDir(workDir);
         updateJob(jobId, { progress: 5, status: 'extracting' });
-        
-        // Extract uploaded ZIP
-        const zipBuffer = req.file.buffer;
-        const zip = new AdmZip(zipBuffer);
-        zip.extractAllTo(workDir, true);
-        console.log(`[${jobId}] Extracted source to ${workDir}`);
-        
+
         // Find actual project root
         let projectRoot = workDir;
         const entries = await fs.readdir(workDir);
@@ -339,14 +357,15 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
                 projectRoot = singleEntry;
             }
         }
-        
+
         const packageJsonPath = path.join(projectRoot, 'package.json');
         if (!await fs.pathExists(packageJsonPath)) {
             throw new Error('No package.json found in uploaded source');
         }
-        
+
+        console.log(`[${jobId}] Project root: ${projectRoot}`);
         updateJob(jobId, { progress: 10, status: 'injecting-route-guard' });
-        
+
         // ═══════════════════════════════════════════════════════════════════
         // INJECT ROUTE GUARD
         // ═══════════════════════════════════════════════════════════════════
@@ -359,28 +378,25 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
                 console.warn(`[${jobId}] Route guard injection failed, continuing without it`);
             }
         }
-        
+
         updateJob(jobId, { progress: 15, status: 'installing-dependencies' });
-        
+
+        // ═══════════════════════════════════════════════════════════════════
+        // INSTALL DEPENDENCIES (async - won't block health checks!)
+        // ═══════════════════════════════════════════════════════════════════
         console.log(`[${jobId}] Installing dependencies...`);
-        execSync('npm install --legacy-peer-deps --include=dev', {
-            cwd: projectRoot,
-            stdio: 'inherit',
-            timeout: 5 * 60 * 1000
-        });
-        
+        await runCommand('npm', ['install', '--legacy-peer-deps', '--include=dev'], projectRoot, 5 * 60 * 1000);
+
         updateJob(jobId, { progress: 40, status: 'building' });
-        
+
+        // ═══════════════════════════════════════════════════════════════════
+        // BUILD PROJECT (async - won't block health checks!)
+        // ═══════════════════════════════════════════════════════════════════
         console.log(`[${jobId}] Running build...`);
-        execSync('npm run build', {
-            cwd: projectRoot,
-            stdio: 'inherit',
-            timeout: 5 * 60 * 1000,
-            env: { ...process.env, CI: 'false' }
-        });
-        
+        await runCommand('npm', ['run', 'build'], projectRoot, 5 * 60 * 1000);
+
         updateJob(jobId, { progress: 70, status: 'packaging' });
-        
+
         // Find dist folder
         const distCandidates = ['dist', 'build', 'out'];
         let distPath = null;
@@ -391,35 +407,83 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
                 break;
             }
         }
-        
+
         if (!distPath) {
             throw new Error('Build completed but no dist folder found');
         }
-        
+
         console.log(`[${jobId}] Found dist at: ${distPath}`);
-        
+
         // Create output ZIP
         const outputZip = new AdmZip();
         outputZip.addLocalFolder(distPath);
-        
+
         const outputPath = path.join('/tmp', 'outputs', `${jobId}.zip`);
         await fs.ensureDir(path.dirname(outputPath));
         outputZip.writeZip(outputPath);
-        
-        updateJob(jobId, { 
-            progress: 100, 
+
+        updateJob(jobId, {
+            progress: 100,
             status: 'completed',
             downloadUrl: `/download/${jobId}`,
             completedAt: Date.now()
         });
-        
+
         console.log(`[${jobId}] Build completed successfully`);
         await fs.remove(workDir);
-        
+
     } catch (error) {
         console.error(`[${jobId}] Build failed:`, error.message);
         updateJob(jobId, { status: 'failed', error: error.message });
         await fs.remove(workDir).catch(() => {});
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BUILD ENDPOINT
+// ═══════════════════════════════════════════════════════════════════════════════
+app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
+    const jobId = uuidv4();
+    const workDir = path.join('/tmp', 'builds', jobId);
+
+    console.log(`[${jobId}] Starting build job`);
+
+    jobs.set(jobId, {
+        id: jobId,
+        status: 'processing',
+        progress: 0,
+        startTime: Date.now()
+    });
+
+    // Return immediately - don't wait for build
+    res.status(202).json({
+        jobId,
+        statusUrl: `/jobs/${jobId}`,
+        message: 'Build job queued'
+    });
+
+    try {
+        const platform = req.body.platform || 'lovable';
+        const routes = JSON.parse(req.body.routes || '[]');
+        const selectedRoutes = JSON.parse(req.body.selectedRoutes || '[]');
+        const injectGuard = req.body.injectRouteGuard === 'true';
+
+        console.log(`[${jobId}] Platform: ${platform}, Routes: ${routes.length}, InjectGuard: ${injectGuard}`);
+        console.log(`[${jobId}] Selected routes for guard:`, selectedRoutes);
+
+        // Extract uploaded ZIP first (this is fast)
+        await fs.ensureDir(workDir);
+        const zipBuffer = req.file.buffer;
+        const zip = new AdmZip(zipBuffer);
+        zip.extractAllTo(workDir, true);
+        console.log(`[${jobId}] Extracted source to ${workDir}`);
+
+        // Start async build process (don't await - let it run in background)
+        processBuild(jobId, workDir, platform, routes, selectedRoutes, injectGuard);
+
+    } catch (error) {
+        console.error(`[${jobId}] Setup failed:`, error.message);
+        updateJob(jobId, { status: 'failed', error: error.message });
     }
 });
 
@@ -429,11 +493,11 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
 app.get('/jobs/:jobId', authenticate, (req, res) => {
     const { jobId } = req.params;
     const job = jobs.get(jobId);
-    
+
     if (!job) {
         return res.status(404).json({ error: 'Job not found' });
     }
-    
+
     res.json(job);
 });
 
@@ -443,11 +507,11 @@ app.get('/jobs/:jobId', authenticate, (req, res) => {
 app.get('/download/:jobId', authenticate, async (req, res) => {
     const { jobId } = req.params;
     const outputPath = path.join('/tmp', 'outputs', `${jobId}.zip`);
-    
+
     if (!await fs.pathExists(outputPath)) {
         return res.status(404).json({ error: 'Build artifact not found' });
     }
-    
+
     res.download(outputPath, 'dist.zip', async (err) => {
         if (err) {
             console.error('Download error:', err);
@@ -461,8 +525,9 @@ app.get('/download/:jobId', authenticate, async (req, res) => {
 // START SERVER
 // ═══════════════════════════════════════════════════════════════════════════════
 app.listen(PORT, () => {
-    console.log(`Theme Factory Build Server running on port ${PORT}`);
+    console.log(`Theme Factory Build Server v2.1.0 running on port ${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/health`);
+    console.log(`Async builds enabled - health checks will not timeout during builds`);
 });
 
 export default app;
