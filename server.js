@@ -94,7 +94,7 @@ function runCommand(command, args, cwd, timeoutMs = 10 * 60 * 1000) {
 app.get('/health', (req, res) => {
     res.json({
         status: 'ok',
-        version: '2.6.0',
+        version: '2.6.1',
         maxRoutes: 20,
         activeJobs: jobs.size,
         features: ['route-stripping-v3', 'route-guard-injection', 'async-builds', 'compat-routes']
@@ -644,14 +644,23 @@ app.get('/download/:jobId', authenticate, async (req, res) => {
     const { jobId } = req.params;
     const outputPath = path.join('/tmp', 'outputs', `${jobId}.zip`);
 
+    console.log(`[Download] Attempting to download ${jobId}`);
+
     if (!await fs.pathExists(outputPath)) {
+        console.log(`[Download] File not found: ${outputPath}`);
         return res.status(404).json({ error: 'Build artifact not found' });
     }
 
+    console.log(`[Download] File exists, sending...`);
+    
     res.download(outputPath, 'dist.zip', async (err) => {
         if (err) {
-            console.error('Download error:', err);
+            console.error(`[Download] Error sending file:`, err.message);
+            // DON'T delete the file on error - allow retry!
+            return;
         }
+        // Only delete on successful download
+        console.log(`[Download] Success! Cleaning up...`);
         await fs.remove(outputPath).catch(() => {});
         jobs.delete(jobId);
     });
@@ -670,11 +679,17 @@ app.get('/build/jobs/:jobId', authenticate, (req, res) => {
 
 app.get('/build/download/:jobId', authenticate, async (req, res) => {
     const outputPath = path.join('/tmp', 'outputs', `${req.params.jobId}.zip`);
+    console.log(`[Download/Compat] Attempting to download ${req.params.jobId}`);
+    
     if (!await fs.pathExists(outputPath)) {
         return res.status(404).json({ error: 'Build artifact not found' });
     }
     res.download(outputPath, 'dist.zip', async (err) => {
-        if (err) console.error('Download error:', err);
+        if (err) {
+            console.error(`[Download/Compat] Error:`, err.message);
+            return; // Don't delete on error
+        }
+        console.log(`[Download/Compat] Success! Cleaning up...`);
         await fs.remove(outputPath).catch(() => {});
         jobs.delete(req.params.jobId);
     });
@@ -684,7 +699,7 @@ app.get('/build/download/:jobId', authenticate, async (req, res) => {
 // START SERVER
 // ═══════════════════════════════════════════════════════════════════════════════
 app.listen(PORT, () => {
-    console.log(`Theme Factory Build Server v2.6.0 running on port ${PORT}`);
+    console.log(`Theme Factory Build Server v2.6.1 running on port ${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/health`);
     console.log(`Route stripping v3: Line-by-line JSX handling`);
 });
