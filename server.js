@@ -18,6 +18,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+
+// IMPORTANT: Trust proxy on Render so req.protocol returns 'https' correctly
+app.set('trust proxy', 1);
+
 const PORT = process.env.PORT || 10000;
 const API_KEY = process.env.API_KEY || 'dev-key';
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
@@ -90,7 +94,7 @@ function runCommand(command, args, cwd, timeoutMs = 10 * 60 * 1000) {
 app.get('/health', (req, res) => {
     res.json({
         status: 'ok',
-        version: '2.5.0',
+        version: '2.5.1',
         maxRoutes: 20,
         activeJobs: jobs.size,
         features: ['route-stripping-v2', 'route-guard-injection', 'async-builds', 'compat-routes']
@@ -443,9 +447,8 @@ function updateJob(jobId, updates) {
 }
 
 function getBaseUrl(req) {
-    const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
-    const host = req.headers['x-forwarded-host'] || req.headers.host;
-    return `${protocol}://${host}`;
+    // With 'trust proxy' enabled, req.protocol correctly returns 'https' on Render
+    return `${req.protocol}://${req.get('host')}`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -655,9 +658,9 @@ app.get('/build/download/:jobId', authenticate, async (req, res) => {
 // START SERVER
 // ═══════════════════════════════════════════════════════════════════════════════
 app.listen(PORT, () => {
-    console.log(`Theme Factory Build Server v2.5.0 running on port ${PORT}`);
+    console.log(`Theme Factory Build Server v2.5.1 running on port ${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/health`);
-    console.log(`Route stripping v2: Now correctly handles '/' route`);
+    console.log(`trust proxy enabled, route stripping v2, compat routes`);
 });
 
 export default app;
