@@ -1,9 +1,11 @@
 /**
- * Theme Factory Build Server (Render Backend)
+ * Theme Factory Build Server v2.2.0 (Render Backend)
  * 
  * This server receives React source code from the Dashboard, optionally injects
  * a route guard to restrict navigation to selected routes, builds the project,
  * and returns the dist folder.
+ * 
+ * v2.2.0: Added NODE_OPTIONS for increased memory during builds
  */
 
 import express from 'express';
@@ -40,14 +42,20 @@ const jobs = new Map();
 // ═══════════════════════════════════════════════════════════════════════════════
 // ASYNC COMMAND EXECUTION (Non-blocking!)
 // ═══════════════════════════════════════════════════════════════════════════════
-function runCommand(command, args, cwd, timeoutMs = 5 * 60 * 1000) {
+function runCommand(command, args, cwd, timeoutMs = 10 * 60 * 1000) {
     return new Promise((resolve, reject) => {
         console.log(`[CMD] Running: ${command} ${args.join(' ')} in ${cwd}`);
         
         const proc = spawn(command, args, {
             cwd,
             shell: true,
-            env: { ...process.env, CI: 'false', NODE_ENV: 'development' }
+            env: { 
+                ...process.env, 
+                CI: 'false', 
+                NODE_ENV: 'development',
+                // IMPORTANT: Increase Node.js memory limit for large builds
+                NODE_OPTIONS: '--max-old-space-size=4096'
+            }
         });
 
         let stdout = '';
@@ -90,10 +98,10 @@ function runCommand(command, args, cwd, timeoutMs = 5 * 60 * 1000) {
 app.get('/health', (req, res) => {
     res.json({
         status: 'ok',
-        version: '2.1.0',
+        version: '2.2.0',
         maxRoutes: 20,
         activeJobs: jobs.size,
-        features: ['prerender', 'route-guard-injection', 'async-builds']
+        features: ['prerender', 'route-guard-injection', 'async-builds', 'high-memory']
     });
 });
 
@@ -385,7 +393,7 @@ async function processBuild(jobId, workDir, platform, routes, selectedRoutes, in
         // INSTALL DEPENDENCIES (async - won't block health checks!)
         // ═══════════════════════════════════════════════════════════════════
         console.log(`[${jobId}] Installing dependencies...`);
-        await runCommand('npm', ['install', '--legacy-peer-deps', '--include=dev'], projectRoot, 5 * 60 * 1000);
+        await runCommand('npm', ['install', '--legacy-peer-deps', '--include=dev'], projectRoot, 10 * 60 * 1000);
 
         updateJob(jobId, { progress: 40, status: 'building' });
 
@@ -393,7 +401,7 @@ async function processBuild(jobId, workDir, platform, routes, selectedRoutes, in
         // BUILD PROJECT (async - won't block health checks!)
         // ═══════════════════════════════════════════════════════════════════
         console.log(`[${jobId}] Running build...`);
-        await runCommand('npm', ['run', 'build'], projectRoot, 5 * 60 * 1000);
+        await runCommand('npm', ['run', 'build'], projectRoot, 10 * 60 * 1000);
 
         updateJob(jobId, { progress: 70, status: 'packaging' });
 
@@ -525,9 +533,10 @@ app.get('/download/:jobId', authenticate, async (req, res) => {
 // START SERVER
 // ═══════════════════════════════════════════════════════════════════════════════
 app.listen(PORT, () => {
-    console.log(`Theme Factory Build Server v2.1.0 running on port ${PORT}`);
+    console.log(`Theme Factory Build Server v2.2.0 running on port ${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/health`);
     console.log(`Async builds enabled - health checks will not timeout during builds`);
+    console.log(`High memory mode: NODE_OPTIONS=--max-old-space-size=4096`);
 });
 
 export default app;
