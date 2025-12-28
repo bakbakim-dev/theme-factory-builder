@@ -1,7 +1,7 @@
 /**
- * Theme Factory Build Server v2.5.0 (Render Backend)
+ * Theme Factory Build Server v2.6.0 (Render Backend)
  * 
- * v2.5.0 Fix: Corrected route stripping logic - '/' no longer keeps all routes
+ * v2.6.0: Fixed route stripping with line-by-line approach (handles JSX properly)
  */
 
 import express from 'express';
@@ -94,10 +94,10 @@ function runCommand(command, args, cwd, timeoutMs = 10 * 60 * 1000) {
 app.get('/health', (req, res) => {
     res.json({
         status: 'ok',
-        version: '2.5.1',
+        version: '2.6.0',
         maxRoutes: 20,
         activeJobs: jobs.size,
-        features: ['route-stripping-v2', 'route-guard-injection', 'async-builds', 'compat-routes']
+        features: ['route-stripping-v3', 'route-guard-injection', 'async-builds', 'compat-routes']
     });
 });
 
@@ -117,7 +117,7 @@ const authenticate = (req, res, next) => {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// ROUTE STRIPPING v2 - FIXED LOGIC
+// ROUTE STRIPPING v3 - Line-by-line approach (handles JSX properly!)
 // ═══════════════════════════════════════════════════════════════════════════════
 function stripUnusedRoutes(projectPath, selectedRoutes) {
     console.log('[RouteStrip] Starting route stripping for:', selectedRoutes);
@@ -131,10 +131,11 @@ function stripUnusedRoutes(projectPath, selectedRoutes) {
         return false;
     }
     
-    let content = fs.readFileSync(appPath, 'utf-8');
+    const content = fs.readFileSync(appPath, 'utf-8');
     const originalContent = content;
+    const lines = content.split('\n');
     
-    // Normalize selected routes for comparison
+    // Normalize selected routes
     const normalizedSelected = selectedRoutes.map(r => {
         if (r === '/' || r === '') return '/';
         return '/' + r.replace(/^\/+|\/+$/g, '').toLowerCase();
@@ -142,128 +143,155 @@ function stripUnusedRoutes(projectPath, selectedRoutes) {
     
     console.log('[RouteStrip] Normalized selected routes:', normalizedSelected);
     
-    // Find all Route elements
-    const routeRegex = /<Route\s+[^>]*path\s*=\s*["']([^"']+)["'][^>]*(?:\/>|>[\s\S]*?<\/Route>)/g;
-    
-    let match;
-    const routesToRemove = [];
-    const routesKept = [];
-    
-    while ((match = routeRegex.exec(content)) !== null) {
-        const fullMatch = match[0];
-        const routePath = match[1];
-        
-        // Normalize the current route path
-        let normalizedPath;
-        if (routePath === '/' || routePath === '') {
-            normalizedPath = '/';
-        } else {
-            normalizedPath = '/' + routePath.replace(/^\/+|\/+$/g, '').toLowerCase();
+    // Helper to check if a route should be kept
+    function shouldKeepRoute(routePath) {
+        if (routePath === '*' || routePath === 'index') {
+            return true; // Always keep special routes
         }
         
-        // Special routes that should always be kept
-        const isSpecialRoute = routePath === '*' || routePath === 'index';
+        let normalizedPath = routePath === '/' ? '/' : '/' + routePath.replace(/^\/+|\/+$/g, '').toLowerCase();
         
-        if (isSpecialRoute) {
-            console.log(`[RouteStrip] Keeping special route: ${routePath}`);
-            routesKept.push(routePath);
-            continue;
-        }
-        
-        // FIXED LOGIC: Check if this route should be kept
-        const shouldKeep = normalizedSelected.some(selected => {
-            // Exact match - keep if route exactly matches a selected route
-            if (selected === normalizedPath) {
-                return true;
-            }
-            
-            // Parent route check - keep if a selected route is a CHILD of this route
-            // e.g., if '/edmonton/services' is selected, keep '/edmonton' (its parent)
-            // But '/' should NOT keep everything - only exact '/' if selected
-            if (normalizedPath !== '/' && selected.startsWith(normalizedPath + '/')) {
-                return true;
-            }
-            
+        return normalizedSelected.some(selected => {
+            // Exact match
+            if (selected === normalizedPath) return true;
+            // Parent route check (but not for '/')
+            if (normalizedPath !== '/' && selected.startsWith(normalizedPath + '/')) return true;
             return false;
         });
+    }
+    
+    // Process line by line
+    const resultLines = [];
+    let skipping = false;
+    let skipDepth = 0;
+    let removedCount = 0;
+    let keptCount = 0;
+    
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmed = line.trim();
         
-        if (shouldKeep) {
-            console.log(`[RouteStrip] KEEPING route: ${routePath}`);
-            routesKept.push(routePath);
+        // If we're currently skipping a route
+        if (skipping) {
+            // Count angle brackets to track depth
+            const openBrackets = (line.match(/<(?!\/)/g) || []).length; // < but not </
+            const closeBrackets = (line.match(/\/>/g) || []).length + (line.match(/<\//g) || []).length;
+            skipDepth += openBrackets - closeBrackets;
+            
+            // Check if this line ends the Route element
+            if (trimmed.endsWith('/>') || trimmed.includes('</Route>')) {
+                skipping = false;
+                skipDepth = 0;
+            }
+            continue; // Skip this line
+        }
+        
+        // Check if this line starts a Route element
+        const routeMatch = line.match(/<Route\s+[^>]*path\s*=\s*["']([^"']+)["']/);
+        
+        if (routeMatch) {
+            const routePath = routeMatch[1];
+            
+            if (shouldKeepRoute(routePath)) {
+                console.log(`[RouteStrip] KEEPING: ${routePath}`);
+                keptCount++;
+                resultLines.push(line);
+            } else {
+                console.log(`[RouteStrip] REMOVING: ${routePath}`);
+                removedCount++;
+                
+                // Check if it's a single-line self-closing route
+                if (trimmed.endsWith('/>')) {
+                    // Single line route, just skip it
+                    continue;
+                } else {
+                    // Multi-line route, start skipping
+                    skipping = true;
+                    skipDepth = 1;
+                    continue;
+                }
+            }
         } else {
-            console.log(`[RouteStrip] REMOVING route: ${routePath}`);
-            routesToRemove.push(fullMatch);
+            // Not a Route line, keep it
+            resultLines.push(line);
         }
     }
     
-    console.log(`[RouteStrip] Summary: Keeping ${routesKept.length} routes, Removing ${routesToRemove.length} routes`);
+    console.log(`[RouteStrip] Summary: Kept ${keptCount}, Removed ${removedCount}`);
     
-    // Remove the routes from content
-    for (const route of routesToRemove) {
-        content = content.replace(route, '');
+    if (removedCount === 0) {
+        console.log('[RouteStrip] No routes removed');
+        return false;
     }
     
-    // Clean up multiple empty lines
-    content = content.replace(/\n\s*\n\s*\n/g, '\n\n');
+    let newContent = resultLines.join('\n');
     
-    // Find components used in removed routes
-    const componentRegex = /element\s*=\s*\{?\s*<(\w+)/g;
-    const removedComponents = new Set();
+    // Clean up multiple consecutive empty lines
+    newContent = newContent.replace(/\n\s*\n\s*\n\s*\n/g, '\n\n');
     
-    for (const route of routesToRemove) {
-        let compMatch;
-        const tempRegex = /element\s*=\s*\{?\s*<(\w+)/g;
-        while ((compMatch = tempRegex.exec(route)) !== null) {
-            removedComponents.add(compMatch[1]);
-        }
+    // Find components that might now be unused
+    const compRegex = /element\s*=\s*\{?\s*<(\w+)/g;
+    const originalComponents = new Set();
+    const remainingComponents = new Set();
+    
+    let match;
+    while ((match = compRegex.exec(originalContent)) !== null) {
+        originalComponents.add(match[1]);
     }
     
-    console.log('[RouteStrip] Components from removed routes:', [...removedComponents]);
+    const compRegex2 = /element\s*=\s*\{?\s*<(\w+)/g;
+    while ((match = compRegex2.exec(newContent)) !== null) {
+        remainingComponents.add(match[1]);
+    }
     
-    // Remove unused imports
-    for (const comp of removedComponents) {
-        // Check if component is still used in remaining content
-        const usageRegex = new RegExp(`<${comp}[\\s/>]`, 'g');
-        const matches = content.match(usageRegex);
+    const potentiallyUnused = [...originalComponents].filter(c => !remainingComponents.has(c));
+    console.log('[RouteStrip] Potentially unused components:', potentiallyUnused);
+    
+    // Remove imports for unused components
+    for (const comp of potentiallyUnused) {
+        // Check if component appears anywhere (outside imports) in new content
+        const contentWithoutImports = newContent.replace(/^import\s+.*$/gm, '');
+        const usageRegex = new RegExp(`\\b${comp}\\b`);
         
-        if (!matches || matches.length === 0) {
+        if (!usageRegex.test(contentWithoutImports)) {
             console.log(`[RouteStrip] Removing unused import: ${comp}`);
             
-            // Remove standalone import: import Component from '...'
-            const standaloneImport = new RegExp(`import\\s+${comp}\\s+from\\s+["'][^"']+["'];?\\n?`, 'g');
-            content = content.replace(standaloneImport, '');
+            // Try different import patterns
+            // Pattern 1: import Component from '...'
+            newContent = newContent.replace(
+                new RegExp(`^import\\s+${comp}\\s+from\\s+["'][^"']+["'];?\\s*$\\n?`, 'gm'),
+                ''
+            );
             
-            // Remove from destructured import: import { Component } from '...'
-            // This is tricky - we need to handle various cases
-            const destructuredSingle = new RegExp(`import\\s+\\{\\s*${comp}\\s*\\}\\s+from\\s+["'][^"']+["'];?\\n?`, 'g');
-            content = content.replace(destructuredSingle, '');
+            // Pattern 2: import { Component } from '...'
+            newContent = newContent.replace(
+                new RegExp(`^import\\s+\\{\\s*${comp}\\s*\\}\\s+from\\s+["'][^"']+["'];?\\s*$\\n?`, 'gm'),
+                ''
+            );
             
-            // Remove component from multi-import: import { A, Component, B } from '...'
-            const multiImport = new RegExp(`(import\\s+\\{[^}]*)\\b${comp}\\b\\s*,?\\s*([^}]*\\})`, 'g');
-            content = content.replace(multiImport, (match, before, after) => {
-                // Clean up double commas or leading/trailing commas
-                let result = before + after;
-                result = result.replace(/,\s*,/g, ',');
-                result = result.replace(/\{\s*,/g, '{');
-                result = result.replace(/,\s*\}/g, '}');
-                return result;
-            });
+            // Pattern 3: Remove from { A, Component, B }
+            newContent = newContent.replace(
+                new RegExp(`(import\\s+\\{[^}]*)\\b${comp}\\b\\s*,?\\s*([^}]*\\}\\s+from)`, 'g'),
+                (m, before, after) => {
+                    let result = before + after;
+                    result = result.replace(/,\s*,/g, ',');
+                    result = result.replace(/\{\s*,/g, '{');
+                    result = result.replace(/,\s*\}/g, '}');
+                    return result;
+                }
+            );
         }
     }
     
-    // Clean up empty imports: import { } from '...'
-    content = content.replace(/import\s+\{\s*\}\s+from\s+["'][^"']+["'];?\n?/g, '');
+    // Clean up empty imports
+    newContent = newContent.replace(/^import\s+\{\s*\}\s+from\s+["'][^"']+["'];?\s*$\n?/gm, '');
     
-    // Save modified file
-    if (content !== originalContent) {
-        fs.writeFileSync(appPath + '.original', originalContent, 'utf-8');
-        fs.writeFileSync(appPath, content, 'utf-8');
-        console.log(`[RouteStrip] Successfully stripped ${routesToRemove.length} routes!`);
-        return true;
-    }
+    // Save the file
+    fs.writeFileSync(appPath + '.original', originalContent, 'utf-8');
+    fs.writeFileSync(appPath, newContent, 'utf-8');
     
-    console.log('[RouteStrip] No changes made');
-    return false;
+    console.log(`[RouteStrip] Done! File saved.`);
+    return true;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -447,7 +475,6 @@ function updateJob(jobId, updates) {
 }
 
 function getBaseUrl(req) {
-    // With 'trust proxy' enabled, req.protocol correctly returns 'https' on Render
     return `${req.protocol}://${req.get('host')}`;
 }
 
@@ -478,13 +505,12 @@ async function processBuild(jobId, workDir, platform, routes, selectedRoutes, in
 
         console.log(`[${jobId}] Project root: ${projectRoot}`);
         
-        // STEP 1: STRIP UNUSED ROUTES (CRITICAL for memory!)
+        // STEP 1: STRIP UNUSED ROUTES
         updateJob(jobId, { progress: 8, status: 'stripping-unused-routes' });
         
         if (selectedRoutes.length > 0) {
             console.log(`[${jobId}] Stripping unused routes...`);
-            const stripped = stripUnusedRoutes(projectRoot, selectedRoutes);
-            console.log(`[${jobId}] Route stripping result: ${stripped ? 'Routes removed' : 'No changes'}`);
+            stripUnusedRoutes(projectRoot, selectedRoutes);
         }
 
         // STEP 2: INJECT ROUTE GUARD
@@ -658,9 +684,9 @@ app.get('/build/download/:jobId', authenticate, async (req, res) => {
 // START SERVER
 // ═══════════════════════════════════════════════════════════════════════════════
 app.listen(PORT, () => {
-    console.log(`Theme Factory Build Server v2.5.1 running on port ${PORT}`);
+    console.log(`Theme Factory Build Server v2.6.0 running on port ${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/health`);
-    console.log(`trust proxy enabled, route stripping v2, compat routes`);
+    console.log(`Route stripping v3: Line-by-line JSX handling`);
 });
 
 export default app;
