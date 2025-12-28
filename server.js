@@ -363,7 +363,7 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
         updateJob(jobId, { progress: 15, status: 'installing-dependencies' });
         
         console.log(`[${jobId}] Installing dependencies...`);
-        execSync('npm install --legacy-peer-deps', {
+        execSync('npm install --legacy-peer-deps --include=dev', {
             cwd: projectRoot,
             stdio: 'inherit',
             timeout: 5 * 60 * 1000
