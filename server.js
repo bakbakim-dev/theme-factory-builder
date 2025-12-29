@@ -1,7 +1,7 @@
 /**
- * Theme Factory Build Server v2.8.0 (Render Backend)
+ * Theme Factory Build Server v2.9.0 (Render Backend)
  *
- * v2.8.0: Added PRERENDERING with Puppeteer to generate static HTML for each route
+ * v2.9.0: Integrated Playwright prerendering (from prerender.js)
  */
 
 import express from 'express';
@@ -9,7 +9,7 @@ import multer from 'multer';
 import cors from 'cors';
 import fs from 'fs-extra';
 import path from 'path';
-import { spawn, exec } from 'child_process';
+import { spawn } from 'child_process';
 import AdmZip from 'adm-zip';
 import { v4 as uuidv4 } from 'uuid';
 import { fileURLToPath } from 'url';
@@ -162,13 +162,13 @@ function runCommand(command, args, cwd, timeoutMs = 10 * 60 * 1000) {
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '2.8.0',
+    version: '2.9.0',
     maxRoutes: 20,
     activeJobs: jobs.size,
     features: [
       'route-stripping-v3',
       'route-guard-injection',
-      'prerendering',
+      'playwright-prerender',
       'async-builds',
       'signed-download-token',
     ],
@@ -405,91 +405,166 @@ function injectRouteGuard(projectPath, selectedRoutes) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// PRERENDERING - Generate static HTML for each route
+// PRERENDERING with Playwright (integrated from prerender.js)
 // ──────────────────────────────────────────────────────────────────────────────
-async function prerenderRoutes(distPath, selectedRoutes, jobId) {
-  console.log(`[${jobId}] Starting prerendering for routes:`, selectedRoutes);
 
-  let puppeteer;
+/**
+ * Start a simple static file server
+ */
+function startStaticServer(dir, port) {
+  return new Promise((resolve, reject) => {
+    const mimeTypes = {
+      '.html': 'text/html',
+      '.js': 'application/javascript',
+      '.css': 'text/css',
+      '.json': 'application/json',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.svg': 'image/svg+xml',
+      '.woff': 'font/woff',
+      '.woff2': 'font/woff2',
+    };
+
+    const server = http.createServer((req, res) => {
+      let filePath = path.join(dir, req.url === '/' ? 'index.html' : req.url);
+      
+      // SPA fallback: serve index.html for any route that doesn't match a file
+      if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+        filePath = path.join(dir, 'index.html');
+      }
+
+      const ext = path.extname(filePath);
+      const contentType = mimeTypes[ext] || 'application/octet-stream';
+
+      fs.readFile(filePath, (err, content) => {
+        if (err) {
+          res.writeHead(404);
+          res.end('Not found');
+        } else {
+          res.writeHead(200, { 'Content-Type': contentType });
+          res.end(content);
+        }
+      });
+    });
+
+    server.listen(port, '127.0.0.1', () => resolve(server));
+    server.on('error', reject);
+  });
+}
+
+/**
+ * Pre-render routes using Playwright
+ */
+async function prerenderRoutes(distDir, routes, jobId) {
+  const options = {
+    port: 3456 + Math.floor(Math.random() * 1000),
+    waitForSelector: '#root',
+    waitTime: 2000,
+    timeout: 30000,
+  };
+
+  console.log(`[${jobId}][Prerender] Starting prerender for ${routes.length} routes...`);
+
+  // Try to import Playwright
+  let chromium;
   try {
-    puppeteer = await import('puppeteer');
+    const playwright = await import('playwright-chromium');
+    chromium = playwright.chromium;
   } catch (e) {
-    console.log(`[${jobId}] Puppeteer not available, skipping prerendering`);
-    return false;
+    console.log(`[${jobId}][Prerender] Playwright not available: ${e.message}`);
+    console.log(`[${jobId}][Prerender] Skipping prerender - dist will contain SPA only`);
+    return { success: [], failed: [], skipped: true };
   }
 
-  // Start a simple static server for the dist folder
-  const previewPort = 3000 + Math.floor(Math.random() * 1000);
-  const previewApp = express();
-  previewApp.use(express.static(distPath));
-  // SPA fallback - serve index.html for all routes
-  previewApp.get('*', (req, res) => {
-    res.sendFile(path.join(distPath, 'index.html'));
-  });
-
-  const server = await new Promise((resolve) => {
-    const srv = previewApp.listen(previewPort, () => {
-      console.log(`[${jobId}] Preview server running on port ${previewPort}`);
-      resolve(srv);
-    });
-  });
+  // Start static server
+  let server;
+  try {
+    server = await startStaticServer(distDir, options.port);
+    console.log(`[${jobId}][Prerender] Static server on port ${options.port}`);
+  } catch (e) {
+    console.error(`[${jobId}][Prerender] Failed to start server: ${e.message}`);
+    return { success: [], failed: routes.map(r => ({ route: r, error: e.message })), skipped: false };
+  }
 
   let browser;
+  const results = { success: [], failed: [], skipped: false };
+
   try {
-    browser = await puppeteer.default.launch({
-      headless: 'new',
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    browser = await chromium.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
     });
 
-    const page = await browser.newPage();
-    await page.setViewport({ width: 1280, height: 800 });
+    const context = await browser.newContext({
+      userAgent: 'ThemeFactory-Prerenderer/2.9',
+    });
 
-    // Create prerendered folder
-    const prerenderedPath = path.join(distPath, 'prerendered');
-    await fs.ensureDir(prerenderedPath);
-
-    for (const route of selectedRoutes) {
-      const normalizedRoute = route === '/' ? '/' : '/' + route.replace(/^\/+|\/+$/g, '');
-      const url = `http://localhost:${previewPort}${normalizedRoute}`;
-
-      console.log(`[${jobId}] Prerendering: ${normalizedRoute}`);
+    for (const route of routes) {
+      const cleanRoute = route.startsWith('/') ? route : `/${route}`;
+      const url = `http://localhost:${options.port}${cleanRoute}`;
 
       try {
-        await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 });
-        
-        // Wait a bit for any animations/transitions
-        await page.waitForTimeout(1000);
+        console.log(`[${jobId}][Prerender] Rendering: ${cleanRoute}`);
 
-        // Get the rendered HTML
-        const html = await page.content();
+        const page = await context.newPage();
 
-        // Create filename from route
-        let filename;
-        if (normalizedRoute === '/') {
-          filename = 'index.html';
-        } else {
-          filename = normalizedRoute.replace(/^\//, '').replace(/\//g, '-') + '.html';
+        await page.goto(url, {
+          waitUntil: 'networkidle',
+          timeout: options.timeout,
+        });
+
+        // Wait for React to mount
+        try {
+          await page.waitForSelector(options.waitForSelector, { timeout: 10000 });
+        } catch (e) {
+          console.log(`[${jobId}][Prerender] Warning: ${options.waitForSelector} not found for ${cleanRoute}`);
         }
 
-        await fs.writeFile(path.join(prerenderedPath, filename), html, 'utf-8');
-        console.log(`[${jobId}] Prerendered: ${filename}`);
+        // Extra wait for dynamic content
+        await page.waitForTimeout(options.waitTime);
+
+        // Get the fully rendered HTML
+        const html = await page.content();
+
+        // Determine output path - create proper directory structure
+        let outputDir, outputFile;
+        if (cleanRoute === '/') {
+          outputDir = distDir;
+          outputFile = path.join(distDir, 'index.html');
+        } else {
+          // For /edmonton -> dist/edmonton/index.html
+          outputDir = path.join(distDir, cleanRoute.slice(1));
+          outputFile = path.join(outputDir, 'index.html');
+        }
+
+        // Create directory if needed
+        await fs.ensureDir(outputDir);
+
+        // Write the pre-rendered HTML
+        await fs.writeFile(outputFile, html, 'utf-8');
+
+        results.success.push(cleanRoute);
+        console.log(`[${jobId}][Prerender] ✓ Saved: ${outputFile}`);
+
+        await page.close();
 
       } catch (err) {
-        console.error(`[${jobId}] Failed to prerender ${normalizedRoute}:`, err.message);
+        results.failed.push({ route: cleanRoute, error: err.message });
+        console.log(`[${jobId}][Prerender] ✗ Failed: ${cleanRoute} - ${err.message}`);
       }
     }
 
-    await browser.close();
-    console.log(`[${jobId}] Prerendering complete!`);
-
   } catch (err) {
-    console.error(`[${jobId}] Prerendering error:`, err.message);
-    if (browser) await browser.close();
+    console.error(`[${jobId}][Prerender] Browser error: ${err.message}`);
+    results.failed = routes.map(r => ({ route: r, error: err.message }));
   } finally {
-    server.close();
+    if (browser) await browser.close();
+    if (server) server.close();
+    console.log(`[${jobId}][Prerender] Complete: ${results.success.length} succeeded, ${results.failed.length} failed`);
   }
 
-  return true;
+  return results;
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -557,7 +632,8 @@ async function processBuild(jobId, workDir, baseUrl, platform, routes, selectedR
     // STEP 5: PRERENDER ROUTES
     updateJob(jobId, { progress: 60, status: 'prerendering' });
     console.log(`[${jobId}] Starting prerendering...`);
-    await prerenderRoutes(distPath, selectedRoutes, jobId);
+    const prerenderResult = await prerenderRoutes(distPath, selectedRoutes, jobId);
+    console.log(`[${jobId}] Prerender result:`, prerenderResult);
 
     // STEP 6: PACKAGE
     updateJob(jobId, { progress: 85, status: 'packaging' });
@@ -576,6 +652,7 @@ async function processBuild(jobId, workDir, baseUrl, platform, routes, selectedR
       progress: 100,
       status: 'completed',
       downloadUrl,
+      prerenderResult,
       completedAt: Date.now(),
     });
 
@@ -695,8 +772,8 @@ app.get('/build/download/:jobId', authenticateDownload, async (req, res) => {
 // START SERVER
 // ──────────────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
-  console.log(`Theme Factory Build Server v2.8.0 running on port ${PORT}`);
-  console.log(`Prerendering enabled with Puppeteer`);
+  console.log(`Theme Factory Build Server v2.9.0 running on port ${PORT}`);
+  console.log(`Playwright prerendering integrated`);
 });
 
 export default app;
