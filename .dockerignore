@@ -1,4 +1,20 @@
+# 1. Critical: Prevent OS conflicts
 node_modules
 npm-debug.log
+
+# 2. Git metadata (saves space)
 .git
 .gitignore
+
+# 3. Local Environment Secrets (Security risk if copied!)
+.env
+.env.local
+
+# 4. Build Artifacts & Temporary Files
+# You don't want to copy old builds or temp zips into the new server
+dist
+build
+out
+temp
+uploads
+*.zip
