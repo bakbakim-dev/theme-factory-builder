@@ -1,11 +1,7 @@
 /**
- * Theme Factory Build Server v2.7.0 (Render Backend)
+ * Theme Factory Build Server v2.8.0 (Render Backend)
  *
- * v2.7.0 Fixes:
- *  - Always stores ABSOLUTE status/download URLs in job object (prevents wrong-origin downloads)
- *  - Download supports either Authorization header OR signed query token (?t=...)
- *  - Keeps your current route stripping v3 + route guard injection
- *  - More explicit CORS (Authorization header + Content-Disposition exposed)
+ * v2.8.0: Added PRERENDERING with Puppeteer to generate static HTML for each route
  */
 
 import express from 'express';
@@ -13,25 +9,23 @@ import multer from 'multer';
 import cors from 'cors';
 import fs from 'fs-extra';
 import path from 'path';
-import { spawn } from 'child_process';
+import { spawn, exec } from 'child_process';
 import AdmZip from 'adm-zip';
 import { v4 as uuidv4 } from 'uuid';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
+import http from 'http';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-
-// IMPORTANT: Trust proxy on Render so req.protocol returns 'https' correctly
 app.set('trust proxy', 1);
 
 const PORT = process.env.PORT || 10000;
 const API_KEY = process.env.API_KEY || 'dev-key';
 const MAX_FILE_SIZE = 100 * 1024 * 1024;
 
-// Explicit CORS: allow Authorization header + expose Content-Disposition for downloads
 app.use(cors({
   origin: true,
   methods: ['GET', 'POST', 'OPTIONS'],
@@ -46,14 +40,12 @@ const upload = multer({
   limits: { fileSize: MAX_FILE_SIZE },
 });
 
-// In-memory jobs (IMPORTANT: set Render instances = 1, or jobs may “disappear” across instances)
 const jobs = new Map();
 
 // ──────────────────────────────────────────────────────────────────────────────
 // HELPERS
 // ──────────────────────────────────────────────────────────────────────────────
 function getBaseUrl(req) {
-  // With trust proxy, req.protocol should be https on Render
   return `${req.protocol}://${req.get('host')}`;
 }
 
@@ -62,9 +54,7 @@ function updateJob(jobId, updates) {
   if (job) jobs.set(jobId, { ...job, ...updates });
 }
 
-// Signed download token so downloads can work WITHOUT Authorization headers
-// Token format: jobId.exp.sig  (HMAC over "jobId.exp")
-function signDownloadToken(jobId, ttlSeconds = 30 * 60) { // 30 minutes
+function signDownloadToken(jobId, ttlSeconds = 30 * 60) {
   const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
   const data = `${jobId}.${exp}`;
   const sig = crypto.createHmac('sha256', API_KEY).update(data).digest('hex');
@@ -75,17 +65,12 @@ function verifyDownloadToken(token) {
   try {
     const parts = token.split('.');
     if (parts.length !== 3) return null;
-
     const [jobId, expStr, sig] = parts;
     const exp = Number(expStr);
     if (!jobId || !exp || !sig) return null;
-
     if (Math.floor(Date.now() / 1000) > exp) return null;
-
     const data = `${jobId}.${exp}`;
     const expected = crypto.createHmac('sha256', API_KEY).update(data).digest('hex');
-
-    // timingSafeEqual requires equal-length buffers
     if (expected.length !== sig.length) return null;
     const ok = crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
     return ok ? jobId : null;
@@ -109,22 +94,17 @@ const authenticate = (req, res, next) => {
   next();
 };
 
-// Download auth supports either:
-//  - Authorization: Bearer <API_KEY>
-//  - Signed query token: ?t=<jobId.exp.sig>
 const authenticateDownload = (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.substring(7).trim();
     if (token === API_KEY) return next();
   }
-
   const t = (req.query.t || '').toString().trim();
   if (t) {
     const tokenJobId = verifyDownloadToken(t);
     if (tokenJobId && tokenJobId === req.params.jobId) return next();
   }
-
   return res.status(403).json({ error: 'Invalid or missing download auth' });
 };
 
@@ -134,7 +114,6 @@ const authenticateDownload = (req, res, next) => {
 function runCommand(command, args, cwd, timeoutMs = 10 * 60 * 1000) {
   return new Promise((resolve, reject) => {
     console.log(`[CMD] Running: ${command} ${args.join(' ')} in ${cwd}`);
-
     const proc = spawn(command, args, {
       cwd,
       shell: true,
@@ -183,22 +162,21 @@ function runCommand(command, args, cwd, timeoutMs = 10 * 60 * 1000) {
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '2.7.0',
+    version: '2.8.0',
     maxRoutes: 20,
     activeJobs: jobs.size,
     features: [
       'route-stripping-v3',
       'route-guard-injection',
+      'prerendering',
       'async-builds',
-      'compat-routes',
-      'absolute-urls',
       'signed-download-token',
     ],
   });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// ROUTE STRIPPING v3 - Line-by-line approach (handles JSX properly!)
+// ROUTE STRIPPING v3
 // ──────────────────────────────────────────────────────────────────────────────
 function stripUnusedRoutes(projectPath, selectedRoutes) {
   console.log('[RouteStrip] Starting route stripping for:', selectedRoutes);
@@ -279,6 +257,7 @@ function stripUnusedRoutes(projectPath, selectedRoutes) {
   let newContent = resultLines.join('\n');
   newContent = newContent.replace(/\n\s*\n\s*\n\s*\n/g, '\n\n');
 
+  // Remove unused imports
   const compRegex = /element\s*=\s*\{?\s*<(\w+)/g;
   const originalComponents = new Set();
   const remainingComponents = new Set();
@@ -290,31 +269,19 @@ function stripUnusedRoutes(projectPath, selectedRoutes) {
   while ((match = compRegex2.exec(newContent)) !== null) remainingComponents.add(match[1]);
 
   const potentiallyUnused = [...originalComponents].filter(c => !remainingComponents.has(c));
-  console.log('[RouteStrip] Potentially unused components:', potentiallyUnused);
 
   for (const comp of potentiallyUnused) {
     const contentWithoutImports = newContent.replace(/^import\s+.*$/gm, '');
     const usageRegex = new RegExp(`\\b${comp}\\b`);
     if (!usageRegex.test(contentWithoutImports)) {
       console.log(`[RouteStrip] Removing unused import: ${comp}`);
-      newContent = newContent.replace(
-        new RegExp(`^import\\s+${comp}\\s+from\\s+["'][^"']+["'];?\\s*$\\n?`, 'gm'),
-        ''
-      );
-      newContent = newContent.replace(
-        new RegExp(`^import\\s+\\{\\s*${comp}\\s*\\}\\s+from\\s+["'][^"']+["'];?\\s*$\\n?`, 'gm'),
-        ''
-      );
-      newContent = newContent.replace(
-        new RegExp(`(import\\s+\\{[^}]*)\\b${comp}\\b\\s*,?\\s*([^}]*\\}\\s+from)`, 'g'),
-        (m, before, after) => {
-          let result = before + after;
-          result = result.replace(/,\s*,/g, ',');
-          result = result.replace(/\{\s*,/g, '{');
-          result = result.replace(/,\s*\}/g, '}');
-          return result;
-        }
-      );
+      newContent = newContent.replace(new RegExp(`^import\\s+${comp}\\s+from\\s+["'][^"']+["'];?\\s*$\\n?`, 'gm'), '');
+      newContent = newContent.replace(new RegExp(`^import\\s+\\{\\s*${comp}\\s*\\}\\s+from\\s+["'][^"']+["'];?\\s*$\\n?`, 'gm'), '');
+      newContent = newContent.replace(new RegExp(`(import\\s+\\{[^}]*)\\b${comp}\\b\\s*,?\\s*([^}]*\\}\\s+from)`, 'g'), (m, before, after) => {
+        let result = before + after;
+        result = result.replace(/,\s*,/g, ',').replace(/\{\s*,/g, '{').replace(/,\s*\}/g, '}');
+        return result;
+      });
     }
   }
 
@@ -331,15 +298,7 @@ function stripUnusedRoutes(projectPath, selectedRoutes) {
 // ROUTE GUARD INJECTION
 // ──────────────────────────────────────────────────────────────────────────────
 function findEntryFile(projectPath) {
-  const candidates = [
-    'src/App.tsx',
-    'src/App.jsx',
-    'src/App.js',
-    'src/main.tsx',
-    'src/main.jsx',
-    'src/main.js',
-  ];
-
+  const candidates = ['src/App.tsx', 'src/App.jsx', 'src/App.js', 'src/main.tsx', 'src/main.jsx', 'src/main.js'];
   for (const candidate of candidates) {
     const fullPath = path.join(projectPath, candidate);
     if (fs.existsSync(fullPath)) return fullPath;
@@ -349,16 +308,13 @@ function findEntryFile(projectPath) {
 
 function generateRouteGuardCode(selectedRoutes) {
   const routesJson = JSON.stringify(selectedRoutes);
-
   return `
 // THEME FACTORY ROUTE GUARD
 const TF_ALLOWED_ROUTES = ${routesJson};
-
 function normalizeRoute(path) {
   if (!path) return '/';
   return '/' + path.split('?')[0].split('#')[0].replace(/^\\/+|\\/+$/g, '').toLowerCase();
 }
-
 function isRouteAllowed(pathname) {
   const normalized = normalizeRoute(pathname);
   for (const route of TF_ALLOWED_ROUTES) {
@@ -367,16 +323,11 @@ function isRouteAllowed(pathname) {
     if (normalized === normalizedRoute + '/') return true;
     if (normalized + '/' === normalizedRoute) return true;
   }
-  if (normalized === '/' || normalized === '') {
-    return TF_ALLOWED_ROUTES.some(r => normalizeRoute(r) === '/' || normalizeRoute(r) === '');
-  }
-  return false;
+  return TF_ALLOWED_ROUTES.some(r => normalizeRoute(r) === '/' || normalizeRoute(r) === '');
 }
-
 function ThemeFactoryRouteGuard({ children }) {
   const [isAllowed, setIsAllowed] = React.useState(true);
   const [currentPath, setCurrentPath] = React.useState(window.location.pathname);
-
   React.useEffect(() => {
     const checkRoute = () => {
       const p = window.location.pathname;
@@ -385,43 +336,23 @@ function ThemeFactoryRouteGuard({ children }) {
     };
     checkRoute();
     window.addEventListener('popstate', checkRoute);
-
     const originalPushState = history.pushState;
     const originalReplaceState = history.replaceState;
-
-    history.pushState = function(...args) {
-      originalPushState.apply(this, args);
-      checkRoute();
-    };
-    history.replaceState = function(...args) {
-      originalReplaceState.apply(this, args);
-      checkRoute();
-    };
-
+    history.pushState = function(...args) { originalPushState.apply(this, args); checkRoute(); };
+    history.replaceState = function(...args) { originalReplaceState.apply(this, args); checkRoute(); };
     return () => {
       window.removeEventListener('popstate', checkRoute);
       history.pushState = originalPushState;
       history.replaceState = originalReplaceState;
     };
   }, []);
-
   if (!isAllowed) {
     return React.createElement('div', {
-      style: {
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: '100vh',
-        fontFamily: 'system-ui, -apple-system, sans-serif',
-        backgroundColor: '#f8fafc',
-        color: '#1e293b'
-      }
+      style: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', fontFamily: 'system-ui', backgroundColor: '#f8fafc', color: '#1e293b' }
     }, [
-      React.createElement('h1', { key: 'title', style: { fontSize: '6rem', fontWeight: 'bold', margin: '0', color: '#cbd5e1' } }, '404'),
-      React.createElement('h2', { key: 'subtitle', style: { fontSize: '1.5rem', marginTop: '1rem', fontWeight: '600' } }, 'Page Not Found'),
-      React.createElement('p', { key: 'desc', style: { marginTop: '0.5rem', color: '#64748b' } }, 'The page "' + currentPath + '" is not available.'),
-      React.createElement('a', { key: 'link', href: '/', style: { marginTop: '2rem', padding: '0.75rem 1.5rem', backgroundColor: '#3b82f6', color: 'white', borderRadius: '0.5rem', textDecoration: 'none', fontWeight: '500' } }, 'Go Home')
+      React.createElement('h1', { key: 't', style: { fontSize: '6rem', fontWeight: 'bold', margin: '0', color: '#cbd5e1' } }, '404'),
+      React.createElement('p', { key: 'd', style: { marginTop: '0.5rem', color: '#64748b' } }, 'Page not available.'),
+      React.createElement('a', { key: 'l', href: '/', style: { marginTop: '2rem', padding: '0.75rem 1.5rem', backgroundColor: '#3b82f6', color: 'white', borderRadius: '0.5rem', textDecoration: 'none' } }, 'Go Home')
     ]);
   }
   return children;
@@ -431,28 +362,18 @@ function ThemeFactoryRouteGuard({ children }) {
 
 function injectRouteGuard(projectPath, selectedRoutes) {
   console.log('[RouteGuard] Starting injection for routes:', selectedRoutes);
-
   const entryFile = findEntryFile(projectPath);
-  if (!entryFile) {
-    console.warn('[RouteGuard] Could not find entry file, skipping');
-    return false;
-  }
-
-  console.log('[RouteGuard] Found entry file:', entryFile);
+  if (!entryFile) { console.warn('[RouteGuard] No entry file found'); return false; }
 
   let content = fs.readFileSync(entryFile, 'utf-8');
   const originalContent = content;
 
   if (content.includes('ThemeFactoryRouteGuard')) {
-    console.log('[RouteGuard] Already injected, skipping');
+    console.log('[RouteGuard] Already injected');
     return true;
   }
 
-  // Ensure React is imported
-  const hasReactImport =
-    /import\s+(\*\s+as\s+)?React[\s,{]/.test(content) ||
-    /import\s+React\s+from/.test(content);
-
+  const hasReactImport = /import\s+(\*\s+as\s+)?React[\s,{]/.test(content) || /import\s+React\s+from/.test(content);
   if (!hasReactImport) {
     console.log('[RouteGuard] Adding React import');
     content = `import * as React from 'react';\n${content}`;
@@ -463,43 +384,110 @@ function injectRouteGuard(projectPath, selectedRoutes) {
 
   if (defaultExportMatch) {
     const componentName = defaultExportMatch[2];
-    console.log('[RouteGuard] Found default export component:', componentName);
+    console.log('[RouteGuard] Found component:', componentName);
 
     if (defaultExportMatch[1]) {
-      content = content.replace(
-        /export\s+default\s+function\s+(\w+)\s*\(/,
-        'function _TF_Original$1('
-      );
-      content += `
-${guardCode}
-
-export default function ${componentName}() {
-  return React.createElement(
-    ThemeFactoryRouteGuard,
-    null,
-    React.createElement(_TF_Original${componentName}, null)
-  );
-}
-`;
+      content = content.replace(/export\s+default\s+function\s+(\w+)\s*\(/, 'function _TF_Original$1(');
+      content += `\n${guardCode}\nexport default function ${componentName}() { return React.createElement(ThemeFactoryRouteGuard, null, React.createElement(_TF_Original${componentName}, null)); }\n`;
     } else {
       content = content.replace(/export\s+default\s+\w+\s*;?/, '');
-      content += `
-${guardCode}
-
-const _TF_Wrapped${componentName} = () =>
-  React.createElement(ThemeFactoryRouteGuard, null, React.createElement(${componentName}, null));
-
-export default _TF_Wrapped${componentName};
-`;
+      content += `\n${guardCode}\nconst _TF_Wrapped${componentName} = () => React.createElement(ThemeFactoryRouteGuard, null, React.createElement(${componentName}, null));\nexport default _TF_Wrapped${componentName};\n`;
     }
   } else {
-    console.warn('[RouteGuard] Could not find suitable injection point');
+    console.warn('[RouteGuard] No suitable injection point');
     return false;
   }
 
   fs.writeFileSync(entryFile, content, 'utf-8');
   fs.writeFileSync(entryFile + '.backup', originalContent, 'utf-8');
-  console.log('[RouteGuard] Successfully injected route guard');
+  console.log('[RouteGuard] Injected successfully');
+  return true;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// PRERENDERING - Generate static HTML for each route
+// ──────────────────────────────────────────────────────────────────────────────
+async function prerenderRoutes(distPath, selectedRoutes, jobId) {
+  console.log(`[${jobId}] Starting prerendering for routes:`, selectedRoutes);
+
+  let puppeteer;
+  try {
+    puppeteer = await import('puppeteer');
+  } catch (e) {
+    console.log(`[${jobId}] Puppeteer not available, skipping prerendering`);
+    return false;
+  }
+
+  // Start a simple static server for the dist folder
+  const previewPort = 3000 + Math.floor(Math.random() * 1000);
+  const previewApp = express();
+  previewApp.use(express.static(distPath));
+  // SPA fallback - serve index.html for all routes
+  previewApp.get('*', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+
+  const server = await new Promise((resolve) => {
+    const srv = previewApp.listen(previewPort, () => {
+      console.log(`[${jobId}] Preview server running on port ${previewPort}`);
+      resolve(srv);
+    });
+  });
+
+  let browser;
+  try {
+    browser = await puppeteer.default.launch({
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    });
+
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1280, height: 800 });
+
+    // Create prerendered folder
+    const prerenderedPath = path.join(distPath, 'prerendered');
+    await fs.ensureDir(prerenderedPath);
+
+    for (const route of selectedRoutes) {
+      const normalizedRoute = route === '/' ? '/' : '/' + route.replace(/^\/+|\/+$/g, '');
+      const url = `http://localhost:${previewPort}${normalizedRoute}`;
+
+      console.log(`[${jobId}] Prerendering: ${normalizedRoute}`);
+
+      try {
+        await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 });
+        
+        // Wait a bit for any animations/transitions
+        await page.waitForTimeout(1000);
+
+        // Get the rendered HTML
+        const html = await page.content();
+
+        // Create filename from route
+        let filename;
+        if (normalizedRoute === '/') {
+          filename = 'index.html';
+        } else {
+          filename = normalizedRoute.replace(/^\//, '').replace(/\//g, '-') + '.html';
+        }
+
+        await fs.writeFile(path.join(prerenderedPath, filename), html, 'utf-8');
+        console.log(`[${jobId}] Prerendered: ${filename}`);
+
+      } catch (err) {
+        console.error(`[${jobId}] Failed to prerender ${normalizedRoute}:`, err.message);
+      }
+    }
+
+    await browser.close();
+    console.log(`[${jobId}] Prerendering complete!`);
+
+  } catch (err) {
+    console.error(`[${jobId}] Prerendering error:`, err.message);
+    if (browser) await browser.close();
+  } finally {
+    server.close();
+  }
 
   return true;
 }
@@ -524,9 +512,8 @@ async function processBuild(jobId, workDir, baseUrl, platform, routes, selectedR
       }
     }
 
-    const packageJsonPath = path.join(projectRoot, 'package.json');
-    if (!await fs.pathExists(packageJsonPath)) {
-      throw new Error('No package.json found in uploaded source');
+    if (!await fs.pathExists(path.join(projectRoot, 'package.json'))) {
+      throw new Error('No package.json found');
     }
 
     console.log(`[${jobId}] Project root: ${projectRoot}`);
@@ -534,14 +521,12 @@ async function processBuild(jobId, workDir, baseUrl, platform, routes, selectedR
     // STEP 1: STRIP UNUSED ROUTES
     updateJob(jobId, { progress: 8, status: 'stripping-unused-routes' });
     if (selectedRoutes.length > 0) {
-      console.log(`[${jobId}] Stripping unused routes...`);
       stripUnusedRoutes(projectRoot, selectedRoutes);
     }
 
     // STEP 2: INJECT ROUTE GUARD
     updateJob(jobId, { progress: 10, status: 'injecting-route-guard' });
     if (injectGuard && selectedRoutes.length > 0) {
-      console.log(`[${jobId}] Injecting route guard...`);
       injectRouteGuard(projectRoot, selectedRoutes);
     }
 
@@ -555,9 +540,7 @@ async function processBuild(jobId, workDir, baseUrl, platform, routes, selectedR
     console.log(`[${jobId}] Running build...`);
     await runCommand('npm', ['run', 'build'], projectRoot, 10 * 60 * 1000);
 
-    // STEP 5: PACKAGE
-    updateJob(jobId, { progress: 70, status: 'packaging' });
-
+    // Find dist folder
     const distCandidates = ['dist', 'build', 'out'];
     let distPath = null;
     for (const candidate of distCandidates) {
@@ -568,9 +551,16 @@ async function processBuild(jobId, workDir, baseUrl, platform, routes, selectedR
       }
     }
 
-    if (!distPath) throw new Error('Build completed but no dist folder found');
-
+    if (!distPath) throw new Error('No dist folder found');
     console.log(`[${jobId}] Found dist at: ${distPath}`);
+
+    // STEP 5: PRERENDER ROUTES
+    updateJob(jobId, { progress: 60, status: 'prerendering' });
+    console.log(`[${jobId}] Starting prerendering...`);
+    await prerenderRoutes(distPath, selectedRoutes, jobId);
+
+    // STEP 6: PACKAGE
+    updateJob(jobId, { progress: 85, status: 'packaging' });
 
     const outputZip = new AdmZip();
     outputZip.addLocalFolder(distPath);
@@ -579,7 +569,6 @@ async function processBuild(jobId, workDir, baseUrl, platform, routes, selectedR
     await fs.ensureDir(path.dirname(outputPath));
     outputZip.writeZip(outputPath);
 
-    // IMPORTANT: store ABSOLUTE download URL with signed token
     const dlToken = signDownloadToken(jobId);
     const downloadUrl = `${baseUrl}/download/${jobId}?t=${dlToken}`;
 
@@ -590,7 +579,7 @@ async function processBuild(jobId, workDir, baseUrl, platform, routes, selectedR
       completedAt: Date.now(),
     });
 
-    console.log(`[${jobId}] Build completed successfully! downloadUrl=${downloadUrl}`);
+    console.log(`[${jobId}] Build + prerender completed! downloadUrl=${downloadUrl}`);
     await fs.remove(workDir);
 
   } catch (error) {
@@ -618,11 +607,9 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
     baseUrl,
   });
 
-  // Return absolute URLs immediately
   res.status(202).json({
     jobId,
     statusUrl: `${baseUrl}/jobs/${jobId}`,
-    // downloadUrl will be finalized on completion with token, but provide a placeholder
     downloadUrl: `${baseUrl}/download/${jobId}`,
     message: 'Build job queued',
   });
@@ -634,7 +621,7 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
     const injectGuard = req.body.injectRouteGuard === 'true';
 
     console.log(`[${jobId}] Platform: ${platform}, Routes: ${routes.length}, InjectGuard: ${injectGuard}`);
-    console.log(`[${jobId}] Selected routes for guard:`, selectedRoutes);
+    console.log(`[${jobId}] Selected routes:`, selectedRoutes);
 
     await fs.ensureDir(workDir);
     const zipBuffer = req.file.buffer;
@@ -642,7 +629,6 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
     zip.extractAllTo(workDir, true);
     console.log(`[${jobId}] Extracted source to ${workDir}`);
 
-    // Start async build
     processBuild(jobId, workDir, baseUrl, platform, routes, selectedRoutes, injectGuard);
 
   } catch (error) {
@@ -652,68 +638,54 @@ app.post('/build', authenticate, upload.single('zip'), async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// JOB STATUS ENDPOINTS
+// JOB STATUS
 // ──────────────────────────────────────────────────────────────────────────────
 app.get('/jobs/:jobId', authenticate, (req, res) => {
-  const { jobId } = req.params;
-  const job = jobs.get(jobId);
-  if (!job) return res.status(404).json({ error: 'Job not found', jobId });
+  const job = jobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found' });
   res.json(job);
 });
 
-// Compatibility (some clients poll /build/jobs/:id)
 app.get('/build/jobs/:jobId', authenticate, (req, res) => {
   const job = jobs.get(req.params.jobId);
-  if (!job) return res.status(404).json({ error: 'Job not found', jobId: req.params.jobId });
+  if (!job) return res.status(404).json({ error: 'Job not found' });
   res.json(job);
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
-// DOWNLOAD ENDPOINTS (supports signed token)
+// DOWNLOAD
 // ──────────────────────────────────────────────────────────────────────────────
 app.get('/download/:jobId', authenticateDownload, async (req, res) => {
   const { jobId } = req.params;
   const outputPath = path.join('/tmp', 'outputs', `${jobId}.zip`);
 
-  console.log(`[Download] Attempting to download ${jobId}`);
+  console.log(`[Download] ${jobId}`);
 
   if (!await fs.pathExists(outputPath)) {
-    console.log(`[Download] File not found: ${outputPath}`);
     return res.status(404).json({ error: 'Build artifact not found' });
   }
 
-  console.log(`[Download] File exists, sending...`);
-
   res.download(outputPath, 'dist.zip', async (err) => {
     if (err) {
-      console.error(`[Download] Error sending file for ${jobId}:`, err.message);
-      // DON'T delete on error - allow retry!
+      console.error(`[Download] Error:`, err.message);
       return;
     }
-    console.log(`[Download] Success for ${jobId}! Cleaning up...`);
+    console.log(`[Download] Success, cleaning up...`);
     await fs.remove(outputPath).catch(() => {});
     jobs.delete(jobId);
   });
 });
 
-// Compatibility (some clients hit /build/download/:id)
 app.get('/build/download/:jobId', authenticateDownload, async (req, res) => {
   const { jobId } = req.params;
   const outputPath = path.join('/tmp', 'outputs', `${jobId}.zip`);
 
-  console.log(`[Download/Compat] Attempting to download ${jobId}`);
-
   if (!await fs.pathExists(outputPath)) {
-    console.log(`[Download/Compat] File not found: ${outputPath}`);
     return res.status(404).json({ error: 'Build artifact not found' });
   }
 
   res.download(outputPath, 'dist.zip', async (err) => {
-    if (err) {
-      console.error(`[Download/Compat] Error sending file for ${jobId}:`, err.message);
-      return;
-    }
-    console.log(`[Download/Compat] Success for ${jobId}! Cleaning up...`);
+    if (err) return;
     await fs.remove(outputPath).catch(() => {});
     jobs.delete(jobId);
   });
@@ -723,9 +695,8 @@ app.get('/build/download/:jobId', authenticateDownload, async (req, res) => {
 // START SERVER
 // ──────────────────────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
-  console.log(`Theme Factory Build Server v2.7.0 running on port ${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
-  console.log(`Route stripping v3 + signed download tokens enabled`);
+  console.log(`Theme Factory Build Server v2.8.0 running on port ${PORT}`);
+  console.log(`Prerendering enabled with Puppeteer`);
 });
 
 export default app;
