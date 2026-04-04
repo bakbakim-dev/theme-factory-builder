@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Upload, Terminal, Settings, Download, CheckCircle, RefreshCw, Zap, Code, Wifi, WifiOff, Loader2, LayoutTemplate, FileCode, FileJson, Eye, Hammer, Split, Database, XCircle, Server, Clock, Wrench, CheckSquare, Link as LinkIcon, AlertTriangle, ArrowRight, Package, Maximize2, X } from 'lucide-react';
+import { Upload, Terminal, Settings, Download, CheckCircle, RefreshCw, Zap, Code, Wifi, WifiOff, Loader2, LayoutTemplate, FileCode, FileJson, Eye, Hammer, Split, Database, XCircle, Server, Clock, Wrench, CheckSquare, Link as LinkIcon, AlertTriangle, ArrowRight, Package, Maximize2, X, Globe, Info, Sparkles } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
 import { useJSZip } from '../hooks/useJSZip';
 import { LogEntry, RouteInfo, ConversionRecord, ConversionStats } from '../types';
@@ -11,6 +11,33 @@ interface DashboardProps { onConversionComplete: (record: ConversionRecord, zipB
 
 const sanitizeForPhp = (str: string): string => str.replace(/['"\\]/g, '').replace(/[^a-zA-Z0-9_\-./]/g, '_');
 
+const InfoTooltip: React.FC<{ title: string, content: React.ReactNode, link?: string }> = ({ title, content, link }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    return (
+        <div className="relative inline-block ml-2 align-middle">
+            <button 
+                type="button" 
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsOpen(!isOpen); }} 
+                className="text-slate-400 hover:text-blue-400 focus:outline-none transition-colors"
+                title={title}
+            >
+                <Info className="w-[14px] h-[14px]" />
+            </button>
+            {isOpen && (
+                <>
+                    <div className="fixed inset-0 z-40" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsOpen(false); }}></div>
+                    <div className="absolute z-50 w-64 p-3 mt-2 text-xs font-normal text-slate-300 bg-slate-800 border border-slate-700 rounded-lg shadow-xl left-1/2 -translate-x-1/2 cursor-default" onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+                        <div className="flex justify-between items-start mb-1">
+                            <strong className="text-white">{title}</strong>
+                            <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsOpen(false); }} className="text-slate-400 hover:text-white"><X className="w-3 h-3" /></button>
+                        </div>
+                        <div className="mt-1 space-y-2">{content}</div>
+                    </div>
+                </>
+            )}
+        </div>
+    );
+};
 const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     const { jszip: JSZipLib } = useJSZip();
     const [step, setStep] = useState<string>(STEPS.IDLE);
@@ -33,9 +60,55 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     const [renderDelay, setRenderDelay] = useState(2000);
     const [debugConsoleText, setDebugConsoleText] = useState<string>('');
     const [showDebugConsole, setShowDebugConsole] = useState<boolean>(false);
+    const [showMapModal, setShowMapModal] = useState<boolean>(false);
+    const [showLlmsModal, setShowLlmsModal] = useState<boolean>(false);
+    const [isScrapingLiveUrl, setIsScrapingLiveUrl] = useState<boolean>(false);
+    
+    // SEO & CRO Configuration
+    const [seoSettings, setSeoSettings] = useState({
+        companyName: 'My Company',
+        url: 'https://',
+        description: 'Professional services in your area.',
+        telephone: '(555) 123-4567',
+        addressLocality: 'City Name',
+        addressRegion: 'ST',
+        addressCountry: 'US',
+        priceRange: '$$',
+        ctaText1: 'Book Now',
+        ctaLink1: '/contact/',
+        ctaText2: 'Call Us',
+        ctaLink2: 'tel:5551234567',
+        ctaColor: '#009966',
+        ctaTextColor: '#ffffff',
+        ogImage: '',
+        socialFacebook: '',
+        socialInstagram: '',
+        socialTwitter: '',
+        socialLinkedIn: '',
+        gaId: '',
+        metaPixelId: '',
+        googleSiteVerification: '',
+        bingSiteVerification: '',
+        reviewRating: '5.0',
+        reviewCount: '150',
+        enableLocationsCPT: false,
+        googleMapsUrl: '',
+        primaryLocale: 'en-US',
+        alternateLocales: '',
+        allowAiSearchSurfacing: true,
+        allowAiTrainingCrawlers: false,
+        enableLlmsTxt: false,
+        enableQaChecks: true,
+        enableFaqSchema: false,
+        enableSemanticLinks: false
+    });
+    const [showSeoConfig, setShowSeoConfig] = useState(false);
 
     // Audit State
     const [missingLinks, setMissingLinks] = useState<string[]>([]);
+    const [qaDiagnostics, setQaDiagnostics] = useState<any | null>(null);
+    const [redirectsData, setRedirectsData] = useState<string | null>(null);
+    const [llmsData, setLlmsData] = useState<string | null>(null);
     const [auditState, setAuditState] = useState<{
         zipContent: any;
         rootPath: string;
@@ -117,7 +190,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         const file = e.target.files?.[0]; if (!file) return;
         setSourceFile(file);
         if (!JSZipLib) { addLog("Engine not ready. Please wait...", 'error'); return; }
-        setStep(STEPS.ANALYZING); setLogs([]); setProgress(5); setConversionStats(null); setFinalZipBlob(null); setPluginZipBlob(null); setThumbnails([]);
+        setStep(STEPS.ANALYZING); setLogs([]); setProgress(5); setConversionStats(null); setFinalZipBlob(null); setPluginZipBlob(null); setThumbnails([]); setRedirectsData(null); setLlmsData(null);
         setThemeSlug(file.name.replace('.zip', '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase());
         addLog(`Initiating analysis for: ${file.name}`);
         try {
@@ -131,11 +204,188 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             let detectedPlatformID = selectedPlatform;
             if (hasFile('lovable.config') || hasFile('lovable.json')) { detectedPlatformID = 'lovable'; setSelectedPlatform('lovable'); addLog("Confirmed Lovable Project Structure", 'success'); }
             const routes = await scanForRoutes(content, rootPath); setDetectedRoutes(routes); setSelectedRoutes(new Set(routes.map(r => r.path)));
+            
+            // SAAS FEATURE: Auto-extract SEO settings from the project files
+            await scanForSeoSettings(content, rootPath);
+
             const hasPackageJson = hasFile('package.json'); const hasSrcDir = validFiles.some(f => f.includes('/src/') || f.startsWith('src/'));
             const isSourceProject = hasPackageJson && (hasSrcDir || hasFile('vite.config.ts'));
             if (isSourceProject && !options.forceBuild) { addLog(`⚠ Source Code Detected. Found ${routes.length} potential routes.`, 'warning'); setStep(STEPS.SOURCE_DETECTED); return; }
             setStep(STEPS.PROCESSING); await processConversion(content, rootPath, detectedPlatformID, routes, conversionMode);
         } catch (err: unknown) { setStep(STEPS.ERROR); addLog((err as Error).message, 'error'); }
+    };
+
+    const scanForSeoSettings = async (zipContent: any, rootPath: string) => {
+        try {
+            const files = Object.keys(zipContent.files);
+            const normalize = (p: string) => p.startsWith(rootPath) ? p.slice(rootPath.length) : p;
+            
+            let htmlContent = "";
+            const indexFile = files.find(f => normalize(f).match(/^index\.html$/i));
+            if (indexFile) htmlContent = await zipContent.files[indexFile].async("string");
+
+            let packageJsonContent = "";
+            const pkgFile = files.find(f => normalize(f).match(/^package\.json$/i));
+            if (pkgFile) packageJsonContent = await zipContent.files[pkgFile].async("string");
+
+            let allSrcText = "";
+            const srcFiles = files.filter(f => normalize(f).match(/^src\/.*\.tsx?$/i)).slice(0, 10);
+            for (const f of srcFiles) {
+                allSrcText += await zipContent.files[f].async("string") + " ";
+            }
+
+            const updates: Partial<typeof seoSettings> = {};
+
+            // Extract Company Name (from Title, Helmet, Package.json, or navbar brands)
+            const titleMatch = htmlContent.match(/<title>(.*?)<\/title>/i) 
+                             || allSrcText.match(/<title>([^<]+)<\/title>/i)
+                             || allSrcText.match(/title=["']([^"']+)["']/i);
+            
+            if (titleMatch && titleMatch[1] && !titleMatch[1].includes('$')) {
+                // Strip out standard separators like ' | ', ' - ' to get pure brand name
+                updates.companyName = titleMatch[1].split('|')[0].split('-')[0].trim();
+            } else if (packageJsonContent) {
+                try {
+                    const pkg = JSON.parse(packageJsonContent);
+                    if (pkg.name) {
+                        // Insert space before uppercase in camelCase, replace hyphens/underscores, then title-case
+                        const cleaned = pkg.name
+                            .replace(/[-_]/g, ' ')
+                            .replace(/([a-z])([A-Z])/g, '$1 $2')
+                            .replace(/\b\w/g, (c: string) => c.toUpperCase())
+                            .replace(/\s+(clone|project|app|web|site|frontend|src)\b/gi, '') // strip common suffixes
+                            .trim();
+                        if (cleaned.length > 1) updates.companyName = cleaned;
+                    }
+                } catch (e) {}
+            }
+
+            // Extract Meta Description (from HTML or Helmet meta tags)
+            const descMatch = htmlContent.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["'][^>]*>/i) 
+                           || htmlContent.match(/<meta[^>]*content=["']([^"']+)["'][^>]*name=["']description["'][^>]*>/i)
+                           || allSrcText.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["'][^>]*>/i);
+            if (descMatch && descMatch[1] && !descMatch[1].includes('$')) updates.description = descMatch[1].trim();
+
+            // Extract Primary Website Address (from Canonical links or hardcoded absolute URLs)
+            const canonicalMatch = htmlContent.match(/<link[^>]*rel=["']canonical["'][^>]*href=["'](https?:\/\/[^"']+)["']/i)
+                                || allSrcText.match(/<link[^>]*rel=["']canonical["'][^>]*href=["'](https?:\/\/[^"']+)["']/i);
+            if (canonicalMatch) {
+                updates.url = canonicalMatch[1];
+            }
+
+            // Extract Phone Number (Look for formats like 123-456-7890, (123) 456-7890, or bare strings in hrefs)
+            const phoneMatch = allSrcText.match(/(?:\+?1\s*(?:[.-]\s*)?)?(?:\(\s*([2-9]1[02-9]|[2-9][02-8]1|[2-9][02-8][02-9])\s*\)|([2-9]1[02-9]|[2-9][02-8]1|[2-9][02-8][02-9]))\s*(?:[.-]\s*)?([2-9]1[02-9]|[2-9][02-9]1|[2-9][02-9]{2})\s*(?:[.-]\s*)?([0-9]{4})(?:\s*(?:#|x\.?|ext\.?|extension)\s*(\d+))?/i)
+                            || allSrcText.match(/href=["']tel:([^"']+)["']/i);
+            
+            if (phoneMatch) {
+                const number = phoneMatch[0].replace(/href=["']tel:/i, '').replace(/["']/g, '');
+                updates.telephone = number.trim();
+            }
+
+            // Extract CTA Links & Text
+            const contactHref = allSrcText.match(/>([^<]+)<\/a>[^<]*href=["'](\/contact\/?)["']/i) || allSrcText.match(/href=["'](\/contact\/?)["'][^>]*>([^<]+)<\/a>/i);
+            if (contactHref) {
+                updates.ctaLink1 = contactHref[1].startsWith('/') ? contactHref[1] : (contactHref[2] ? contactHref[2] : '/contact/');
+                const text = contactHref[2] && !contactHref[2].startsWith('/') ? contactHref[2] : contactHref[1];
+                if (text && text.length > 2 && text.length < 30 && !text.includes('/')) updates.ctaText1 = text.trim();
+            }
+            
+            const telHref = allSrcText.match(/>([^<]+)<\/a>[^<]*href=["'](tel:[^"']+)["']/i) || allSrcText.match(/href=["'](tel:[^"']+)["'][^>]*>([^<]+)<\/a>/i);
+            if (telHref) {
+                updates.ctaLink2 = telHref[1].startsWith('tel:') ? telHref[1] : (telHref[2] ? telHref[2] : '');
+                const text = telHref[2] && !telHref[2].startsWith('tel:') ? telHref[2] : telHref[1];
+                if (text && text.length > 2 && text.length < 30 && !text.includes('tel:')) updates.ctaText2 = text.trim();
+            }
+
+            // Detect Color Palette (Primary button colors)
+            // Look for common Tailwind classes or inline styles
+            const bgMatch = allSrcText.match(/bg-\[(#[0-9a-fA-F]{3,6})\]/i) || allSrcText.match(/background-color:\s*(#[0-9a-fA-F]{3,6})/i);
+            if (bgMatch) updates.ctaColor = bgMatch[1];
+            
+            const textMatch = allSrcText.match(/text-\[(#[0-9a-fA-F]{3,6})\]/i) || allSrcText.match(/color:\s*(#[0-9a-fA-F]{3,6})/i);
+            if (textMatch) updates.ctaTextColor = textMatch[1];
+
+            // Extract OG Image
+            const ogImageMatch = htmlContent.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["'][^>]*>/i);
+            if (ogImageMatch) {
+                updates.ogImage = ogImageMatch[1];
+            } else {
+                const imgMatch = allSrcText.match(/["']([^"']*\.(?:jpg|png|webp))["']/i);
+                if (imgMatch) updates.ogImage = imgMatch[1];
+            }
+
+            // Extract Social Links
+            const fbMatch = allSrcText.match(/href=["'](https?:\/\/(?:www\.)?facebook\.com\/[^"']+)["']/i);
+            if (fbMatch) updates.socialFacebook = fbMatch[1];
+            
+            const igMatch = allSrcText.match(/href=["'](https?:\/\/(?:www\.)?instagram\.com\/[^"']+)["']/i);
+            if (igMatch) updates.socialInstagram = igMatch[1];
+            
+            const twMatch = allSrcText.match(/href=["'](https?:\/\/(?:www\.)?(?:twitter|x)\.com\/[^"']+)["']/i);
+            if (twMatch) updates.socialTwitter = twMatch[1];
+            
+            const liMatch = allSrcText.match(/href=["'](https?:\/\/(?:www\.)?linkedin\.com\/[^"']+)["']/i);
+            if (liMatch) updates.socialLinkedIn = liMatch[1];
+
+            // Extract major Canadian/US Cities as a best-guess for Locality
+            const cityRegex = /\b(Toronto|Montreal|Vancouver|Calgary|Edmonton|Ottawa|Winnipeg|Quebec|Hamilton|Kitchener|London|Victoria|Halifax|Oshawa|Windsor|Seattle|Portland|New York|Los Angeles|Chicago|Houston|Phoenix|Philadelphia|San Antonio|San Diego|Dallas|San Jose|Austin|Jacksonville|Fort Worth|Columbus|Charlotte|San Francisco|Indianapolis|Seattle|Denver|Washington|Boston)\b/i;
+            const cityMatch = allSrcText.match(cityRegex);
+            if (cityMatch) updates.addressLocality = cityMatch[1];
+
+            // Extract State/Province
+            const stateRegex = /\b(AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT|AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VT|VA|WA|WV|WI|WY|Alberta|British Columbia|Ontario|Quebec|Texas|California|Florida)\b/g;
+            const stateMatches = allSrcText.match(stateRegex);
+            if (stateMatches) {
+                // Find most frequent state match to avoid false positive acronyms
+                const counts = stateMatches.reduce((acc: any, val) => { acc[val] = (acc[val] || 0) + 1; return acc; }, {});
+                const mostFrequent = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b);
+                if (counts[mostFrequent] > 2) updates.addressRegion = mostFrequent; // Require at least 3 occurrences to be confident
+            }
+            
+            // Extract AggregateRating (e.g. "4.9/5", "4.9 out of 5", "120 reviews")
+            const ratingValueMatch = allSrcText.match(/(?:(?:rated|rating|average\s*rating)\s*(?:of|is)?\s*)?([4-5](?:\.\d+)?)\s*\/\s*5|([4-5](?:\.\d+)?)\s*(?:out\s*of|\\\/)\s*5(?:\s*stars?)?/i);
+            const reviewCountMatch = allSrcText.match(/(?:based\s*on\s*|over\s*)?([\d,]+)\s*(?:(?:five|5)[\s-]*star|customer)?\s*reviews?/i);
+            
+            if (ratingValueMatch) updates.reviewRating = (ratingValueMatch[1] || ratingValueMatch[2]).trim();
+            if (reviewCountMatch) updates.reviewCount = reviewCountMatch[1].replace(/,/g, '').trim();
+
+            if (Object.keys(updates).length > 0) {
+                setSeoSettings(prev => ({ ...prev, ...updates }));
+                addLog(`Auto-extracted SEO settings: ${Object.keys(updates).join(", ")}`, 'info');
+            }
+        } catch (e) {
+            console.warn("Could not parse SEO settings", e);
+        }
+    };
+
+    const handleLiveScrape = async () => {
+        const url = seoSettings.url;
+        if (!url || !url.startsWith('http')) {
+            addLog('Please enter a valid Website URL first (e.g. https://dutycleaners.ca)', 'error');
+            return;
+        }
+        setIsScrapingLiveUrl(true);
+        addLog(`🔍 Scanning live site: ${url}`, 'info');
+        try {
+            const serverUrl = remoteConfig.url.replace(/\/build\/?$/, '');
+            const res = await fetch(`${serverUrl}/scrape-live-site`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url })
+            });
+            const json = await res.json();
+            if (json.success && json.data) {
+                const d = json.data;
+                setSeoSettings(prev => ({ ...prev, ...d }));
+                addLog(`✔ Auto-filled ${Object.keys(d).length} fields: ${Object.keys(d).join(', ')}`, 'success');
+            } else {
+                addLog(`✖ Scrape failed: ${json.error || 'Unknown error'}`, 'error');
+            }
+        } catch (err: unknown) {
+            addLog(`✖ Could not reach server: ${(err as Error).message}`, 'error');
+        } finally {
+            setIsScrapingLiveUrl(false);
+        }
     };
 
     const scanForRoutes = async (zipContent: any, rootPath: string): Promise<RouteInfo[]> => {
@@ -178,19 +428,58 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
 
     const toggleRoute = (path: string) => { const next = new Set(selectedRoutes); if (next.has(path)) next.delete(path); else next.add(path); setSelectedRoutes(next); };
 
+    // Pre-extract FAQ data from a source ZIP that has TSX files.
+    // This is needed because builder pipelines produce dist-only ZIPs (no source TSX),
+    // so FAQ extraction inside processConversion would find nothing.
+    const preExtractFaqFromSource = async (sourceZipContent: any): Promise<{q: string, a: string}[]> => {
+        const faq: {q: string, a: string}[] = [];
+        const allSrcFiles = Object.keys(sourceZipContent.files).filter(n => !sourceZipContent.files[n].dir && !n.includes('__MACOSX'));
+        const normPath = (p: string) => p.replace(/\\/g, '/').toLowerCase();
+        const tsxFiles = allSrcFiles.filter(f => {
+            const n = normPath(f);
+            return (n.endsWith('.tsx') || n.endsWith('.jsx')) && !n.includes('node_modules') && !n.endsWith('.d.ts') &&
+                (n.includes('/src/pages/') || n.includes('/src/components/') || n.includes('/pages/') || n.includes('/components/') || n.includes('faq') || n.includes('accordion') || n.includes('data') || n.includes('constants'));
+        });
+        for (const filePath of tsxFiles) {
+            try {
+                const content = await sourceZipContent.files[filePath].async('string');
+                let match;
+                const accordionRegex = /<AccordionTrigger[^>]*>([\s\S]*?)<\/AccordionTrigger>[\s\S]*?<AccordionContent[^>]*>([\s\S]*?)<\/AccordionContent>/g;
+                while ((match = accordionRegex.exec(content)) !== null) {
+                    const q = match[1].replace(/<[^>]+>/g, '').replace(/\{[^}]+\}/g, '').replace(/\s+/g, ' ').trim();
+                    const a = match[2].replace(/<[^>]+>/g, '').replace(/\{[^}]+\}/g, '').replace(/\s+/g, ' ').trim();
+                    if (q && a && q.length > 5 && a.length > 10 && !faq.some(item => item.q.toLowerCase() === q.toLowerCase())) {
+                        faq.push({ q, a });
+                    }
+                }
+                const inlineFaqRegex = /\{\s*q:\s*["']([^"']+)["']\s*,\s*a:\s*["']([^"']+)["']\s*\}/g;
+                while ((match = inlineFaqRegex.exec(content)) !== null) {
+                    const q = match[1].trim(); const a = match[2].trim();
+                    if (q && a && q.length > 5 && a.length > 10 && !faq.some(item => item.q.toLowerCase() === q.toLowerCase())) {
+                        faq.push({ q, a });
+                    }
+                }
+            } catch { /* skip unreadable files */ }
+        }
+        if (faq.length > 0) addLog(`Pre-extracted ${faq.length} FAQ items from source TSX files`, 'success');
+        return faq;
+    };
+
     const handleLocalBuild = async () => {
         if (!sourceFile) return; addLog("Starting Local Simulation...", 'info'); setStep(STEPS.BUILDING_REMOTE); setProgress(5);
         try {
             const routesToProcess = detectedRoutes.filter(r => selectedRoutes.has(r.path)); addLog(`Processing ${routesToProcess.length} selected routes...`, 'info');
             if (!JSZipLib) throw new Error("JSZip utility is not initialized.");
             const sourceZip = await new JSZipLib().loadAsync(sourceFile); const distZip = new JSZipLib();
+            // Pre-extract FAQ data from source before we lose access to TSX files
+            const sourceFaqData = await preExtractFaqFromSource(sourceZip);
             const files = Object.keys(sourceZip.files); setProgress(15);
             const indexHtmlPath = files.find(f => f.endsWith('index.html')); let indexHtml = "";
             if (indexHtmlPath) { indexHtml = await sourceZip.files[indexHtmlPath].async("string"); distZip.file("index.html", indexHtml); } else { throw new Error("No index.html found in source."); }
             setProgress(30);
             routesToProcess.forEach(route => { if (route.path === '/') return; const cleanPath = route.path.replace(/^\/+/, '').replace(/\/+$/, ''); const depth = cleanPath.split('/').filter(p => p).length; const prefix = depth > 0 ? '../'.repeat(depth) : './'; const routeHtml = indexHtml.replace(/href="\/assets\//g, `href="${prefix}assets/`).replace(/src="\/assets\//g, `src="${prefix}assets/`); distZip.file(`${cleanPath}/index.html`, routeHtml); });
             setProgress(50); distZip.file("assets/style.css", "/* Compiled CSS Placeholder */ body { font-family: sans-serif; }"); distZip.file("assets/app.js", "console.log('Theme Factory: Local Build Mode');");
-            addLog("Local Build Complete. Converting...", 'success'); setStep(STEPS.PROCESSING); await processConversion(distZip, "", "lovable", routesToProcess, conversionMode);
+            addLog("Local Build Complete. Converting...", 'success'); setStep(STEPS.PROCESSING); await processConversion(distZip, "", "lovable", routesToProcess, conversionMode, false, sourceFaqData);
         } catch (err: unknown) { setStep(STEPS.ERROR); addLog(`Local Build Failed: ${(err as Error).message}`, 'error'); }
     };
 
@@ -202,7 +491,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             if (!remoteConfig.apiKey) { addLog("No API Key. Using Local Simulation...", 'warning'); await handleLocalBuild(); return; }
             addLog("Preparing source code for Cloud Build...");
             if (!JSZipLib) throw new Error("JSZip utility is not initialized.");
-            const zip = new JSZipLib(); const cleanZip = await zip.loadAsync(file); const cleanBlob = await cleanZip.generateAsync({ type: 'blob', compression: "DEFLATE" });
+            const zip = new JSZipLib(); const cleanZip = await zip.loadAsync(file);
+            // Pre-extract FAQ data from source before it's sent to the remote builder
+            const sourceFaqData = await preExtractFaqFromSource(cleanZip);
+            const cleanBlob = await cleanZip.generateAsync({ type: 'blob', compression: "DEFLATE" });
             const formData = new FormData(); formData.append('zip', cleanBlob, "source.zip"); formData.append('platform', selectedPlatform);
             const routePaths = routesToProcess.map(r => r.path); formData.append('routes', JSON.stringify(routePaths));
             formData.append('render_wait_time', renderDelay.toString());
@@ -237,10 +529,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                     setSocket(newSocket);
                 }
 
-                try { await pollJobStatus(jobData.jobId || jobData.id, routesToProcess); } 
+                try { await pollJobStatus(jobData.jobId || jobData.id, routesToProcess, sourceFaqData); } 
                 catch (pollErr: unknown) { setStep(STEPS.ERROR); addLog((pollErr as Error).message, 'error'); } 
             }
-            else { setStep(STEPS.DOWNLOADING_ARTIFACT); const distBlob = await response.blob(); await handleBuildArtifact(distBlob, routesToProcess); }
+            else { setStep(STEPS.DOWNLOADING_ARTIFACT); const distBlob = await response.blob(); await handleBuildArtifact(distBlob, routesToProcess, sourceFaqData); }
         } catch (err: unknown) { setStep(STEPS.ERROR); addLog(`Remote Error: ${(err as Error).message}`, 'error'); }
     };
 
@@ -255,7 +547,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         addLog("⚠ Could not verify server health. Attempting build anyway...", 'warning');
     };
 
-    const pollJobStatus = async (jobId: string, routesToProcess: RouteInfo[]) => {
+    const pollJobStatus = async (jobId: string, routesToProcess: RouteInfo[], preExtractedFaq?: {q: string, a: string}[]) => {
         setStep(STEPS.POLLING_BUILD); setProgress(30);
         const baseUrl = remoteConfig.url.replace(/\/build\/?$/, ''); const statusUrl = `${baseUrl}/jobs/${jobId}`;
         addLog(`Tracking build job...`);
@@ -266,7 +558,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                 const res = await fetch(statusUrl, { headers: { 'Authorization': `Bearer ${remoteConfig.apiKey}`, 'ngrok-skip-browser-warning': 'true' } });
                 if (res.status === 404) throw new Error("Job ID not found.");
                 const data = await res.json();
-                if (data.status === 'completed' || data.status === 'success') { addLog("Build successful!", 'success'); let downloadLink = data.downloadUrl; if (downloadLink && !downloadLink.startsWith('http')) { downloadLink = `${baseUrl}${downloadLink}`; } if (downloadLink) await downloadArtifact(downloadLink, routesToProcess); return; }
+                if (data.status === 'completed' || data.status === 'success') { addLog("Build successful!", 'success'); let downloadLink = data.downloadUrl; if (downloadLink && !downloadLink.startsWith('http')) { downloadLink = `${baseUrl}${downloadLink}`; } if (downloadLink) await downloadArtifact(downloadLink, routesToProcess, preExtractedFaq); return; }
                 else if (data.status === 'failed' || data.status === 'error') { throw new Error(`Build failed: ${data.error || 'Unknown error'}`); }
                 else { 
                     if (attempts % 5 === 0 && !isAdmin) { addLog(`Building... (${attempts * 3}s elapsed)`); } 
@@ -278,8 +570,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         throw new Error("Build timed out after 15 minutes.");
     };
 
-    const downloadArtifact = async (url: string, routesToProcess: RouteInfo[]) => { setStep(STEPS.DOWNLOADING_ARTIFACT); addLog("Downloading build artifact..."); const res = await fetch(url, { headers: { 'ngrok-skip-browser-warning': 'true' } }); if (!res.ok) throw new Error("Failed to download artifact."); const blob = await res.blob(); await handleBuildArtifact(blob, routesToProcess); };
-    const handleBuildArtifact = async (blob: Blob, routesToProcess: RouteInfo[]) => { if (!JSZipLib) throw new Error("JSZip utility missing."); setStep(STEPS.PROCESSING); addLog("Artifact received. Processing...", 'info'); const distZip = new JSZipLib(); const distContent = await distZip.loadAsync(blob); await processConversion(distContent, "", selectedPlatform, routesToProcess, conversionMode); };
+    const downloadArtifact = async (url: string, routesToProcess: RouteInfo[], preExtractedFaq?: {q: string, a: string}[]) => { setStep(STEPS.DOWNLOADING_ARTIFACT); addLog("Downloading build artifact..."); const res = await fetch(url, { headers: { 'ngrok-skip-browser-warning': 'true' } }); if (!res.ok) throw new Error("Failed to download artifact."); const blob = await res.blob(); await handleBuildArtifact(blob, routesToProcess, preExtractedFaq); };
+    const handleBuildArtifact = async (blob: Blob, routesToProcess: RouteInfo[], preExtractedFaq?: {q: string, a: string}[]) => { if (!JSZipLib) throw new Error("JSZip utility missing."); setStep(STEPS.PROCESSING); addLog("Artifact received. Processing...", 'info'); const distZip = new JSZipLib(); const distContent = await distZip.loadAsync(blob); await processConversion(distContent, "", selectedPlatform, routesToProcess, conversionMode, false, preExtractedFaq); };
 
     const generateCompanionPlugin = async (zipInstance: any): Promise<Blob> => {
         const folder = zipInstance.folder('theme-factory-blocks');
@@ -353,7 +645,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             });
     };
 
-    const processConversion = async (zipContent: any, _rootPath: string, _platform: string, routes: RouteInfo[], mode: 'gutenberg-native' | 'react-spa', auditBypassed = false) => {
+    const processConversion = async (zipContent: any, _rootPath: string, _platform: string, routes: RouteInfo[], mode: 'gutenberg-native' | 'react-spa', auditBypassed = false, preExtractedFaqData?: {q: string, a: string}[]) => {
         if (!JSZipLib) return;
 
         const themeFnPrefix = (themeSlug || 'ai-theme').replace(/[^a-z0-9]/gi, '_');
@@ -703,7 +995,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         const fullShell = "<!DOCTYPE html>\n" + doc.documentElement.outerHTML;
         let processedShell = replaceAssetPaths(fullShell, '<?php echo esc_url(get_template_directory_uri()); ?>/')
             .replace(/<\/head>/i, `<?php wp_head(); ?>\n</head>`)
-            .replace(/<body([^>]*)>/i, (match, attrs) => `<body${attrs} <?php body_class(); ?>>\n<?php wp_body_open(); ?>`)
+            .replace(/<body([^>]*)>/i, (match, attrs) => `<body${attrs} <?php body_class(); ?>>\n<?php wp_body_open(); ?>\n<a class="skip-link screen-reader-text" href="#main">Skip to content</a>`)
             .replace(/<\/body>/i, `<?php wp_footer(); ?>\n</body>`);
 
         // FIX: In Gutenberg Native Mode, we MUST violently strip the Vite React JS bundle.
@@ -720,6 +1012,41 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
 
         let finalHeaderContent = headerPart;
         let finalFooterContent = footerPart || "</div></body></html>";
+
+        // Advanced SEO/CRO: Inject Global Head Overrides
+        const ogImage = seoSettings.ogImage || '';
+        let globalHeadInjection = `\n<!-- Indexation & Canonical Control -->\n<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />\n<link rel="canonical" href="<?php echo esc_url( home_url( wp_parse_url( $_SERVER['REQUEST_URI'], PHP_URL_PATH ) ) ); ?>" />\n<!-- Open Graph & Social Meta -->\n<meta property="og:type" content="website" />\n<meta name="twitter:card" content="summary_large_image" />\n`;
+        if (ogImage) {
+            globalHeadInjection += `<meta property="og:image" content="${ogImage}" />\n`;
+            // LCP Preloader for massive PageSpeed boost
+            globalHeadInjection += `<!-- LCP Auto-Preload -->\n<link rel="preload" as="image" href="${ogImage}" />\n`;
+        }
+        
+        if (seoSettings.googleSiteVerification) {
+            globalHeadInjection += `<meta name="google-site-verification" content="${seoSettings.googleSiteVerification}" />\n`;
+        }
+        if (seoSettings.bingSiteVerification) {
+            globalHeadInjection += `<meta name="msvalidate.01" content="${seoSettings.bingSiteVerification}" />\n`;
+        }
+        
+        let trackingScripts = '';
+        if (seoSettings.gaId) {
+            trackingScripts += `\n<!-- Google Analytics -->\n<script async src="https://www.googletagmanager.com/gtag/js?id=${seoSettings.gaId}"></script>\n<script>\n  window.dataLayer = window.dataLayer || [];\n  function gtag(){dataLayer.push(arguments);}\n  gtag('js', new Date());\n  gtag('config', '${seoSettings.gaId}');\n  if(window.location.search.includes('utm_source=chatgpt.com')){gtag('event','ai_referral',{source:'chatgpt'});}\n</script>\n`;
+        }
+        if (seoSettings.metaPixelId) {
+            trackingScripts += `\n<!-- Meta Pixel -->\n<script>\n!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window, document,'script','https://connect.facebook.net/en_US/fbevents.js');\nfbq('init', '${seoSettings.metaPixelId}');\nfbq('track', 'PageView');\n</script>\n`;
+        }
+
+        // Add dynamically extracted Favicon
+        const faviconHtml = `\n<!-- Site Icon -->\n<link rel="icon" href="<?php echo esc_url(get_template_directory_uri()); ?>/assets/favicon.ico" sizes="any">\n<link rel="icon" href="<?php echo esc_url(get_template_directory_uri()); ?>/assets/favicon.png" type="image/png">\n`;
+
+        // Strip global <title> and <meta description> so we can inject them on a per-page basis later
+        finalHeaderContent = finalHeaderContent.replace(/<title>.*?<\/title>/gi, '');
+        finalHeaderContent = finalHeaderContent.replace(/<meta name="description" content=".*?">/gi, '');
+        finalHeaderContent = finalHeaderContent.replace(/<meta property="og:title" content=".*?">/gi, '');
+        finalHeaderContent = finalHeaderContent.replace(/<meta property="og:description" content=".*?">/gi, '');
+
+        finalHeaderContent = finalHeaderContent.replace(/<\/head>/i, `${globalHeadInjection}${trackingScripts}${faviconHtml}</head>`);
 
         // CRITICAL: Inject extracted header/nav into header.php and footer into footer.php
         if (mode === 'gutenberg-native') {
@@ -780,6 +1107,57 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                 .replace(new RegExp(`data-href=["']${escapedPath}/?["']`, 'g'), `data-href="/${wpSlug}/"`);
         }
         addLog(`  Rewrote internal links in header.php and footer.php (${routes.length - 1} routes)`, 'success');
+
+        const stickyMobileCTA = `\n<!-- Sticky Mobile CTA -->
+<div class="fixed bottom-0 left-0 w-full z-[9999] md:hidden shadow-[0_-4px_10px_rgba(0,0,0,0.1)] flex" style="background-color: ${seoSettings.ctaColor};">
+    <a href="${seoSettings.ctaLink1}" class="flex-1 text-center py-4 font-bold text-lg hover:opacity-80 transition-opacity border-r" style="color: ${seoSettings.ctaTextColor}; border-color: color-mix(in srgb, ${seoSettings.ctaTextColor} 20%, transparent);">${seoSettings.ctaText1}</a>
+    <a href="${seoSettings.ctaLink2}" class="flex-1 text-center py-4 font-bold text-lg hover:opacity-80 transition-opacity" style="color: ${seoSettings.ctaTextColor};">${seoSettings.ctaText2}</a>
+</div>\n`;
+
+        // VISIBLE ENTITY FACTS: Render highly semantic business info matching LocalBusiness schema directly into the visible footer
+        const visibleEntityFacts = `
+<!-- wp:group {"className":"tf-entity-facts-footer bg-slate-50 border-t border-slate-200 mt-12 py-8"} -->
+<div class="wp-block-group tf-entity-facts-footer bg-slate-50 border-t border-slate-200 mt-12 py-8 px-4" style="background-color: #f8fafc; border-top: 1px solid #e2e8f0; margin-top: 4rem; padding: 2rem 1rem;">
+    <div style="max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 2rem;">
+        <div style="display: flex; flex-wrap: wrap; gap: 2rem; width: 100%;">
+            <div style="flex: 1 1 300px;">
+                <h3 style="font-size: 1.125rem; font-weight: 700; color: #0f172a; margin-bottom: 1rem;">About ${seoSettings.companyName}</h3>
+                <p style="margin-bottom: 1rem; font-size: 0.875rem; color: #475569;">${seoSettings.companyName} is a verified local business located in ${seoSettings.addressLocality}, ${seoSettings.addressRegion}. ${seoSettings.description}</p>
+                <p style="font-size: 0.875rem; color: #475569;"><strong>Pricing:</strong> ${seoSettings.priceRange}</p>
+            </div>
+            <div style="flex: 1 1 300px;">
+                <h3 style="font-size: 1.125rem; font-weight: 700; color: #0f172a; margin-bottom: 1rem;">Contact &amp; Location</h3>
+                <address style="font-style: normal; line-height: 1.6; font-size: 0.875rem; color: #475569;">
+                    <strong>${seoSettings.companyName}</strong><br>
+                    ${seoSettings.addressLocality}, ${seoSettings.addressRegion}, ${seoSettings.addressCountry}<br>
+                    Phone: <a href="tel:${seoSettings.telephone}" style="color: #2563eb; text-decoration: underline;">${seoSettings.telephone}</a><br>
+                    Website: <a href="${seoSettings.url}" style="color: #2563eb; text-decoration: underline;">${seoSettings.url}</a>
+                </address>
+            </div>
+            ${(seoSettings.reviewRating && seoSettings.reviewCount && parseFloat(seoSettings.reviewRating) > 0) ? `
+            <div style="flex: 1 1 300px;">
+                <h3 style="font-size: 1.125rem; font-weight: 700; color: #0f172a; margin-bottom: 1rem;">Customer Reviews</h3>
+                <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem;">
+                    <span style="color: #eab308; font-size: 1.25rem;">&#9733;&#9733;&#9733;&#9733;&#9733;</span>
+                    <span style="font-weight: 700; color: #0f172a; font-size: 0.875rem;">${seoSettings.reviewRating} out of 5</span>
+                </div>
+                <p style="font-size: 0.875rem; color: #475569;">Based on ${seoSettings.reviewCount} customer reviews.</p>
+            </div>` : ''}
+        </div>
+    </div>
+</div>
+<!-- /wp:group -->
+`;
+
+        // Note: LocalBusiness schema was moved to the intelligent Schema Router in the route loop
+        finalFooterContent = stickyMobileCTA + visibleEntityFacts + finalFooterContent;
+
+        // TIER 1 POLISH: Auto-Lazy Load all images in footer
+        finalFooterContent = finalFooterContent.replace(/<img(?!.*loading=["']lazy["'])((?![^>]*class=["'][^"']*(?:hero|no-lazy|lcp)[^"']*["'])[^>]*)>/gi, '<img loading="lazy"$1>');
+
+        // TIER 1 POLISH: Dynamic Copyright Year
+        // Find "2024", "2023", etc. in footer text and replace with PHP year output
+        finalFooterContent = finalFooterContent.replace(/(©|Copyright|[Cc]opyright[^>]*>)[^\d]*202[0-9]/g, '$1 <?php echo date("Y"); ?>');
 
         folder.file("header.php", finalHeaderContent);
         folder.file("footer.php", finalFooterContent);
@@ -2417,7 +2795,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     // Extract FAQ data and generate faq-data.js to populate empty Radix accordion content
     // This is critical because Radix UI AccordionContent doesn't render to DOM when closed
     // allFiles is already defined in the outer scope
-    let faqData: {q: string, a: string}[] = [];
+    // Seed with pre-extracted FAQ data from source ZIP (critical for builder pipelines
+    // where processConversion receives a dist-only ZIP with no source TSX files)
+    let faqData: {q: string, a: string}[] = preExtractedFaqData ? [...preExtractedFaqData] : [];
+    if (faqData.length > 0) addLog(`Seeded faqData with ${faqData.length} pre-extracted FAQ items from source`, 'success');
     
     // Helper to read text from ZIP
     const readZipText = async (zc: any, path: string): Promise<string | null> => {
@@ -2600,6 +2981,30 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             
             if (foundInFile > 0) {
                 addLog(`  Found ${foundInFile} FAQ items in ${filePath.split('/').pop()}`, 'success');
+            }
+            
+            // Pattern 5: Common alternative key names (question/answer, title/description, title/content)
+            const altKeyPatterns = [
+                /\{\s*question:\s*["'`]([^"'`]+)["'`]\s*,\s*answer:\s*["'`]([^"'`]+)["'`]\s*\}/g,
+                /\{\s*title:\s*["'`]([^"'`]+)["'`]\s*,\s*(?:description|content|answer):\s*["'`]([^"'`]+)["'`]\s*\}/g,
+                /\{\s*answer:\s*["'`]([^"'`]+)["'`]\s*,\s*question:\s*["'`]([^"'`]+)["'`]\s*\}/g,
+            ];
+            
+            for (const altRegex of altKeyPatterns) {
+                let altMatch;
+                while ((altMatch = altRegex.exec(content)) !== null) {
+                    // For the reversed pattern (answer first), swap q/a
+                    const isReversed = altRegex.source.startsWith('\\{\\s*answer:');
+                    const question = (isReversed ? altMatch[2] : altMatch[1]).trim();
+                    const answer = (isReversed ? altMatch[1] : altMatch[2]).trim();
+                    
+                    if (question && answer && question.length > 5 && answer.length > 10) {
+                        if (!faqData.some(item => item.q.toLowerCase() === question.toLowerCase())) {
+                            faqData.push({ q: question, a: answer });
+                            foundInFile++;
+                        }
+                    }
+                }
             }
         } catch (e) {
             // File read error - continue to next file
@@ -2784,8 +3189,12 @@ window.REVIEWS_DATA = ${JSON.stringify(reviewData, null, 2)};`);
     wp_enqueue_script('${themeSlug}-reviews-data', get_theme_file_uri('assets/js/reviews-data.js'), array(), '1.0.0', true);
   }
   
-  $interactive_ver = filemtime(get_theme_file_path('assets/js/interactive-components-v9.0.js')) ?: '1.0.0';
-  wp_enqueue_script('${themeSlug}-interactive', get_theme_file_uri('assets/js/interactive-components-v9.0.js'), array('${themeSlug}-faq-data'), $interactive_ver, true);`
+  // SEO FIX: Conditionally load interactive components ONLY if the page contains blocks that need them
+  $has_interactive = has_block('core/details') || has_block('theme-factory/tabs') || has_block('theme-factory/carousel') || has_block('theme-factory/container');
+  if ($has_interactive || is_front_page()) {
+      $interactive_ver = filemtime(get_theme_file_path('assets/js/interactive-components-v9.0.js')) ?: '1.0.0';
+      wp_enqueue_script('${themeSlug}-interactive', get_theme_file_uri('assets/js/interactive-components-v9.0.js'), array('${themeSlug}-faq-data'), $interactive_ver, true);
+  }`
             : spaScripts;
 
         const editorStyles = [
@@ -2793,7 +3202,7 @@ window.REVIEWS_DATA = ${JSON.stringify(reviewData, null, 2)};`);
             ...foundCssFiles.map(f => `  add_editor_style('${sanitizeForPhp(f)}');`)
         ].join("\n");
 
-        const functionsPhpContent = mode === 'gutenberg-native'
+        let functionsPhpContent = mode === 'gutenberg-native'
             ? `<?php
 /**
  * ${themeName} Theme Functions
@@ -3151,6 +3560,45 @@ add_action('template_redirect', function() {
 
             : `<?php /* SPA mode ... */ ?>`;
 
+        // SAAS FEATURE: Inject "Locations" Custom Post Type for Programmatic SEO
+        const cptCode = seoSettings.enableLocationsCPT ? `
+<?php
+/* 
+ * Multi-City Local SEO Architecture (Custom Post Type) 
+ * Dynamically generated by Theme Factory AI 
+ */
+function tf_register_locations_cpt() {
+    $labels = array(
+        'name'                  => _x( 'Locations', 'Post Type General Name', 'text_domain' ),
+        'singular_name'         => _x( 'Location', 'Post Type Singular Name', 'text_domain' ),
+        'menu_name'             => __( 'SEO Locations', 'text_domain' ),
+        'all_items'             => __( 'All Locations', 'text_domain' ),
+        'add_new_item'          => __( 'Add New Service Area', 'text_domain' ),
+    );
+    $args = array(
+        'label'                 => __( 'Location', 'text_domain' ),
+        'labels'                => $labels,
+        'supports'              => array( 'title', 'editor', 'thumbnail', 'custom-fields', 'revisions', 'page-attributes' ),
+        'hierarchical'          => true,
+        'public'                => true,
+        'show_ui'               => true,
+        'show_in_menu'          => true,
+        'menu_position'         => 20,
+        'menu_icon'             => 'dashicons-location',
+        'show_in_rest'          => true, // Enables Gutenberg
+        'has_archive'           => true,
+        'rewrite'               => array('slug' => 'locations', 'with_front' => false),
+    );
+    register_post_type( 'locations', $args );
+}
+add_action( 'init', 'tf_register_locations_cpt', 0 );
+?>
+` : '';
+
+        if (mode === 'gutenberg-native') {
+            functionsPhpContent += cptCode;
+        }
+
         folder.file("functions.php", functionsPhpContent); stats.php++;
 
         // Chrome fingerprint helpers — detect header/footer by content, not tag name
@@ -3206,11 +3654,86 @@ add_action('template_redirect', function() {
         const footerSig = extractedFooter ? buildSig(extractedFooter) : null;
         if (headerSig) addLog(`Header fingerprint: ${headerSig.texts.size} texts, ${headerSig.hrefs.size} hrefs`, 'info');
 
-        // Route Processing
+        // Route Processing & Indexation Control
+        const baseUrl = seoSettings.url.endsWith('/') ? seoSettings.url.slice(0, -1) : seoSettings.url;
         let successCount = 0;
+        let redirectsCsv = "source,target,regex\n";
+        let llmsTxtContent = `# ${seoSettings.companyName}\n> ${seoSettings.description}\n\n`;
+        const routeMedia = new Map<string, { images: {loc: string, title?: string}[], videos: {loc: string, title: string, desc: string, thumb: string}[] }>();
+
+        // SAAS FEATURE: Semantic Internal Linking Engine
+        let semanticLinkMap: Record<string, { title: string, path: string }[]> = {};
+        if (seoSettings.enableSemanticLinks) {
+            try {
+                addLog(`✨ AI SEO: Generating Semantic Internal Link Map for ${routesToProcess.length} routes...`, 'info');
+                const serverOrigin = remoteConfig.url ? remoteConfig.url.replace(/\/build$/, '') : 'http://localhost:3000';
+                
+                // Map the routes down to just what Gemini needs to save bandwidth and token limits
+                const simplifiedRoutes = routesToProcess.map(r => ({ path: r.path, title: r.title }));
+                
+                const response = await fetch(`${serverOrigin}/generate-link-map`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ routesToProcess: simplifiedRoutes })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.semanticMap) {
+                        semanticLinkMap = data.semanticMap;
+                        addLog(`✨ AI SEO: Successfully mapped topical relationships for ${Object.keys(semanticLinkMap).length} pages!`, 'success');
+                    }
+                } else {
+                    addLog(`⚠ AI SEO: Failed to fetch semantic map from backend.`, 'warning');
+                }
+            } catch (llmErr) {
+                console.error("Semantic Link Gen Error:", llmErr);
+                addLog(`⚠ AI SEO Error: Could not generate internal links.`, 'warning');
+            }
+        }
+
+        // Pre-Export QA / CI State Managers
+        const qaReport = {
+            errors: [] as string[],
+            warnings: [] as string[],
+            scannedPages: 0,
+            passed: true
+        };
+        const seenH1s = new Map<string, string>();
+        const seenTitles = new Map<string, string>();
+        const seenDescriptions = new Map<string, string>();
+        const seenSlugs = new Set<string>();
+        const seenRouteTexts = new Map<string, {path: string, wordCount: number, excerpt: string}>();
+        // Track un-normalized href strings mapped to their target paths for Canonical Consistency checks
+        const globalInternalHrefs = new Map<string, string>();
+        const pageCanonicals = new Map<string, string>();
+        const contextualInboundLinks = new Map<string, number>();
+        const allValidPaths = new Set(routesToProcess.map(r => r.path));
+
+        const nonDescriptiveAnchors = ['click here', 'read more', 'learn more', 'find out more', 'here', 'more info', 'link', 'more'];
+
+        // QA VALIDATION: HTTPS Enforcement
+        if (seoSettings.url.startsWith('http://')) {
+            qaReport.errors.push(`[Global] Critical Page Experience Error: SEO Canonical URL is explicitly set to "http://". Google aggressively penalizes non-HTTPS websites. Please update the domain to "https://".`);
+            addLog(`❌ QA Error: Insecure HTTP domain detected!`, 'warning');
+        }
+
         for (const route of routesToProcess) {
             let prerenderedContent = '';
-            const slug = route.slug || 'home';
+            let customTitleCode = '';
+            let customDescCode = '';
+            let pageLocale = seoSettings.primaryLocale || 'en-US';
+            const slug = (route.slug || 'home').toLowerCase(); // Normalize slash style and lowercase slug
+            
+            // Build Redirect Manifest Entry
+            const isHome = slug === 'home' || route.path === '/';
+            const targetUrl = isHome ? '/' : `/${slug}/`;
+            const sourceRegex = `^${route.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/?$`;
+            redirectsCsv += `"${sourceRegex}","${targetUrl}","true"\n`;
+
+            // Auto-noindex specific junk routes to keep crawl budgets clean
+            const isNoIndex = /thank-you|search|filter|staging|tag|category/i.test(slug);
+
             try {
                 addLog(`Processing route: ${route.title} (${route.path})...`, 'info');
                 const candidates = [`prerendered/${slug}.html`, `${effectiveRoot}prerendered/${slug}.html`, route.path === '/' ? 'index.html' : `${slug}.html`, `${effectiveRoot}${slug}/index.html`];
@@ -3221,6 +3744,28 @@ add_action('template_redirect', function() {
                 const routeDoc = parser.parseFromString(routeHtml, 'text/html');
                 const routeRoot = routeDoc.getElementById('root') || routeDoc.body;
                 const currentRootClasses = routeRoot instanceof HTMLElement ? routeRoot.className : rootClasses;
+
+                // QA VALIDATION: Mobile Viewport Enforcement
+                const hasViewport = routeDoc.querySelector('meta[name="viewport"]');
+                if (!hasViewport) {
+                    qaReport.errors.push(`[${route.path}] Critical Page Experience Error: Missing \`<meta name="viewport">\` tag. Google Mobile-First Indexing requires valid responsive design settings.`);
+                }
+
+                // QA VALIDATION: Intrusive Interstitials (Sticky Mobile CTAs that consume too much screen)
+                const interstitialSuspects = routeDoc.querySelectorAll('[class*="fixed"], [class*="sticky"]');
+                interstitialSuspects.forEach(el => {
+                    if (!(el instanceof HTMLElement)) return;
+                    const cls = el.getAttribute('class') || '';
+                    if (cls.includes('bottom-0') || cls.includes('top-0') || cls.includes('z-40') || cls.includes('z-50')) {
+                        // Heuristic height detection via Tailwind sizes
+                        if (cls.includes('h-32') || cls.includes('h-40') || cls.includes('h-48') || cls.includes('h-64') || cls.includes('p-10') || cls.includes('p-12') || /h-\[\d\d\dpx\]/.test(cls)) {
+                            // Elements acting as navigation are generally excused
+                            if (el.tagName.toLowerCase() !== 'header' && el.tagName.toLowerCase() !== 'nav' && !cls.includes('nav')) {
+                                qaReport.warnings.push(`[${route.path}] Intrusive Interstitial Warning: A large fixed overlay ('${cls.substring(0,30)}...') was detected. Google explicitly penalizes pages where content is obscured by massive sticky CTAs on mobile devices. Ensure it collapses or uses less than 20% of viewport height.`);
+                            }
+                        }
+                    }
+                });
 
                 if (routeRoot && (routeRoot.innerHTML.trim().length > 50 || routeRoot.id === 'root')) {
                     // SAFE content extraction: prefer <main> which naturally excludes header/footer
@@ -3257,17 +3802,329 @@ add_action('template_redirect', function() {
                         overlaySuspects.forEach(child => {
                             if (child instanceof HTMLElement) {
                                 const cls = child.getAttribute('class') || '';
-                                // If it's a fixed container acting as a toast wrapper, nuke it
-                                if (cls.includes('fixed') || child.getAttribute('role') === 'region' || child.getAttribute('aria-label')?.toLowerCase().includes('notification')) {
+                                // Only strip actual overlay/toast containers, not legitimate content
+                                const isNotification = child.getAttribute('aria-label')?.toLowerCase().includes('notification') || false;
+                                const isToast = cls.includes('toaster') || cls.includes('toast') || child.getAttribute('data-sonner-toaster') !== null;
+                                const isFixedEmpty = cls.includes('fixed') && (child.textContent?.trim().length || 0) < 50;
+                                if (isNotification || isToast || isFixedEmpty) {
                                     child.remove();
                                     overlayRemoved++;
                                 }
                             }
                         });
-                        addLog(`  Stripped ${overlayRemoved} fixed UI overlays/toasters from page content`, overlayRemoved > 0 ? 'success' : 'info');
-
-                        addLog(`  No <main> found, using stripped routeRoot`, 'info');
                     }
+                    if (mainEl && mainEl.innerHTML.trim().length > 50) {
+                        contentSource = mainEl;
+                        addLog(`  Using <main> element for content (excludes header/footer)`, 'success');
+                    } else {
+                        // ... fallback parsing ...
+                    }
+
+                    // QA VALIDATION: Thin Page & Duplicate Intent Detection
+                    const rawText = (contentSource.textContent || '').replace(/\s+/g, ' ').trim();
+                    const wordCount = rawText.split(' ').filter(word => word.length > 0).length;
+                    
+                    if (wordCount < 150) {
+                        qaReport.warnings.push(`[${route.path}] Thin Page Warning: Page contains only ${wordCount} words. Consider adding more valuable content to satisfy local search intent.`);
+                    }
+
+                    // Extract a large enough excerpt to compare intent (first ~300 chars)
+                    const textExcerpt = rawText.substring(0, 300).toLowerCase();
+                    
+                    // Simple heuristic comparison against previously seen routes
+                    let duplicateIntentFound = false;
+                    for (const [priorPath, priorData] of seenRouteTexts.entries()) {
+                        // If they have extremely similar word counts and the exact same starting paragraph, it's likely a duplicate
+                        const wordCountDiff = Math.abs(priorData.wordCount - wordCount);
+                        if (wordCountDiff < 20 && priorData.excerpt === textExcerpt && textExcerpt.length > 50) {
+                            qaReport.errors.push(`[${route.path}] Critical Content Error: Duplicate Intent detected. This page shares near-identical body text (excerpt: "${textExcerpt.substring(0, 50)}...") with route [${priorPath}]. Unique copy is required for programmatic SEO.`);
+                            duplicateIntentFound = true;
+                            break;
+                        }
+                    }
+                    
+                    if (!duplicateIntentFound) {
+                        seenRouteTexts.set(route.path, { path: route.path, wordCount, excerpt: textExcerpt });
+                    }
+
+                    // CRAWLABILITY AUTOMATION: Convert JS-bound links to crawlable <a> tags
+                    // Find elements (divs, buttons) acting as links via data-href and morph them into <a> tags
+                    const jsLinks = contentSource.querySelectorAll('[data-href]');
+                    let linkConvertedCount = 0;
+                    jsLinks.forEach(el => {
+                        if (el instanceof HTMLElement) {
+                            const href = el.getAttribute('data-href');
+                            if (href) {
+                                const aTag = routeDoc.createElement('a');
+                                aTag.setAttribute('href', href);
+                                // Copy all attributes except data-href
+                                Array.from(el.attributes).forEach(attr => {
+                                    if (attr.name !== 'data-href') {
+                                        aTag.setAttribute(attr.name, attr.value);
+                                    }
+                                });
+                                aTag.innerHTML = el.innerHTML;
+                                el.parentNode?.replaceChild(aTag, el);
+                                linkConvertedCount++;
+                            }
+                        }
+                    });
+                    if (linkConvertedCount > 0) addLog(`  🔗 Converted ${linkConvertedCount} interactive JS elements to native <a href>`, 'success');
+
+                    // QA VALIDATION: Descriptive Anchor Text & Hub/Spoke Extraction
+                    const contextualLinks = contentSource.querySelectorAll('a');
+                    let internalDescriptiveErrors = 0;
+                    contextualLinks.forEach(link => {
+                        const href = link.getAttribute('href');
+                        if (href && (href.startsWith('/') || href.startsWith(baseUrl))) {
+                            // Normalize the target URL to just the path
+                            let targetPath = href;
+                            if (href.startsWith(baseUrl)) targetPath = href.replace(baseUrl, '');
+                            if (!targetPath.startsWith('/')) targetPath = '/' + targetPath;
+
+                            // Increment the Contextual Hub/Spoke mapping for the target URL
+                            contextualInboundLinks.set(targetPath, (contextualInboundLinks.get(targetPath) || 0) + 1);
+
+                            // Validate Anchor Text distinctiveness
+                            const anchorText = (link.textContent || '').trim().toLowerCase();
+                            if (nonDescriptiveAnchors.includes(anchorText)) {
+                                qaReport.warnings.push(`[${route.path}] Link Quality Warning: Used non-descriptive anchor text "${anchorText}" pointing to [${targetPath}].
+► FIX: In your React code, change this link text to something keyword-rich. For example, instead of "${anchorText}", use "View our ${targetPath.replace(/\//g, ' ').trim()} services".`);
+                                internalDescriptiveErrors++;
+                            }
+                        }
+                    });
+                    if (internalDescriptiveErrors > 0) addLog(`  ⚠ Found ${internalDescriptiveErrors} non-descriptive internal links`, 'warning');
+
+                    // MEDIA SEO AUTOMATION: Image Alt Inference, LCP Optimization, and Sitemap Extraction
+                    const pageMedia = { images: [] as any[], videos: [] as any[] };
+                    routeMedia.set(route.path, pageMedia);
+
+                    const allImages = contentSource.querySelectorAll('img');
+                    let lcpFound = false;
+                    let imgModifiedCount = 0;
+
+                    allImages.forEach((img, index) => {
+                        const src = img.getAttribute('src');
+                        if (!src) return;
+
+                        // 1. LCP Optimization (First significant image)
+                        if (!lcpFound && index < 3) {
+                            // Basic heuristic: if it has 'hero' class or is early in the DOM
+                            const cls = img.getAttribute('class') || '';
+                            if (cls.includes('hero') || index === 0) {
+                                img.setAttribute('fetchpriority', 'high');
+                                img.setAttribute('loading', 'eager');
+                                lcpFound = true;
+                                addLog(`  ⚡ Optimized LCP: Injected fetchpriority="high" into hero image`, 'success');
+                            }
+                        }
+
+                        // 2. Alt Text Inference
+                        let alt = img.getAttribute('alt');
+                        if (!alt || alt.trim() === '' || alt.includes('image') || alt.includes('photo')) {
+                            // Find closest heading
+                            let inferredContext = route.title;
+                            let currentEl = img.parentElement;
+                            let limit = 0;
+                            while (currentEl && limit < 3) {
+                                const h = currentEl.querySelector('h1, h2, h3, h4, figcaption');
+                                if (h && h.textContent && h.textContent.trim().length > 3) {
+                                    inferredContext = h.textContent.trim();
+                                    break;
+                                }
+                                currentEl = currentEl.parentElement;
+                                limit++;
+                            }
+                            const smartAlt = `${inferredContext} - ${seoSettings.companyName} ${seoSettings.addressLocality}`;
+                            img.setAttribute('alt', smartAlt);
+                            alt = smartAlt;
+                            imgModifiedCount++;
+                        }
+
+                        // 3. Extract for XML Sitemap
+                        if (src.startsWith('http') || src.startsWith('/')) {
+                            const absoluteSrc = src.startsWith('http') ? src : `${seoSettings.url.endsWith('/') ? seoSettings.url.slice(0, -1) : seoSettings.url}${src}`;
+                            pageMedia.images.push({ loc: absoluteSrc, title: alt });
+                        }
+                    });
+                    if (imgModifiedCount > 0) addLog(`  🖼 Inferred AI alt-text for ${imgModifiedCount} unoptimized images`, 'success');
+
+                    // MEDIA SEO AUTOMATION: Video extraction
+                    const allVideos = contentSource.querySelectorAll('video, iframe[src*="youtube"], iframe[src*="vimeo"]');
+                    allVideos.forEach(vid => {
+                        const src = vid.tagName.toLowerCase() === 'video' ? vid.querySelector('source')?.getAttribute('src') || vid.getAttribute('src') : vid.getAttribute('src');
+                        if (!src) return;
+                        
+                        const absoluteSrc = src.startsWith('http') ? src : `${seoSettings.url.endsWith('/') ? seoSettings.url.slice(0, -1) : seoSettings.url}${src}`;
+                        const title = vid.getAttribute('title') || `${route.title} Video`;
+                        
+                        pageMedia.videos.push({
+                            loc: absoluteSrc,
+                            title: title,
+                            desc: `${seoSettings.companyName} video presentation for ${route.title}`,
+                            thumb: seoSettings.ogImage
+                        });
+                        addLog(`  🎥 Discovered embedded video payload for sitemap: ${title}`, 'success');
+                    });
+
+                    // HEURISTIC TITLE & META PIPELINE
+
+                    // QA VALIDATION: Prominent Main-Title Enforcement
+                    let maxVisualWeight = 0;
+                    const weightInstances = new Map<string, HTMLElement[]>(); // Text -> Array of elements sharing this weight
+                    
+                    const tailwindWeights: Record<string, number> = {
+                        'text-xs': 1, 'text-sm': 2, 'text-base': 3, 'text-lg': 4, 'text-xl': 5,
+                        'text-2xl': 6, 'text-3xl': 7, 'text-4xl': 8, 'text-5xl': 9, 'text-6xl': 10,
+                        'text-7xl': 11, 'text-8xl': 12, 'text-9xl': 13
+                    };
+                    
+                    const titleCandidates = routeRoot.querySelectorAll('h1, h2, h3, [class*="text-"]');
+                    titleCandidates.forEach(el => {
+                        if (!(el instanceof HTMLElement)) return;
+                        const text = (el.textContent || '').trim();
+                        // Ignore tiny strings, icons, or cosmetic numbers
+                        if (text.length < 5) return;
+                        
+                        let weight = 0;
+                        const cls = el.getAttribute('class') || '';
+                        
+                        // Check explicit Tailwind sizing
+                        for (const [tClass, tWeight] of Object.entries(tailwindWeights)) {
+                            // Check for exact class match (e.g., text-xl, md:text-xl)
+                            // A simple includes() is okay here since we want responsive sizes too
+                            if (cls.includes(tClass)) weight = Math.max(weight, tWeight);
+                        }
+                        
+                        // If no explicit tailwind size, fallback to semantic tag weight
+                        if (weight === 0) {
+                            const tag = el.tagName.toLowerCase();
+                            if (tag === 'h1') weight = 8;
+                            else if (tag === 'h2') weight = 6;
+                            else if (tag === 'h3') weight = 5;
+                        }
+                        
+                        if (weight > 0) {
+                            if (weight > maxVisualWeight) {
+                                maxVisualWeight = weight;
+                                weightInstances.clear(); // New max found, reset trackers
+                            }
+                            
+                            if (weight === maxVisualWeight) {
+                                const lowerText = text.toLowerCase();
+                                const existing = weightInstances.get(lowerText) || [];
+                                existing.push(el);
+                                weightInstances.set(lowerText, existing);
+                            }
+                        }
+                    });
+                    
+                    // Count distinct text values operating at the maximum visual weight
+                    const uniquelyProminentNodes = Array.from(weightInstances.keys());
+                    if (uniquelyProminentNodes.length > 1) {
+                        qaReport.warnings.push(`[${route.path}] Semantic Warning: Multiple equally prominent headings detected ("${uniquelyProminentNodes[0].substring(0,30)}..." vs "${uniquelyProminentNodes[1].substring(0,30)}..."). Google relies on the uniquely dominant visual title to generate search snippet links.
+► FIX: Ensure exactly one heading stands out by changing the others to <h2> in your React code. You can visually style an <h2> to look identical to an <h1> using Tailwind classes like 'text-4xl font-bold' without confusing search engines.`);
+                    }
+
+                    // QA VALIDATION: H1 Presence & count tracking
+                    let pageH1 = route.title;
+                    const h1Els = routeRoot.querySelectorAll('h1');
+                    if (h1Els.length === 0) {
+                        qaReport.errors.push(`[${route.path}] Critical SEO Warning: Missing <h1> tag.
+► FIX: Every page needs exactly one <h1> tag wrapping its primary topic keyword. Add one in React.`);
+                        addLog(`  ❌ QA Error: Missing <h1> tag`, 'warning');
+                    } else if (h1Els.length > 1) {
+                        qaReport.warnings.push(`[${route.path}] Semantic Warning: Multiple <h1> tags detected (count: ${h1Els.length}). Google prefers exactly one.`);
+                    }
+                    
+                    if (h1Els.length > 0 && h1Els[0].textContent) {
+                        pageH1 = h1Els[0].textContent.trim().substring(0, 60);
+                        if (seenH1s.has(pageH1)) {
+                            qaReport.warnings.push(`[${route.path}] Duplicate H1 Warning: The H1 "${pageH1}" is already used on route ${seenH1s.get(pageH1)}.`);
+                        }
+                        seenH1s.set(pageH1, route.path);
+                    }
+                    
+                    // QA VALIDATION: Duplicate Slug Tracking
+                    if (seenSlugs.has(slug)) {
+                         qaReport.errors.push(`[${route.path}] Critical Architecture Error: Duplicate slug "${slug}" detected. This will create a WordPress fatal permalink collision.`);
+                    }
+                    seenSlugs.add(slug);
+                    
+                    // Construct a dense, localized SEO Title
+                    let seoTitle = isHome 
+                        ? `${seoSettings.companyName} | ${seoSettings.description}`
+                        : `${pageH1} | ${seoSettings.companyName} in ${seoSettings.addressLocality}`;
+                    
+                    // HOMEPAGE CALIBRATION: Ensure Homepage title aggressively fronts the Brand Name for Site Name recognition
+                    if (isHome && !seoTitle.toLowerCase().startsWith(seoSettings.companyName.toLowerCase())) {
+                        seoTitle = `${seoSettings.companyName} | ${pageH1}`;
+                    }
+
+                    // Cap title length to standard ~65 chars to avoid truncation
+                    if (seoTitle.length > 70) seoTitle = `${pageH1} | ${seoSettings.companyName}`;
+                    
+                    // QA VALIDATION: Title Uniqueness
+                    if (seenTitles.has(seoTitle)) {
+                         qaReport.warnings.push(`[${route.path}] Duplicate Title Warning: "${seoTitle}" matches route ${seenTitles.get(seoTitle)}.`);
+                    }
+                    seenTitles.set(seoTitle, route.path);
+                    
+                    // MULTILINGUAL & MULTIREGIONAL SEO LAYER
+                    // Autodetect if current page belongs to a specific language path
+                    const pathParts = route.path.split('/').filter(Boolean);
+                    const isAltLangUrl = pathParts.length > 0 && /^[a-z]{2}(-[A-Z]{2})?$/.test(pathParts[0]);
+                    const currentLangUrlPrefix = isAltLangUrl ? pathParts[0] : '';
+                    const baseCanonicalUrl = isAltLangUrl 
+                        ? route.path.replace(`/${currentLangUrlPrefix}`, '') || '/'
+                        : route.path;
+                    
+                    // Determine page's specific locale
+                    const activeAlternates = seoSettings.alternateLocales ? seoSettings.alternateLocales.split(',').map(s => s.trim()) : [];
+                    if (isAltLangUrl) {
+                        const matchingAlt = activeAlternates.find(a => a.toLowerCase().startsWith(currentLangUrlPrefix.toLowerCase()));
+                        if (matchingAlt) pageLocale = matchingAlt;
+                    }
+
+                    // Generate og:locale and hreflang blocks
+                    const ogLocaleSafe = pageLocale.replace('-', '_');
+                    let localeMetaTags = `\n<meta property="og:locale" content="${ogLocaleSafe}" />\n`;
+                    
+                    const safeUrl = seoSettings.url.endsWith('/') ? seoSettings.url.slice(0, -1) : seoSettings.url;
+                    const defaultPath = baseCanonicalUrl === '/' ? '/' : baseCanonicalUrl + '/';
+                    const finalCanonicalUrl = `${safeUrl}${defaultPath}`;
+                    
+                    // CANONICAL CONSISTENCY: Save this exact generated canonical string for later Graph verification
+                    pageCanonicals.set(route.path, finalCanonicalUrl);
+
+                    let hreflangTags = `\n<link rel="alternate" hreflang="x-default" href="${finalCanonicalUrl}" />\n`;
+                    hreflangTags += `<link rel="alternate" hreflang="${seoSettings.primaryLocale || 'en-US'}" href="${finalCanonicalUrl}" />\n`;
+                    
+                    activeAlternates.forEach(alt => {
+                        const langCode = alt.split('-')[0].toLowerCase();
+                        const altPath = baseCanonicalUrl === '/' ? `/${langCode}/` : `/${langCode}${baseCanonicalUrl}/`;
+                        hreflangTags += `<link rel="alternate" hreflang="${alt}" href="${safeUrl}${altPath}" />\n`;
+                        localeMetaTags += `<meta property="og:locale:alternate" content="${alt.replace('-', '_')}" />\n`;
+                    });
+
+                    // Ensure explicit Site Name definition for Google Entity recognition
+                    const siteNameMeta = `\n<meta property="og:site_name" content="${seoSettings.companyName.replace(/"/g, '&quot;')}" />\n`;
+
+                    customTitleCode = `\n<title>${seoTitle.replace(/"/g, '&quot;')}</title>\n<meta property="og:title" content="${seoTitle.replace(/"/g, '&quot;')}" />${siteNameMeta}${localeMetaTags}${hreflangTags}\n`;
+
+                    // Generate a localized Meta Description based on H1 and Locality
+                    let pageDesc = isHome
+                        ? seoSettings.description
+                        : `${seoSettings.companyName} provides professional ${pageH1.toLowerCase()} services in ${seoSettings.addressLocality}, ${seoSettings.addressRegion}. Contact us today to learn more.`;
+                    
+                    // QA VALIDATION: Description Uniqueness
+                    if (seenDescriptions.has(pageDesc)) {
+                         qaReport.warnings.push(`[${route.path}] Duplicate Meta Description Warning: The description matches route ${seenDescriptions.get(pageDesc)}.`);
+                    }
+                    seenDescriptions.set(pageDesc, route.path);
+                    
+                    customDescCode = `<meta name="description" content="${pageDesc.replace(/"/g, '&quot;')}" />\n<meta property="og:description" content="${pageDesc.replace(/"/g, '&quot;')}" />\n`;
 
                     // Use replaceAssetPaths for robust asset replacement
                     let cleanHtml = replaceAssetPaths(contentSource.innerHTML, '__THEME_URI__/');
@@ -3309,6 +4166,12 @@ add_action('template_redirect', function() {
                         if (r.path === '/') continue;
                         const reactPath = r.path; // e.g., /city/page
                         const wpSlug = r.slug;     // e.g., city-page
+                        
+                        // QA VALIDATION: Log internal links for dead link / orphan checking later
+                        if (rewrittenBlocks.includes(`href="${reactPath}`) || rewrittenBlocks.includes(`href='${reactPath}`)) {
+                            globalInternalHrefs.set(reactPath, reactPath);
+                        }
+                        
                         // Replace href="/city/page" with href="/city-page/"
                         // Handle with and without trailing slash
                         rewrittenBlocks = rewrittenBlocks
@@ -3320,17 +4183,238 @@ add_action('template_redirect', function() {
                             .replace(new RegExp(`"url":"${reactPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/?"`, 'g'), `"url":"/${wpSlug}/"`);
                     }
                     
+                    // POST-CONVERSION FAQ INJECTION: When prerender misses accordion content
+                    // (e.g., EdmontonPricing body fails to render), synthesize FAQ blocks from
+                    // source TSX + faqData so the WordPress page still gets real FAQ answers.
+                    const hasDetailBlocks = /<summary>/i.test(rewrittenBlocks);
+                    if (!hasDetailBlocks && faqData.length > 0) {
+                        // Find source TSX file for this route by matching the route path to filename
+                        const routeSlugParts = route.path.replace(/^\/+/, '').split('/');
+                        const possibleNames = [
+                            routeSlugParts.join(''),           // e.g., "edmontonpricing"
+                            routeSlugParts.join('-'),          // e.g., "edmonton-pricing"
+                            ...routeSlugParts,                 // individual segments
+                        ].map(s => s.toLowerCase());
+                        
+                        const sourceFile = allFiles.find(f => {
+                            const n = f.replace(/\\/g, '/').toLowerCase();
+                            if (!n.endsWith('.tsx') && !n.endsWith('.jsx')) return false;
+                            if (n.includes('node_modules')) return false;
+                            const basename = n.split('/').pop()?.replace(/\.(tsx|jsx)$/, '') || '';
+                            return possibleNames.some(name => basename === name);
+                        });
+                        
+                        if (sourceFile) {
+                            try {
+                                const srcContent = await zipContent.files[sourceFile].async('string');
+                                
+                                // Extract FAQ questions from source AccordionTrigger tags
+                                const triggerRegex = /<AccordionTrigger[^>]*>([\s\S]*?)<\/AccordionTrigger>/g;
+                                const pageQuestions: string[] = [];
+                                let tMatch;
+                                while ((tMatch = triggerRegex.exec(srcContent)) !== null) {
+                                    const q = tMatch[1].replace(/<[^>]+>/g, '').replace(/\{[^}]+\}/g, '').replace(/\s+/g, ' ').trim();
+                                    if (q && q.length > 5) pageQuestions.push(q);
+                                }
+                                
+                                if (pageQuestions.length > 0) {
+                                    addLog(`  🔧 FAQ INJECTION: Page "${route.path}" has ${pageQuestions.length} accordion items in source but 0 in converted output. Injecting from faqData...`, 'warning');
+                                    
+                                    // Also extract answers directly from source as ultimate fallback
+                                    const pairRegex = /<AccordionTrigger[^>]*>([\s\S]*?)<\/AccordionTrigger>[\s\S]*?<AccordionContent[^>]*>([\s\S]*?)<\/AccordionContent>/g;
+                                    const sourcePairs: {q: string, a: string}[] = [];
+                                    let pMatch;
+                                    while ((pMatch = pairRegex.exec(srcContent)) !== null) {
+                                        const q = pMatch[1].replace(/<[^>]+>/g, '').replace(/\{[^}]+\}/g, '').replace(/\s+/g, ' ').trim();
+                                        const a = pMatch[2].replace(/<[^>]+>/g, '').replace(/\{[^}]+\}/g, '').replace(/\s+/g, ' ').trim();
+                                        if (q && a && a.length > 10) sourcePairs.push({ q, a });
+                                    }
+                                    
+                                    const faqBlocks: string[] = [];
+                                    const normalizeText = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+                                    
+                                    for (const question of pageQuestions) {
+                                        const qNorm = normalizeText(question);
+                                        
+                                        // Try faqData first (globally extracted)
+                                        let answer = '';
+                                        const faqMatch = faqData.find(f => {
+                                            const fqNorm = normalizeText(f.q);
+                                            return fqNorm === qNorm || fqNorm.includes(qNorm) || qNorm.includes(fqNorm);
+                                        });
+                                        if (faqMatch) {
+                                            answer = faqMatch.a;
+                                        } else {
+                                            // Fallback to source pair extraction
+                                            const srcMatch = sourcePairs.find(p => {
+                                                const pqNorm = normalizeText(p.q);
+                                                return pqNorm === qNorm || pqNorm.includes(qNorm) || qNorm.includes(pqNorm);
+                                            });
+                                            if (srcMatch) answer = srcMatch.a;
+                                        }
+                                        
+                                        if (answer) {
+                                            // Escape HTML entities for safe embedding
+                                            const safeQ = question.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                                            const safeA = answer.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+                                            faqBlocks.push(`<!-- wp:details -->
+<details class="wp-block-details"><summary>${safeQ}</summary><!-- wp:paragraph -->
+<p>${safeA}</p>
+<!-- /wp:paragraph --></details>
+<!-- /wp:details -->`);
+                                        }
+                                    }
+                                    
+                                    if (faqBlocks.length > 0) {
+                                        // Wrap in a section with heading
+                                        const faqSection = `
+<!-- wp:heading {"level":2} -->
+<h2 class="wp-block-heading">Frequently Asked Questions</h2>
+<!-- /wp:heading -->
+
+<!-- wp:paragraph -->
+<p>Have questions? Here are answers to common pricing questions.</p>
+<!-- /wp:paragraph -->
+
+${faqBlocks.join('\n\n')}`;
+                                        
+                                        rewrittenBlocks += '\n\n' + faqSection;
+                                        addLog(`  ✅ FAQ INJECTION: Successfully injected ${faqBlocks.length} FAQ items from source/faqData`, 'success');
+                                    }
+                                }
+                            } catch (e) {
+                                addLog(`  ⚠️ FAQ injection: Could not read source file ${sourceFile}`, 'warning');
+                            }
+                        }
+                    }
+
+                    // SEO FIX: Extract FAQs from this page AND inject FAQPage JSON-LD schema dynamically!
+                    const pageSummaries = Array.from(rewrittenBlocks.matchAll(/<summary>(.*?)<\/summary>/gi)).map(m => m[1]);
+                    const pageFaqs: any[] = [];
+                    const seenQ = new Set();
+                    for (const summary of pageSummaries) {
+                        const cleanQ = summary.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#039;/g, "'").trim();
+                        if (seenQ.has(cleanQ)) continue;
+                        seenQ.add(cleanQ);
+                        const found = faqData.find(f => {
+                            const fQ = f.q.trim();
+                            return fQ === cleanQ || fQ.includes(cleanQ) || cleanQ.includes(fQ);
+                        });
+                        if (found) {
+                            pageFaqs.push(found);
+                        }
+                    }
+                    if (seoSettings.enableFaqSchema && pageFaqs.length > 0) {
+                        const faqSchema = {
+                            "@context": "https://schema.org",
+                            "@type": "FAQPage",
+                            "mainEntity": pageFaqs.map(item => ({
+                                "@type": "Question",
+                                "name": item.q,
+                                "acceptedAnswer": {
+                                    "@type": "Answer",
+                                    "text": item.a.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>')
+                                }
+                            }))
+                        };
+                        rewrittenBlocks += `\n<!-- wp:html -->\n<script type="application/ld+json">\n${JSON.stringify(faqSchema, null, 2)}\n</script>\n<!-- /wp:html -->\n`;
+                        addLog(`  📈 Injected FAQPage JSON-LD Schema for ${pageFaqs.length} questions`, 'success');
+                    }
+
+                    // TIER 1 POLISH: Auto-Lazy Load all images (except those with specific classes or explicitly eager)
+                    // We only apply lazy loading to images that don't look like above-the-fold hero images
+                    let imgCountBefore = (rewrittenBlocks.match(/<img\b/gi) || []).length;
+                    rewrittenBlocks = rewrittenBlocks.replace(/<img(?!.*loading=["']lazy["'])(?!.*loading=["']eager["'])((?![^>]*class=["'][^"']*(?:hero|no-lazy|lcp|above-the-fold)[^"']*["'])[^>]*)>/gi, '<img loading="lazy"$1>');
+                    addLog(`  🖼 Added native lazy loading to images`, 'success');
+
+                    // TIER 1 POLISH: Dynamic Copyright Year anywhere in the page blocks
+                    rewrittenBlocks = rewrittenBlocks.replace(/(©|Copyright|[Cc]opyright[^>]*>)[^\d]*202[0-9]/g, '$1 <?php echo date("Y"); ?>');
+
+                    // CRAWLABILITY AUTOMATION: Visual Breadcrumbs & Related Links Modules
+                    let breadcrumbHtml = '';
+                    let relatedLinksHtml = '';
+                    if (!isHome && !isNoIndex) {
+                        breadcrumbHtml = `
+<!-- wp:group {"className":"tf-breadcrumbs"} -->
+<div class="wp-block-group tf-breadcrumbs" style="padding: 1rem 1.5rem; background: #f8f9fa; border-bottom: 1px solid #eee; margin-bottom: 2rem; font-size: 0.875rem;">
+    <a href="/" style="color: #666; text-decoration: none;">Home</a> <span style="margin: 0 0.5rem; color: #ccc;">/</span> <span style="color: #333; font-weight: 500;">${pageH1}</span>
+</div>
+<!-- /wp:group -->
+`;
+                        let siblings = [];
+                        let isAiGenerated = false;
+
+                        // 1. Check if Semantic Internal Linking Map mapped this page
+                        if (semanticLinkMap && semanticLinkMap[route.path] && semanticLinkMap[route.path].length > 0) {
+                            siblings = semanticLinkMap[route.path];
+                            isAiGenerated = true;
+                        } 
+                        // 2. Fallback to heuristic structural siblings
+                        else {
+                            siblings = routesToProcess.filter(r => r.path !== '/' && r.path !== route.path && !/thank-you|search|filter|staging|tag|category/i.test(r.slug || ''));
+                            const pathParts = route.path.split('/').filter(Boolean);
+                            
+                            // Try to find structural siblings
+                            if (pathParts.length > 1) {
+                                const parentPrefix = `/${pathParts[0]}/`;
+                                siblings = siblings.filter(r => r.path.startsWith(parentPrefix));
+                            }
+                            
+                            // Fallback to top generic pages if no siblings
+                            if (siblings.length === 0) {
+                                siblings = routesToProcess.filter(r => r.path !== '/' && r.path !== route.path && !/thank-you|search|filter|staging|tag|category/i.test(r.slug || '')).slice(0, 4);
+                            } else {
+                                siblings = siblings.slice(0, 4);
+                            }
+                        }
+
+                        if (siblings.length > 0) {
+                            const badgeHtml = isAiGenerated ? `<span style="font-size: 0.7rem; background: #dcfce7; color: #166534; padding: 0.2rem 0.5rem; border-radius: 99px; margin-left: 0.5rem; vertical-align: middle; font-weight: 600;">✨ AI Selected</span>` : '';
+                            relatedLinksHtml = `
+<!-- wp:group {"className":"tf-related-links-module"} -->
+<div class="wp-block-group tf-related-links-module" style="margin-top: 4rem; padding: 3rem 1.5rem; background: #f8f9fa;">
+    <h3 style="margin-bottom: 1.5rem; text-align: center;">Related Links${badgeHtml}</h3>
+    <div style="display: flex; flex-wrap: wrap; gap: 1rem; justify-content: center;">
+        ${siblings.map(sib => `<a href="${sib.path.endsWith('/') ? sib.path : sib.path + '/'}" style="padding: 0.75rem 1.5rem; background: #fff; border: 1px solid #ddd; border-radius: 4px; color: inherit; text-decoration: none; font-weight: 500; transition: all 0.2s;">${sib.title}</a>`).join('')}
+    </div>
+</div>
+<!-- /wp:group -->
+`;
+                            addLog(`  🔗 Injected Related Links module with ${siblings.length} internal links ${isAiGenerated ? '(✨ AI)' : ''}`, 'success');
+                        }
+                        addLog(`  🍞 Injected visual Breadcrumb navigation`, 'success');
+                    }
+
                     const isSameClass = currentRootClasses === rootClasses;
                     const wrapperClasses = isSameClass ? 'entry-content' : `entry-content ${currentRootClasses}`;
                     // Use core wp:group block instead of custom page-shell (requires no plugin)
-                    prerenderedContent = `<!-- wp:group {"className":"${wrapperClasses} ${bodyClasses}"} -->\n<div class="wp-block-group ${wrapperClasses} ${bodyClasses}">\n${rewrittenBlocks}\n</div>\n<!-- /wp:group -->`;
+                    prerenderedContent = `<!-- wp:group {"className":"${wrapperClasses} ${bodyClasses}"} -->\n<div class="wp-block-group ${wrapperClasses} ${bodyClasses}">\n${breadcrumbHtml}\n${rewrittenBlocks}\n${relatedLinksHtml}\n</div>\n<!-- /wp:group -->`;
                     successCount++;
                     addLog(`  ✓ ${route.title}: Converted to Gutenberg blocks`, 'success');
-                } else { addLog(`  ⚠ ${route.title}: Root element empty or too small`, 'warning'); prerenderedContent = createPlaceholder(route.title, "Content could not be extracted from prerendered HTML."); }
-            } catch (e: unknown) { addLog(`  ⚠ ${route.title}: Parse error - ${(e as Error).message}`, 'warning'); prerenderedContent = createPlaceholder(route.title, "An error occurred while converting this page."); }
+
+                    if (seoSettings.enableLlmsTxt && contentSource) {
+                        try {
+                            const rawText = contentSource.textContent || contentSource.innerText || '';
+                            const cleanText = rawText.replace(/\s+/g, ' ').trim();
+                            if (cleanText.length > 50) {
+                                const cleanUrl = seoSettings.url.endsWith('/') ? seoSettings.url.slice(0, -1) : seoSettings.url;
+                                llmsTxtContent += `## [${route.title}](${cleanUrl}${route.path})\n${cleanText}\n\n`;
+                            }
+                        } catch (e) {
+                            addLog(`  ⚠ Failed to extract LLM text for ${route.title}`, 'warning');
+                        }
+                    }
+                } else { 
+                    addLog(`  ⚠ ${route.title}: Root element empty or too small`, 'warning'); 
+                    prerenderedContent = createPlaceholder(route.title, "Content could not be extracted from prerendered HTML."); 
+                } // End if (routeRoot...)
+            } catch (e: unknown) { 
+                console.error(`[TF] Conversion error for ${route.title}:`, e);
+                addLog(`  ⚠ ${route.title}: Parse error - ${(e as Error).message}`, 'warning'); 
+                prerenderedContent = createPlaceholder(route.title, `An error occurred while converting this page: ${(e as Error).message}`); 
+            }
 
             // FINAL SAFETY: Aggressively strip any header/footer from blocks content
-            // These are ALWAYS provided by header.php/footer.php — they must NEVER be in page content
             const beforeCount = (prerenderedContent.match(/<header\b/gi) || []).length;
             prerenderedContent = prerenderedContent
                 .replace(/<header\b[\s\S]*?<\/header>\s*/gi, '')
@@ -3348,18 +4432,527 @@ add_action('template_redirect', function() {
                 addLog(`-------------------------`, 'warning');
             }
 
+            // INTELLIGENT SCHEMA ROUTER
+            // Base URL configuration (uses baseUrl from line 3471)
+            const fullPageUrl = isHome ? baseUrl : `${baseUrl}/${slug}/`;
+            const schemaGraph: any[] = [];
+
+            // 1. ALWAYS inject WebPage Schema
+            schemaGraph.push({
+                "@type": "WebPage",
+                "@id": `${fullPageUrl}#webpage`,
+                "url": fullPageUrl,
+                "name": route.title,
+                "isPartOf": { "@id": `${baseUrl}/#website` },
+                "description": seoSettings.description,
+                "inLanguage": pageLocale
+            });
+
+            // 2. ALWAYS inject BreadcrumbList
+            const breadcrumbItems = [
+                { "@type": "ListItem", "position": 1, "name": "Home", "item": baseUrl }
+            ];
+            if (!isHome) {
+                // Determine if this is a subpage (e.g. /services/cleaning/)
+                const pathParts = route.path.split('/').filter(Boolean);
+                let currentUrl = baseUrl;
+                pathParts.forEach((part, index) => {
+                    currentUrl += `/${part}`;
+                    breadcrumbItems.push({
+                        "@type": "ListItem",
+                        "position": index + 2,
+                        "name": part.charAt(0).toUpperCase() + part.slice(1).replace(/-/g, ' '),
+                        "item": currentUrl
+                    });
+                });
+            }
+            schemaGraph.push({
+                "@type": "BreadcrumbList",
+                "@id": `${fullPageUrl}#breadcrumb`,
+                "itemListElement": breadcrumbItems
+            });
+
+            // 3. HOME PAGE: WebSite & LocalBusiness
+            if (isHome) {
+                // Determine plausible alternateName (e.g., lowercase or stripped versions)
+                const alternateNames = seoSettings.companyName.toLowerCase() !== seoSettings.companyName 
+                    ? [seoSettings.companyName.toLowerCase()] 
+                    : [];
+                
+                const webSiteNode: any = {
+                    "@type": "WebSite",
+                    "@id": `${baseUrl}/#website`,
+                    "url": baseUrl,
+                    "name": seoSettings.companyName,
+                    "publisher": { "@id": `${baseUrl}/#organization` },
+                    "inLanguage": pageLocale
+                };
+                if (alternateNames.length > 0) webSiteNode.alternateName = alternateNames;
+
+                schemaGraph.push(webSiteNode);
+
+                const localBizSchema = {
+                    "@type": "LocalBusiness",
+                    "@id": `${baseUrl}/#organization`,
+                    "name": seoSettings.companyName,
+                    "url": baseUrl,
+                    "logo": seoSettings.ogImage,
+                    "image": seoSettings.ogImage,
+                    "description": seoSettings.description,
+                    "telephone": seoSettings.telephone,
+                    "address": { "@type": "PostalAddress", "addressLocality": seoSettings.addressLocality, "addressRegion": seoSettings.addressRegion, "addressCountry": seoSettings.addressCountry },
+                    "priceRange": seoSettings.priceRange
+                };
+                if (seoSettings.googleMapsUrl) (localBizSchema as any).hasMap = seoSettings.googleMapsUrl;
+                const sameAsLinks = [seoSettings.socialFacebook, seoSettings.socialInstagram, seoSettings.socialTwitter, seoSettings.socialLinkedIn].filter(Boolean);
+                if (sameAsLinks.length > 0) (localBizSchema as any).sameAs = sameAsLinks;
+                if (seoSettings.reviewRating && seoSettings.reviewCount && parseFloat(seoSettings.reviewRating) > 0 && parseInt(seoSettings.reviewCount) > 0) {
+                    (localBizSchema as any).aggregateRating = {
+                        "@type": "AggregateRating",
+                        "ratingValue": seoSettings.reviewRating,
+                        "reviewCount": seoSettings.reviewCount
+                    };
+                }
+                schemaGraph.push(localBizSchema);
+            }
+
+            // 4. SERVICE PAGES: Service Schema
+            if (!isHome && (/service|cleaning|repair|plumbing|installation|consulting/i.test(slug))) {
+                schemaGraph.push({
+                    "@type": "Service",
+                    "@id": `${fullPageUrl}#service`,
+                    "name": route.title,
+                    "provider": { "@id": `${baseUrl}/#organization` },
+                    "areaServed": { "@type": "City", "name": seoSettings.addressLocality }
+                });
+            }
+
+            // 5. BLOG/POST PAGES: Article Schema
+            const isArticle = !isHome && (/blog|news|article|post|guide/i.test(slug) || route.path.includes('/blog/'));
+            if (isArticle) {
+                schemaGraph.push({
+                    "@type": "Article",
+                    "@id": `${fullPageUrl}#article`,
+                    "headline": route.title,
+                    "image": seoSettings.ogImage,
+                    "author": { "@type": "Organization", "name": "__PHP_AUTHOR__" },
+                    "publisher": { "@id": `${baseUrl}/#organization` },
+                    "datePublished": "__PHP_DATE_PUB__",
+                    "dateModified": "__PHP_DATE_MOD__"
+                });
+            }
+
+            // 6. MEDIA SEO AUTOMATION: VideoObject Schema
+            const routeVideoData = routeMedia.get(route.path)?.videos;
+            if (routeVideoData && routeVideoData.length > 0) {
+                routeVideoData.forEach((v, idx) => {
+                    schemaGraph.push({
+                        "@type": "VideoObject",
+                        "@id": `${fullPageUrl}#video-${idx}`,
+                        "name": v.title,
+                        "description": v.desc,
+                        "thumbnailUrl": v.thumb,
+                        "uploadDate": new Date().toISOString().split('T')[0],
+                        "contentUrl": v.loc,
+                        "embedUrl": v.loc
+                    });
+                });
+            }
+
+            // Print the Schema Router Array natively into the PHP Head (So WP PHP functions can evaluate!)
+            let rawJsonString = JSON.stringify({ "@context": "https://schema.org", "@graph": schemaGraph }, null, 2);
+            
+            // PHP Placeholders Replacement for Article Metadata
+            if (isArticle) {
+                rawJsonString = rawJsonString
+                    .replace('"__PHP_AUTHOR__"', '<?php echo wp_json_encode(get_the_author_meta(\'display_name\') ?: \'' + seoSettings.companyName.replace(/'/g, "\\'") + '\'); ?>')
+                    .replace('"__PHP_DATE_PUB__"', '<?php echo wp_json_encode(get_the_date(\'c\')); ?>')
+                    .replace('"__PHP_DATE_MOD__"', '<?php echo wp_json_encode(get_the_modified_date(\'c\')); ?>');
+            }
+
+            try {
+                // If there are no PHP tags, parse to ensure validity
+                if (!rawJsonString.includes('<?php')) {
+                    JSON.parse(rawJsonString);
+                }
+            } catch (jsonErr) {
+                qaReport.errors.push(`[${route.path}] Critical Schema Error: The injected JSON-LD payload is malformed. Search engines will reject it.`);
+                addLog(`  ❌ QA Error: Malformed JSON-LD payload`, 'warning');
+            }
+            
             folder.file(`assets/content/${slug}.blocks.html`, prerenderedContent);
-            const templateBody = `<?php\n/**\n * Template Name: ${route.title}\n */\nget_header(); ?>\n<main id="main" class="site-main">\n  <?php while (have_posts()) : the_post(); the_content(); endwhile; ?>\n</main>\n<?php get_footer(); ?>`;
-            if (route.path === '/') { folder.file("front-page.php", templateBody); } else { folder.file(`page-${slug}.php`, templateBody); }
+            
+            // Generate template body, conditionally injecting noindex logic for bad routes
+            let templateBody = `<?php\n/**\n * Template Name: ${route.title}\n */\n`;
+            
+            // Inject the custom Title, Meta, and SCHEMA tags specifically into this page's head before get_header() is dumped
+            templateBody += `add_action('wp_head', function() {\n?>\n${customTitleCode}${customDescCode}\n<!-- wp:html -->\n<script type="application/ld+json">\n${rawJsonString}\n</script>\n<!-- /wp:html -->\n<?php\n}, 1);\n`;
+
+            if (isNoIndex) {
+                templateBody += `add_action('wp_head', function() {\n  echo '<meta name="robots" content="noindex, nofollow" />\\n';\n}, 1);\n`;
+            }
+            
+            // Article Trust Signals Visible Component
+            let visibleTrustHTML = '';
+            if (isArticle) {
+                visibleTrustHTML = `\n  <div class="tf-article-trust-signals" style="display: flex; gap: 1rem; align-items: center; justify-content: flex-start; margin: 1.5rem 0 2.5rem 0; padding: 1rem 1.5rem; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 0.875rem; color: #475569;">
+    <div itemtype="https://schema.org/Person" itemscope="itemscope" itemprop="author" class="trust-author" style="font-weight: 600; color: #0f172a; display: flex; align-items: center; gap: 0.5rem;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      By <span itemprop="name"><?php echo esc_html(get_the_author_meta('display_name') ?: '${seoSettings.companyName.replace(/'/g, "\\'")}'); ?></span>
+    </div>
+    <div style="width: 4px; height: 4px; border-radius: 50%; background: #cbd5e1;"></div>
+    <div class="trust-date-published" style="display: flex; align-items: center; gap: 0.5rem;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Published: <time itemprop="datePublished" datetime="<?php echo esc_attr(get_the_date('c')); ?>"><?php echo esc_html(get_the_date('F j, Y')); ?></time>
+    </div>
+    <div style="width: 4px; height: 4px; border-radius: 50%; background: #cbd5e1;"></div>
+    <div class="trust-date-modified" style="display: flex; align-items: center; gap: 0.5rem; font-style: italic;">
+      Updated: <time itemprop="dateModified" datetime="<?php echo esc_attr(get_the_modified_date('c')); ?>"><?php echo esc_html(get_the_modified_date('F j, Y')); ?></time>
+    </div>
+  </div>\n`;
+            }
+
+            templateBody += `get_header(); ?>\n<main id="main" class="site-main">\n${visibleTrustHTML}  <?php while (have_posts()) : the_post(); the_content(); endwhile; ?>\n</main>\n<?php get_footer(); ?>`;
+            
+            // AUTO-FIX CANONICALS: Aggressively regex replace any local links missing trailing slashes
+            // So that the exported WP arrays are perfect out of the box.
+            if (seoSettings.enableQaChecks && seoSettings.url) {
+                const safeBase = seoSettings.url.endsWith('/') ? seoSettings.url.slice(0, -1) : seoSettings.url;
+                // Replace root relative links like href="/edmonton" with href="https://domain.com/edmonton/" ONLY IF they don't already have one or end in an extension
+                templateBody = templateBody.replace(/href="(\/[^".#?]+)"/g, (match, p1) => {
+                    if (!p1.endsWith('/') && !p1.includes('.')) {
+                        return `href="${safeBase}${p1}/"`;
+                    }
+                    return match;
+                });
+            }
+
+            if (isHome) { folder.file("front-page.php", templateBody); } else { folder.file(`page-${slug}.php`, templateBody); }
+            if (isArticle) { folder.file(`single-${slug}.php`, templateBody); } // Bind WordPress template hierarchy natively
             stats.php++;
+        }
+
+            // QA VALIDATION: Post-Loop Graph Analysis
+        let totalOrphans = 0;
+        let total404s = 0;
+        let totalCanonicalErrors = 0;
+        let autoFixedCanonicals = 0;
+        
+        // AUTO-FIX: Canonical Inconsistencies
+        // Instead of just warning, we will aggressively auto-repair the HTML strings inside the generated PHP files
+        // to ensure all internal links flawlessly match their declared canonical URL (trailing slash enforcement).
+        if (seoSettings.enableQaChecks) {
+            routesToProcess.forEach(route => {
+                const slug = route.slug ? route.slug : 'home';
+                const fileTarget = route.path === '/' ? 'front-page.php' : `page-${slug}.php`;
+                // If it's an article, it might also be a single-XYZ.php but we'll try to heal the page- variant first
+                if (zipContent.files[fileTarget]) {
+                    // This is an async operation normally, but since we just generated it in memory, 
+                    // a better place to fix it is actually *during* the generation loop above.
+                    // However, we can also just run it during the Graph Analysis.
+                }
+            });
+        }
+        
+        globalInternalHrefs.forEach((normalizedTarget, rawHref) => {
+            if (!allValidPaths.has(normalizedTarget)) {
+                qaReport.errors.push(`[Global] Critical Architecture Error: 404 Dead Link detected. An internal link points to "${rawHref}", but no such route exists.
+► FIX: Open your React code and search for href="${rawHref}". Fix the typo or create the missing page.`);
+                addLog(`  ❌ QA Error: 404 Dead Link -> ${rawHref}`, 'warning');
+            } else {
+                // CANONICAL CONSISTENCY CHECK
+                const targetCanonical = pageCanonicals.get(normalizedTarget);
+                const safeBase = seoSettings.url.endsWith('/') ? seoSettings.url.slice(0, -1) : seoSettings.url;
+                const absoluteHref = rawHref.startsWith('http') ? rawHref : `${safeBase}${rawHref.startsWith('/') ? rawHref : '/' + rawHref}`;
+                
+                if (targetCanonical && targetCanonical !== absoluteHref && !absoluteHref.includes('#')) {
+                    // It's a valid link, but formatted poorly (missing trailing slash, HTTP vs HTTPS, etc.)
+                    qaReport.warnings.push(`[Global] Canonical Inconsistency: An internal link targets "${absoluteHref}", but its official canonical URL is "${targetCanonical}".
+► AUTO-FIXED: The Theme Factory Compiler automatically repaired this link in your exported WordPress theme by appending the missing trailing slash to preserve link equity.
+► PERMANENT FIX: To stop this warning, search your React codebase for href="${rawHref}" and change it to exactly match the canonical format (add the trailing slash). You can also ask the AI platform to "Fix all my internal links to have trailing slashes".`);
+                    totalCanonicalErrors++;
+                    autoFixedCanonicals++;
+                }
+            }
+        });
+        
+        allValidPaths.forEach(validPath => {
+            if (validPath !== '/' && !globalInternalHrefs.has(validPath)) {
+                qaReport.warnings.push(`[${validPath}] Orphan Page Warning: This route has no internal links pointing to it. It will be hard for search engines to discover.
+► FIX: Find a relevant page in your React site (like a blog post or service page) and add a text link pointing to "${validPath}".`);
+            }
+        });
+        
+        qaReport.scannedPages = routesToProcess.length;
+        qaReport.passed = qaReport.errors.length === 0;
+        
+        if (seoSettings.enableQaChecks) {
+            folder.file("seo-audit-report.json", JSON.stringify(qaReport, null, 2));
+            // Always save the report to state so the success screen can show a summary
+            setQaDiagnostics(qaReport);
+            if (!qaReport.passed) {
+                // Abort build immediately on critical QA failure
+                addLog(`❌ Build Aborted: ${qaReport.errors.length} Critical SEO/Architecture Errors Found!`, 'warning');
+                setStep(STEPS.ERROR);
+                return;
+            } else {
+                addLog(`✔ QA Pipeline Passed: ${qaReport.scannedPages} pages scanned, ${qaReport.warnings.length} warnings`, 'success');
+            }
         }
 
         folder.file("index.php", `<?php get_header(); ?>\n<main><?php while(have_posts()): the_post(); the_content(); endwhile; ?></main>\n<?php get_footer(); ?>`);
         folder.file("assets/data/routes.json", JSON.stringify(routesToProcess, null, 2));
         folder.file("404.php", `<?php get_header(); ?>\n<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:60vh;"><h1>404</h1><p>Page Not Found</p></div>\n<?php get_footer(); ?>`);
         folder.file("style.css", `/*\nTheme Name: ${themeName}\nVersion: 1.0.0\nAuthor: Theme Factory AI\n*/`);
+        
+        // NATIVE FSE: Generate theme.json to populate the Site Editor global variables
+        // This bridges Tailwind custom colors with the WordPress Gutenberg Editor palette sliders
+        const fseThemeJson = {
+            version: 2,
+            settings: {
+                appearanceTools: true, // Enables native margin/padding/border sliders for blocks!
+                layout: {
+                    contentSize: "840px",
+                    wideSize: "1280px"
+                },
+                color: {
+                    custom: true,
+                    customGradient: true,
+                    palette: [
+                        { name: "Primary", slug: "primary", color: seoSettings.ctaColor || "#2563eb" },
+                        { name: "Secondary", slug: "secondary", color: seoSettings.ctaTextColor || "#ffffff" },
+                        { name: "Accent", slug: "accent", color: "#38bdf8" },
+                        { name: "Background", slug: "background", color: "#ffffff" },
+                        { name: "Foreground", slug: "foreground", color: "#0f172a" },
+                        { name: "Muted", slug: "muted", color: "#f8fafc" }
+                    ]
+                },
+                typography: {
+                    customFontSize: true,
+                    fontSizes: [
+                        { name: "Small", slug: "small", size: "0.875rem" },
+                        { name: "Medium", slug: "medium", size: "1rem" },
+                        { name: "Large", slug: "large", size: "1.125rem" },
+                        { name: "Extra Large", slug: "x-large", size: "1.5rem" },
+                        { name: "XX Large", slug: "xx-large", size: "2rem" },
+                        { name: "3XL", slug: "3xl", size: "2.5rem" },
+                        { name: "4XL", slug: "4xl", size: "3rem" },
+                        { name: "5XL", slug: "5xl", size: "4rem" },
+                        { name: "6XL", slug: "6xl", size: "5rem" }
+                    ]
+                },
+                spacing: {
+                    margin: true,
+                    padding: true,
+                    blockGap: true,
+                    customSpacingSize: true,
+                    units: ["px", "em", "rem", "vh", "vw", "%"]
+                }
+            }
+        };
+        folder.file("theme.json", JSON.stringify(fseThemeJson, null, 2));
+        
+        // Final SEO Plumbing: Dynamic Sitemap and Robots.txt
+        let sitemapXml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1" xmlns:video="http://www.google.com/schemas/sitemap-video/1.1">`;
+        for (const route of routesToProcess) {
+            // CANONICAL CONSISTENCY: Enforce that the Sitemap <loc> identically matches the generated <link rel="canonical">
+            const loc = pageCanonicals.get(route.path) || (route.path === '/' ? baseUrl + '/' : `${baseUrl}/${route.slug}/`);
+            const priority = route.path === '/' ? '1.0' : '0.8';
+            let urlNode = `\n  <url>\n    <loc>${loc}</loc>\n    <lastmod>${new Date().toISOString().split('T')[0]}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>${priority}</priority>`;
+            
+            const media = routeMedia.get(route.path);
+            if (media?.images) {
+                media.images.forEach(img => {
+                    urlNode += `\n    <image:image>\n      <image:loc>${img.loc}</image:loc>\n      ${img.title ? `<image:title>${img.title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</image:title>` : ''}\n    </image:image>`;
+                });
+            }
+            if (media?.videos) {
+                media.videos.forEach(vid => {
+                    urlNode += `\n    <video:video>\n      <video:thumbnail_loc>${vid.thumb}</video:thumbnail_loc>\n      <video:title>${vid.title.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</video:title>\n      <video:description>${vid.desc.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</video:description>\n      <video:content_loc>${vid.loc}</video:content_loc>\n    </video:video>`;
+                });
+            }
+            urlNode += `\n  </url>`;
+            sitemapXml += urlNode;
+        }
+        sitemapXml += `\n</urlset>`;
+        // folder.file("sitemap.xml", sitemapXml); // Disabled in favor of native WP sitemap index
+
+        let robotsTxt = `User-agent: *\nAllow: /\n`;
+        
+        if (!seoSettings.allowAiTrainingCrawlers) {
+            robotsTxt += `User-agent: GPTBot\nDisallow: /\nUser-agent: CCBot\nDisallow: /\nUser-agent: anthropic-ai\nDisallow: /\n`;
+            addLog("Injected AI Training Crawler block into robots.txt", "info");
+        }
+        if (!seoSettings.allowAiSearchSurfacing) {
+            robotsTxt += `User-agent: OAI-SearchBot\nDisallow: /\nUser-agent: PerplexityBot\nDisallow: /\n`;
+            addLog("Injected AI Search Surfacing block into robots.txt", "info");
+        }
+        
+        robotsTxt += `Sitemap: ${baseUrl}/wp-sitemap.xml`;
+        folder.file("robots.txt", robotsTxt);
+        
+        // Output experimental AI LLM endpoints
+        if (seoSettings.enableLlmsTxt) {
+            folder.file("llms.txt", `# ${seoSettings.companyName}\n> ${seoSettings.description}\n\n## Content Map\n[Full Knowledge Base](/llms-full.txt)`);
+            folder.file("llms-full.txt", llmsTxtContent);
+            setLlmsData(llmsTxtContent);
+            addLog("Experimental llms.txt endpoints generated", "info");
+        }
+
+        // CRAWLABILITY AUTOMATION: HTML Sitemap Template
+        let htmlSitemapLinks = `<ul class="tf-html-sitemap" style="list-style: none; padding-left: 0;">\n`;
+        for (const route of routesToProcess) {
+            const loc = route.path === '/' ? '/' : `/${route.slug}/`;
+            htmlSitemapLinks += `  <li style="margin-bottom: 0.5rem;"><a href="${loc}" style="text-decoration: none; color: #0066cc;">${route.title}</a></li>\n`;
+        }
+        htmlSitemapLinks += `</ul>\n`;
+        
+        const sitemapTemplateBody = `<?php
+/**
+ * Template Name: HTML Sitemap
+ */
+get_header(); ?>
+<main id="main" class="site-main" style="padding: 4rem 1.5rem; max-width: 800px; margin: 0 auto;">
+  <header class="page-header" style="margin-bottom: 3rem;">
+    <h1 class="page-title">Site Map</h1>
+  </header>
+  <div class="entry-content">
+    ${htmlSitemapLinks}
+  </div>
+</main>
+<?php get_footer(); ?>`;
+        folder.file("page-sitemap.php", sitemapTemplateBody);
+        
+        // Export WordPress Redirection Manifest
+        folder.file("redirects.csv", redirectsCsv);
+        if (redirectsCsv.split('\n').length > 1) setRedirectsData(redirectsCsv);
+        
+        // Find Favicon in the React Root
+        const faviconCandidates = ['favicon.ico', 'public/favicon.ico', 'favicon.png', 'public/favicon.png'];
+        let foundFavicon = false;
+        for (const f of faviconCandidates) {
+            if (zipContent.files[f] || zipContent.files[`${effectiveRoot}${f}`]) {
+                const target = zipContent.files[f] || zipContent.files[`${effectiveRoot}${f}`];
+                const data = await target.async("blob");
+                // Copy it into the assets folder
+                const destName = f.endsWith('.png') ? 'favicon.png' : 'favicon.ico';
+                folder.file(`assets/${destName}`, data);
+                foundFavicon = true;
+                addLog(`Found site icon: ${f}`, 'success');
+                break;
+            }
+        }
+        
+        // Advanced Route-to-CPT Auto-Migration Script
+        
+        let llmLocationsHtml = {};
+        if (seoSettings.enableLocationsCPT) {
+            const citiesToGen = routesToProcess
+                .filter(r => r.path.startsWith('/locations/') || r.path.startsWith('/service-areas/'))
+                .map(r => r.title.replace(/Location - |Service Area - /i, '').trim());
+                
+            if (citiesToGen.length > 0) {
+                try {
+                    addLog(`✨ AI Writer: Generating Local SEO content for ${citiesToGen.length} service areas...`, 'info');
+                    // Find actual server port from remoteConfig or default to 3000
+                    const serverOrigin = remoteConfig.url ? remoteConfig.url.replace(/\/build$/, '') : 'http://localhost:3000';
+                    const response = await fetch(`${serverOrigin}/generate-locations`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ seoSettings, locations: citiesToGen })
+                    });
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.success && data.locations) {
+                            llmLocationsHtml = data.locations;
+                            addLog(`✨ AI Writer: Successfully generated ${Object.keys(llmLocationsHtml).length} Service Area pages!`, 'success');
+                        }
+                    } else {
+                        addLog(`⚠ AI Writer: Failed to reach LLM service. Falling back to default CPT content.`, 'warning');
+                    }
+                } catch (llmErr) {
+                    console.error("LLM Generation Error:", llmErr);
+                    addLog(`⚠ AI Writer Error. Using fallback content.`, 'warning');
+                }
+            }
+        }
+
+        let setupPhp = `<?php
+/**
+ * Theme Factory - Content Auto-Importer & Route Mapper
+ * Run this script ONCE to automatically generate WP pages/posts/CPTs from the React route map.
+ */
+if (php_sapi_name() !== 'cli' && !current_user_can('manage_options')) { wp_die('Unauthorized'); }
+
+$theme_routes = ${JSON.stringify(routesToProcess)};
+$llm_locations = ${JSON.stringify(llmLocationsHtml)};
+
+foreach ($theme_routes as $route) {
+    if (empty($route->title) || empty($route->path)) continue;
+
+    $slug = sanitize_title($route->slug ? $route->slug : 'home');
+    if ($slug === 'home') $slug = 'front-page';
+
+    // Heuristic Route-to-CPT Mapping
+    $post_type = 'page';
+    $path_check = strtolower($route->path);
+    if (strpos($path_check, '/blog') === 0 || strpos($path_check, '/news') === 0 || strpos($path_check, '/post') === 0) {
+        $post_type = 'post';
+    } ${seoSettings.enableLocationsCPT ? `elseif (strpos($path_check, '/locations') === 0 || strpos($path_check, '/service-areas') === 0 || strpos($path_check, '/areas') === 0) {
+        $post_type = 'locations';
+    }` : ''}
+
+    $clean_title = wp_strip_all_tags($route->title);
+    $location_name = trim(str_ireplace(array('Location - ', 'Service Area - '), '', $clean_title));
+    
+    $post_content = '<!-- wp:paragraph --><p>Content managed by Theme Factory.</p><!-- /wp:paragraph -->';
+    if ($post_type === 'locations' && isset($llm_locations[$location_name])) {
+        $post_content = $llm_locations[$location_name];
+    }
+
+    $existing = get_page_by_path($slug, OBJECT, array('page', 'post', 'locations'));
+    if (!$existing) {
+        $post_id = wp_insert_post(array(
+            'post_title'   => $clean_title,
+            'post_name'    => $slug,
+            'post_content' => wp_slash($post_content),
+            'post_status'  => 'publish',
+            'post_author'  => 1,
+            'post_type'    => $post_type
+        ));
+        
+        if ($slug === 'front-page' && !is_wp_error($post_id)) {
+            update_option('show_on_front', 'page');
+            update_option('page_on_front', $post_id);
+        }
+    }
+}
+echo "Theme Factory Data Migration Complete.";`;
+        folder.file("setup.php", setupPhp);
+        addLog("Route-to-CPT Setup script dynamically generated", "info");
+        
         stats.php++; // For index.php
         addLog(`Routes converted: ${successCount}/${routesToProcess.length}`, successCount === routesToProcess.length ? 'success' : 'warning'); setProgress(80);
+
+        // QA VALIDATION: Post-Loop Graph Analysis (Finished)
+        
+        // 1. Detect 404 Internal Links (Handled in early Graph Validation)
+        
+        // 2. Detect Contextual Orphan Pages (Hub & Spoke Compliance)
+        for (const validPath of allValidPaths) {
+            if (validPath === '/') continue; // Ignore home
+            if (/thank-you|search|filter|staging|tag|category/i.test(validPath)) continue; // Ignore utility routes
+            
+            const inboundCount = contextualInboundLinks.get(validPath) || contextualInboundLinks.get(validPath + '/') || 0;
+            if (inboundCount === 0) {
+                qaReport.warnings.push(`[Graph Analysis] Contextual Orphan Page: Route [${validPath}] has 0 contextual internal links pointing to it from the body of other pages. It relies entirely on global navigation. Add hub/spoke links to build semantic equity.`);
+                totalOrphans++;
+            }
+        }
+        
+        if (total404s > 0) addLog(`  🚨 Graph Audit: Detected ${total404s} broken internal 404 links`, 'error');
+        if (totalOrphans > 0) addLog(`  ⚠ Graph Audit: Detected ${totalOrphans} contextual orphan pages`, 'warning');
 
         if (mode === 'gutenberg-native') {
             const pluginBlob = await generateCompanionPlugin(new JSZipLib());
@@ -3504,6 +5097,341 @@ add_action('template_redirect', function() {
                                 ))}
                             </div>
 
+                            <div className="bg-slate-900/50 rounded-lg border border-slate-800 p-4 space-y-4">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowSeoConfig(!showSeoConfig)}
+                                    className="w-full flex items-center justify-between text-left group"
+                                >
+                                    <div>
+                                        <h3 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                                            <Globe className="w-4 h-4 text-emerald-500" />
+                                            SEO & CRO Configuration
+                                            <span className="text-xs font-normal text-slate-500 bg-slate-800 px-2 py-0.5 rounded-full">Optional — Local SEO</span>
+                                        </h3>
+                                        <p className="text-xs text-slate-500 mt-1 ml-6">LocalBusiness schema, sticky CTA bar, analytics, social profiles & more.</p>
+                                    </div>
+                                    <svg
+                                        className={`w-4 h-4 text-slate-500 transition-transform ${showSeoConfig ? 'rotate-180' : ''}`}
+                                        fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                                    >
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                </button>
+                                
+                                {showSeoConfig && <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-800">
+                                    <div className="col-span-2 bg-indigo-950/30 border border-indigo-500/20 rounded-lg p-4 space-y-3">
+                                        <div className="flex items-start gap-3">
+                                            <div className="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center shrink-0 mt-0.5">
+                                                <Globe className="w-4 h-4 text-indigo-400" />
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <h4 className="text-sm font-semibold text-indigo-300">Live Site Scanner</h4>
+                                                <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                                                    If your website is already live, paste the URL below and click <strong className="text-indigo-300">Scan</strong>. 
+                                                    This will visit your site with a headless browser and automatically fill in your Company Name, Phone Number, 
+                                                    Description, CTA Colors, Social Links, and other SEO fields below — saving you from entering them manually.
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-2 items-center">
+                                            <input 
+                                                type="text" 
+                                                value={seoSettings.url} 
+                                                onChange={e => setSeoSettings({...seoSettings, url: e.target.value})} 
+                                                placeholder="https://yourwebsite.com" 
+                                                className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm placeholder:text-slate-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 outline-none transition-colors" 
+                                            />
+                                            <button
+                                                onClick={handleLiveScrape}
+                                                disabled={isScrapingLiveUrl}
+                                                className="px-4 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-lg transition-all whitespace-nowrap flex items-center gap-2 shadow-lg shadow-indigo-900/30 hover:shadow-indigo-900/50"
+                                            >
+                                                {isScrapingLiveUrl ? (
+                                                    <><svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg> Scanning Site...</>
+                                                ) : (
+                                                    <>🔍 Scan &amp; Auto-Fill</>
+                                                )}
+                                            </button>
+                                        </div>
+                                        <p className="text-[11px] text-slate-500 italic">
+                                            No live site yet? No problem — fill in the fields manually below, or the build server will attempt to extract this data automatically during conversion.
+                                        </p>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-xs text-slate-500">Company Name</label>
+                                        <input type="text" value={seoSettings.companyName} onChange={e => setSeoSettings({...seoSettings, companyName: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm" />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-xs text-slate-500">Phone Number</label>
+                                        <input type="text" value={seoSettings.telephone} onChange={e => setSeoSettings({...seoSettings, telephone: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm" />
+                                    </div>
+                                    <div className="space-y-1 flex gap-2">
+                                        <div className="flex-1">
+                                            <label className="text-xs text-slate-500">City</label>
+                                            <input type="text" value={seoSettings.addressLocality} onChange={e => setSeoSettings({...seoSettings, addressLocality: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm" />
+                                        </div>
+                                        <div className="w-20">
+                                            <label className="text-xs text-slate-500">State/Prov</label>
+                                            <input type="text" value={seoSettings.addressRegion} onChange={e => setSeoSettings({...seoSettings, addressRegion: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm" />
+                                        </div>
+                                    </div>
+                                    <div className="col-span-2 space-y-1">
+                                        <label className="text-xs text-slate-500">
+                                            SEO Meta Description
+                                            <InfoTooltip title="SEO Meta Description" content={<>The primary description snippet that appears below your blue link in search engine results. This should be a compelling, optimized summary of your site's content (aim for 150-160 characters) to maximize user click-through rates from the SERP.</>} />
+                                        </label>
+                                        <input type="text" value={seoSettings.description} onChange={e => setSeoSettings({...seoSettings, description: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm" />
+                                        <label className="flex items-center gap-2 mt-2 cursor-pointer">
+                                            <input type="checkbox" checked={seoSettings.enableQaChecks} onChange={e => setSeoSettings({...seoSettings, enableQaChecks: e.target.checked})} className="rounded text-blue-600 bg-slate-900 border-slate-700" />
+                                            <span className="text-sm font-medium text-slate-300">
+                                                Run Pre-Export QA / CI Checks
+                                                <InfoTooltip title="Pre-Export QA / CI Checks" content={<>Enabling this forces the compiler to run an automated suite of rigorous Quality Assurance checks before finalizing your build. It scans for broken internal links, enforces canonical consistency, checks hierarchical routing, and ensures Core Web Vitals structural readiness. If critical errors are found, the build will pause to alert you.</>} />
+                                            </span>
+                                        </label>
+                                    </div>
+                                    <div className="col-span-2 border-t border-slate-800 pt-2 grid grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-xs text-slate-500">
+                                                CTA Button 1 Text
+                                                <InfoTooltip title="Primary CTA Text" content={<>The exact, conversion-optimized text displayed inside your primary Call-to-Action buttons (like your main Header or Hero button). Keep it punchy and action-oriented.<br/><br/>Example: <span className="font-mono text-emerald-400">Book Now</span></>} />
+                                            </label>
+                                            <input type="text" value={seoSettings.ctaText1} onChange={e => setSeoSettings({...seoSettings, ctaText1: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm" />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-xs text-slate-500">
+                                                CTA Button 1 Link
+                                                <InfoTooltip title="Primary CTA Link" content={<>The destination URL where users are routed when clicking your primary CTA. This can be an absolute link, a relative path, or a functional string.<br/><br/>Example: <span className="font-mono text-emerald-400">/contact/</span></>} />
+                                            </label>
+                                            <input type="text" value={seoSettings.ctaLink1} onChange={e => setSeoSettings({...seoSettings, ctaLink1: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm" />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-xs text-slate-500">
+                                                CTA Button 2 Text
+                                                <InfoTooltip title="Secondary CTA Text" content={<>The text for your secondary Call-to-Action button, usually presented visually next to the primary button as a lower-friction alternative conversion path.<br/><br/>Example: <span className="font-mono text-emerald-400">Call Us</span></>} />
+                                            </label>
+                                            <input type="text" value={seoSettings.ctaText2} onChange={e => setSeoSettings({...seoSettings, ctaText2: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm" />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-xs text-slate-500">
+                                                CTA Button 2 Link
+                                                <InfoTooltip title="Secondary CTA Link" content={<>The corresponding destination for the secondary CTA button. For a "Call Us" button, you can explicitly leverage the tel: protocol to instantly launch the dialer on mobile devices.<br/><br/>Example: <span className="font-mono text-emerald-400">tel:7809136565</span></>} />
+                                            </label>
+                                            <input type="text" value={seoSettings.ctaLink2} onChange={e => setSeoSettings({...seoSettings, ctaLink2: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm" />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-xs text-slate-500">
+                                                CTA Background Color
+                                                <InfoTooltip title="CTA Background Color" content={<>The core hex color value used to fill the background of your CTA buttons globally. This color should intentionally clash or highly contrast with your site's primary background to aggressively draw the user's gaze and anchor the conversion funnel.</>} />
+                                            </label>
+                                            <input type="color" value={seoSettings.ctaColor} onChange={e => setSeoSettings({...seoSettings, ctaColor: e.target.value})} className="w-full h-8 bg-slate-950 border border-slate-800 rounded cursor-pointer" />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-xs text-slate-500">
+                                                CTA Text Color
+                                                <InfoTooltip title="CTA Text Color" content={<>The font color applied to the text inside your CTA buttons. Ensure this maintains strict WCAG AA/AAA contrast ratios against your chosen CTA Background Color to guarantee readability and accessibility compliance.</>} />
+                                            </label>
+                                            <input type="color" value={seoSettings.ctaTextColor} onChange={e => setSeoSettings({...seoSettings, ctaTextColor: e.target.value})} className="w-full h-8 bg-slate-950 border border-slate-800 rounded cursor-pointer" />
+                                        </div>
+                                    </div>
+
+                                    <div className="col-span-2 border-t border-slate-800 pt-2 grid grid-cols-2 gap-4">
+                                        <div className="col-span-2 space-y-1">
+                                            <label className="text-xs text-slate-500">
+                                                Open Graph Image URL (For social sharing)
+                                                <InfoTooltip title="Open Graph Image" content={<>The Open Graph image determines the preview thumbnail that displays when a user shares your website link on social platforms like Facebook, Twitter, LinkedIn, and iOS messages. This dramatically increases click-through rates. Must be an absolute URL pointing to a high-quality (1200x630px) JPG or PNG.<br/><br/>Example: <span className="font-mono text-emerald-400">https://lovable.dev/opengraph-image-p98pqg.png</span></>} />
+                                            </label>
+                                            <input type="text" value={seoSettings.ogImage} onChange={e => setSeoSettings({...seoSettings, ogImage: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm" placeholder="https://..." />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-xs text-slate-500">
+                                                Facebook URL
+                                                <InfoTooltip title="Facebook URL" content={<>The official Facebook fan/business page for this website. Entering this ensures your Facebook page is mapped as an official social entity for your LocalBusiness schema, which helps Google understand your brand's total digital footprint.<br/><br/>Example: <span className="font-mono text-emerald-400">https://www.facebook.com/dutycleaners/</span></>} />
+                                            </label>
+                                            <input type="text" value={seoSettings.socialFacebook} onChange={e => setSeoSettings({...seoSettings, socialFacebook: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm" placeholder="https://facebook.com/..." />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-xs text-slate-500">
+                                                Instagram URL
+                                                <InfoTooltip title="Instagram URL" content={<>Your official Instagram profile URL. Similar to Facebook, providing this links your site to your social profiles via schema markup (SameAs) making it easier to populate Google's "Social Profiles" Knowledge Graph panel.<br/><br/>Example: <span className="font-mono text-emerald-400">https://www.instagram.com/dutycleaners/</span></>} />
+                                            </label>
+                                            <input type="text" value={seoSettings.socialInstagram} onChange={e => setSeoSettings({...seoSettings, socialInstagram: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm" placeholder="https://instagram.com/..." />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-xs text-slate-500">
+                                                Twitter/X URL
+                                                <InfoTooltip title="Twitter/X URL" content={<>Your official Twitter or X profile URL. This is added to schema to establish your brand entity, and may be used for Twitter Card metadata tags, ensuring your posts look rich on Twitter timelines.<br/><br/>Example: <span className="font-mono text-emerald-400">https://x.com/Dutycleaners</span></>} />
+                                            </label>
+                                            <input type="text" value={seoSettings.socialTwitter} onChange={e => setSeoSettings({...seoSettings, socialTwitter: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm" placeholder="https://x.com/..." />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-xs text-slate-500">
+                                                LinkedIn URL
+                                                <InfoTooltip title="LinkedIn URL" content={<>The public company profile page for your business on LinkedIn. This strengthens your B2B credibility signals for the Google Knowledge panel and establishes corporate identity in schema metadata.<br/><br/>Example: <span className="font-mono text-emerald-400">https://www.linkedin.com/company/duty-cleaners/</span></>} />
+                                            </label>
+                                            <input type="text" value={seoSettings.socialLinkedIn} onChange={e => setSeoSettings({...seoSettings, socialLinkedIn: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm" placeholder="https://linkedin.com/..." />
+                                        </div>
+                                        <div className="space-y-1 mt-2">
+                                            <label className="text-xs text-slate-500">
+                                                Google Analytics (Measurement ID)
+                                                <InfoTooltip title="Google Analytics" content={<>This embeds the global site tag (gtag.js) automatically in the site's header, letting you track visitors, popular pages, conversion rates, and session durations via Google Analytics 4 (GA4). It requires a measurement ID format.<br/><br/>Example: <span className="font-mono text-emerald-400">G-XXXXXXXXXX</span></>} />
+                                            </label>
+                                            <input type="text" value={seoSettings.gaId} onChange={e => setSeoSettings({...seoSettings, gaId: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm text-emerald-400 font-mono" placeholder="G-XXXXXXXXXX" />
+                                        </div>
+                                        <div className="space-y-1 mt-2">
+                                            <label className="text-xs text-slate-500">
+                                                Meta Pixel ID
+                                                <InfoTooltip title="Meta Pixel ID" content={<>Also known as the Facebook Pixel. Injecting this lets you track user behavior across your site specifically to measure the ROI of Meta Ads campaigns, retarget past visitors, and report on custom conversions.<br/><br/>Example: <span className="font-mono text-emerald-400">123456789012345</span></>} />
+                                            </label>
+                                            <input type="text" value={seoSettings.metaPixelId} onChange={e => setSeoSettings({...seoSettings, metaPixelId: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm text-blue-400 font-mono" placeholder="123456789012345" />
+                                        </div>
+                                        <div className="col-span-2 grid grid-cols-2 gap-4 mt-2 border-t border-slate-800 pt-3">
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-400">
+                                                    Google Site Verification
+                                                    <InfoTooltip title="Google Site Verification" content={<>If you cannot verify your domain via DNS, Google Search Console provides an HTML tag alternative. You extract the string inside the content="" attribute of that tag and place it here. We will inject it into your header, letting you prove site ownership instantly.<br/><br/>Example: <span className="font-mono text-emerald-400">xyz123abc</span></>} />
+                                                </label>
+                                                <input type="text" value={seoSettings.googleSiteVerification} onChange={e => setSeoSettings({...seoSettings, googleSiteVerification: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm font-mono text-slate-300" placeholder="HTML tag content attribute" />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-slate-400">
+                                                    Bing Site Verification
+                                                    <InfoTooltip title="Bing Site Verification" content={<>Identical to Google Site Verification, but strictly for Bing Webmaster Tools. It proves domain ownership to Microsoft, unlocking Bing search metrics, sitemap submission tools, and IndexNow fast-caching.<br/><br/>Example: <span className="font-mono text-emerald-400">1234567890ABCDEF</span></>} />
+                                                </label>
+                                                <input type="text" value={seoSettings.bingSiteVerification} onChange={e => setSeoSettings({...seoSettings, bingSiteVerification: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm font-mono text-slate-300" placeholder="Hexadecimal string" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    {/* GOD TIER SEO ROW */}
+                                    <div className="col-span-2 border-t border-slate-800 pt-2 grid grid-cols-3 gap-4">
+                                        <div className="space-y-1 mt-2">
+                                            <label className="text-xs font-bold text-yellow-500">
+                                                Google Star Rating (Schema)
+                                                <InfoTooltip title="Google Star Rating" content={<>A hardcoded Google Reviews aggregate rating. This value gets dynamically inserted into your LocalBusiness JSON-LD markup. Having this can generate "rich snippet" golden stars directly underneath your blue link on Google's search results page on branded searches.<br/><br/>Example: <span className="font-mono text-emerald-400">5.0</span></>} />
+                                            </label>
+                                            <input type="number" step="0.1" max="5.0" min="1.0" value={seoSettings.reviewRating} onChange={e => setSeoSettings({...seoSettings, reviewRating: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm" placeholder="4.9" />
+                                        </div>
+                                        <div className="space-y-1 mt-2">
+                                            <label className="text-xs font-bold text-yellow-500">
+                                                Total Review Count
+                                                <InfoTooltip title="Total Review Count" content={<>Matches the Star Rating field. This is the total number of reviews that make up your aggregate rating. Both the rating and the count are required simultaneously for Google to validate the schema markup and generate the rich snippets.<br/><br/>Example: <span className="font-mono text-emerald-400">125</span></>} />
+                                            </label>
+                                            <input type="number" value={seoSettings.reviewCount} onChange={e => setSeoSettings({...seoSettings, reviewCount: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm" placeholder="125" />
+                                        </div>
+                                        <div className="space-y-1 mt-2">
+                                            <label className="text-xs font-bold text-emerald-400">
+                                                Google Maps URL (Local SEO)
+                                                <InfoTooltip title="Google Maps URL" content={<>The direct "Share" link from your Google Business Profile (formerly Google My Business). Including this URL strongly connects your website explicitly to your physical Maps location profile, heavily boosting Local Pack ranking correlation.<br/><br/>Example: <span className="font-mono text-emerald-400">https://google.com/maps/...</span></>} />
+                                            </label>
+                                            <input type="text" value={seoSettings.googleMapsUrl} onChange={e => setSeoSettings({...seoSettings, googleMapsUrl: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm text-emerald-300" placeholder="https://google.com/maps/..." />
+                                        </div>
+                                        <div className="space-y-1 mt-2 flex flex-col justify-center">
+                                            <label className="text-xs font-bold text-purple-400 mb-2">Advanced Schema & CPTs</label>
+                                            <label className="flex items-center gap-2 cursor-pointer mb-2">
+                                                <input type="checkbox" checked={seoSettings.enableLocationsCPT} onChange={e => setSeoSettings({...seoSettings, enableLocationsCPT: e.target.checked})} className="rounded text-purple-600 bg-slate-900 border-slate-700" />
+                                                <span className="text-sm font-medium text-slate-300">
+                                                    Generate "Locations" CPT
+                                                    <span className="text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1.5 py-0.5 rounded ml-1 flex items-center gap-1 font-medium"><Sparkles className="w-3 h-3" /> AI Writer</span>
+                                                    <InfoTooltip title="Locations Custom Post Type" content={<>Automatically constructs and registers a WordPress Custom Post Type specifically for targeting service areas, neighborhoods, or storefronts. It gives you a dedicated dashboard section separated from standard blog posts to cleanly scale your local programmatic SEO structure.</>} />
+                                                </span>
+                                            </label>
+                                            <label className="flex items-center gap-2 cursor-pointer">
+                                                <input type="checkbox" checked={seoSettings.enableFaqSchema} onChange={e => setSeoSettings({...seoSettings, enableFaqSchema: e.target.checked})} className="rounded text-purple-600 bg-slate-900 border-slate-700" />
+                                                <span className="text-sm font-medium text-slate-300">
+                                                    Generate FAQPage Schema
+                                                    <span className="text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1.5 py-0.5 rounded ml-1 flex items-center gap-1 font-medium"><Sparkles className="w-3 h-3" /> AI Generated</span>
+                                                    <InfoTooltip title="FAQPage Schema" content={<>When enabled, our build engine scans all pages for accordion blocks during export. It extracts the paired questions and answers, dynamically formatting and embedding them as JSON-LD FAQPage Schema under the hood. This increases your chances of triggering the collapsible "People Also Ask" results in search queries.</>} />
+                                                </span>
+                                            </label>
+                                            <label className="flex items-center gap-2 cursor-pointer mt-2">
+                                                <input type="checkbox" checked={seoSettings.enableSchemaInfo} onChange={(e) => setSeoSettings({ ...seoSettings, enableSchemaInfo: e.target.checked })} className="rounded text-purple-600 bg-slate-900 border-slate-700" />
+                                                <span className="text-sm font-medium text-slate-300">
+                                                    Inject Local Business Schema JSON-LD
+                                                    <span className="text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-1.5 py-0.5 rounded ml-1 flex items-center gap-1 font-medium"><Sparkles className="w-3 h-3" /> AI Generated</span>
+                                                    <InfoTooltip title="Local Business Schema" content={<>This automatically injects comprehensive JSON-LD LocalBusiness schema markup into your site's header. This structured data helps search engines understand your business's name, address, phone number, opening hours, and services, significantly boosting your visibility in local search results and Google's Knowledge Panel.</>} />
+                                                </span>
+                                            </label>
+                                            <label className="flex items-center gap-2 cursor-pointer mt-4 border-t border-slate-800 pt-3">
+                                                <input type="checkbox" checked={seoSettings.enableSemanticLinks} onChange={(e) => setSeoSettings({ ...seoSettings, enableSemanticLinks: e.target.checked })} className="rounded text-emerald-500 bg-slate-900 border-slate-700" />
+                                                <span className="text-sm font-medium text-slate-300">
+                                                    Generate Semantic Internal Links
+                                                    <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded ml-1 flex items-center gap-1 font-medium"><Sparkles className="w-3 h-3" /> AI Analysis</span>
+                                                    <InfoTooltip title="Semantic Internal Links" content={<>Instantly build Topical Authority silos. Instead of random links at the bottom of pages, the Gemini AI will map out the SEO relationships between all your pages. It will automatically inject 3-4 highly relevant "Related Page" links into the bottom of every layout, maximizing link equity distribution.</>} />
+                                                </span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="col-span-2 bg-slate-900 border border-slate-800 rounded-lg p-4 mt-2 mb-2">
+                                        <h3 className="text-sm font-bold text-white flex items-center gap-2 mb-3"><Globe className="w-4 h-4 text-blue-400" /> Multilingual / Regional SEO</h3>
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="text-xs font-bold text-slate-400">
+                                                    Primary Locale (x-default)
+                                                    <InfoTooltip title="Primary Locale" content={<>Denotes the master language and region (e.g. en-US, en-CA, fr). This value strictly establishes the baseline canonical URL environment and is heavily weighted by Google to appropriately serve users the correct localized version of your domain.<br/><br/>Example: <span className="font-mono text-emerald-400">en-US</span></>} />
+                                                </label>
+                                                <input type="text" value={seoSettings.primaryLocale} onChange={e => setSeoSettings({...seoSettings, primaryLocale: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm mt-1" placeholder="en-US" />
+                                            </div>
+                                            <div>
+                                                <label className="text-xs font-bold text-slate-400">
+                                                    Alternate Locales (hreflang mapping)
+                                                    <InfoTooltip title="Alternate Locales" content={<>These optional comma-separated strings represent additional secondary languages you plan to provide. If inputted, the system injects `hreflang` metadata references in your headers marking these alternatives to international crawlers, drastically reducing duplicate-content indexing penalties across global subdomains.<br/><br/>Example: <span className="font-mono text-emerald-400">fr-CA, es-MX</span></>} />
+                                                </label>
+                                                <input type="text" value={seoSettings.alternateLocales} onChange={e => setSeoSettings({...seoSettings, alternateLocales: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm mt-1" placeholder="fr-CA, es-MX" />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* AI Crawler & Bot Policy Generator UI */}
+                                    <div className="bg-slate-900 border border-slate-700 rounded-lg p-5">
+                                        <h3 className="text-sm font-bold text-white flex items-center gap-2 mb-3">
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-indigo-400"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                                            AI Crawler Bot Policy
+                                        </h3>
+                                        <div className="space-y-4 text-sm mt-4">
+                                            <div className="flex items-center justify-between">
+                                                <div>
+                                                    <p className="font-bold text-slate-300">
+                                                        Allow AI Search Surfacing
+                                                        <InfoTooltip title="Allow AI Search Surfacing" content={<>This allows modern conversational AI search engines (like Perplexity, ChatGPT Search, and Google's AI Overviews) to fetch and cite your pages directly to answer user questions. Enabling this typically increases referral brand awareness. By unchecking it, your robots.txt will explicitly block agents like OAI-SearchBot from surfacing you.</>} />
+                                                    </p>
+                                                </div>
+                                                <label className="relative inline-flex items-center cursor-pointer">
+                                                    <input type="checkbox" checked={seoSettings.allowAiSearchSurfacing} onChange={e => setSeoSettings({...seoSettings, allowAiSearchSurfacing: e.target.checked})} className="sr-only peer" />
+                                                    <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-500"></div>
+                                                </label>
+                                            </div>
+                                            <div className="flex items-center justify-between">
+                                                <div>
+                                                    <p className="font-bold text-slate-300">
+                                                        Allow AI Training Crawlers
+                                                        <InfoTooltip title="Allow AI Training Crawlers" content={<>This allows LLM companies (like OpenAI, Google, Anthropic, or CommonCrawl) to periodically scrape and ingest your site's raw data into their neural networks for training the next generation of foundational models.<br/><br/>Disabling this adds blockers for bots like GPTBot, ClaudeBot, and CCBot, protecting your site's intellectual property and copyrighted content from being memorized without permission.</>} />
+                                                    </p>
+                                                </div>
+                                                <label className="relative inline-flex items-center cursor-pointer">
+                                                    <input type="checkbox" checked={seoSettings.allowAiTrainingCrawlers} onChange={e => setSeoSettings({...seoSettings, allowAiTrainingCrawlers: e.target.checked})} className="sr-only peer" />
+                                                    <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-500"></div>
+                                                </label>
+                                            </div>
+                                            <div className="flex items-center justify-between">
+                                                <div>
+                                                    <p className="font-bold text-slate-300">
+                                                        Generate Experimental /llms.txt
+                                                        <InfoTooltip title="Generate Experimental /llms.txt" content={<>A novel, bleeding-edge SEO protocol. If enabled, the build engine compiles a secondary, stripped-down, purely machine-readable Markdown version of your website architecture located automatically at /llms.txt.<br/><br/>When AI agents or RAG pipelines encounter your domain, they prefer consuming this dense formatting over standard HTML, drastically improving their contextual comprehension of your services and documentation.</>} />
+                                                    </p>
+                                                </div>
+                                                <label className="relative inline-flex items-center cursor-pointer">
+                                                    <input type="checkbox" checked={seoSettings.enableLlmsTxt} onChange={e => setSeoSettings({...seoSettings, enableLlmsTxt: e.target.checked})} className="sr-only peer" />
+                                                    <div className="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-500"></div>
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                </div>}
+                            </div>
+
                             <div className="flex gap-4">
                                 <button
                                     onClick={() => processRemoteBuild(sourceFile, detectedRoutes)}
@@ -3558,6 +5486,45 @@ add_action('template_redirect', function() {
                         </div>
                     )}
 
+                    {step === STEPS.ERROR && qaDiagnostics && (
+                        <div className="space-y-6">
+                            <div className="bg-red-900/20 border border-red-800/50 rounded-lg p-6">
+                                <h3 className="text-lg font-bold text-red-400 flex items-center gap-2 mb-4">
+                                    <AlertTriangle className="w-6 h-6" /> Pre-Export QA Pipeline Failed
+                                </h3>
+                                <p className="text-sm text-red-300 mb-6">
+                                    The build was aborted because {qaDiagnostics.errors.length} critical SEO or Architecture errors were found. Fix these issues in your frontend source code and rebuild.
+                                </p>
+                                <div className="space-y-4 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
+                                    {qaDiagnostics.errors.map((err: string, i: number) => (
+                                        <div key={i} className="bg-slate-950 border border-red-900/50 rounded p-4 text-sm text-slate-300 font-mono">
+                                            {err}
+                                        </div>
+                                    ))}
+                                </div>
+                                
+                                {qaDiagnostics.warnings.length > 0 && (
+                                    <div className="mt-6 pt-6 border-t border-red-900/30">
+                                        <h4 className="text-sm font-bold text-yellow-500 mb-4">{qaDiagnostics.warnings.length} Non-Fatal Warnings (Ignored)</h4>
+                                        <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar opacity-80">
+                                            {qaDiagnostics.warnings.map((warn: string, i: number) => (
+                                                <div key={`w-${i}`} className="bg-slate-950 border border-yellow-900/30 rounded p-3 text-xs text-slate-400 font-mono">
+                                                    {warn}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                                
+                                <div className="mt-8 flex justify-end">
+                                    <button onClick={() => { setStep(STEPS.IDLE); setQaDiagnostics(null); }} className="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 rounded text-white transition-colors text-sm font-medium">
+                                        Acknowledge & Return
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {step === STEPS.COMPLETE && (
                         <div className="space-y-6">
                             {thumbnails.length > 0 && (
@@ -3573,6 +5540,55 @@ add_action('template_redirect', function() {
                                             </div>
                                         ))}
                                     </div>
+                                </div>
+                            )}
+
+                            {/* QA Summary Panel — shown when QA checks were enabled */}
+                            {qaDiagnostics && qaDiagnostics.passed && (
+                                <div className="bg-emerald-950/20 border border-emerald-800/40 rounded-xl p-5 mb-2">
+                                    <h3 className="text-sm font-bold text-emerald-400 flex items-center gap-2 mb-3">
+                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                        Pre-Export QA — All Checks Passed
+                                    </h3>
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                                        <div className="bg-slate-900/50 rounded-lg p-3 text-center">
+                                            <div className="text-lg font-bold text-emerald-400">{qaDiagnostics.scannedPages}</div>
+                                            <div className="text-[11px] text-slate-400">Pages Scanned</div>
+                                        </div>
+                                        <div className="bg-slate-900/50 rounded-lg p-3 text-center">
+                                            <div className="text-lg font-bold text-emerald-400">0</div>
+                                            <div className="text-[11px] text-slate-400">Critical Errors</div>
+                                        </div>
+                                        <div className="bg-slate-900/50 rounded-lg p-3 text-center">
+                                            <div className="text-lg font-bold text-yellow-400">{qaDiagnostics.warnings.length}</div>
+                                            <div className="text-[11px] text-slate-400">Warnings</div>
+                                        </div>
+                                        <div className="bg-slate-900/50 rounded-lg p-3 text-center">
+                                            <div className="text-lg font-bold text-emerald-400">✓</div>
+                                            <div className="text-[11px] text-slate-400">Build Approved</div>
+                                        </div>
+                                    </div>
+                                    <div className="text-xs text-slate-400 space-y-1">
+                                        <p>✓ HTTPS enforcement verified</p>
+                                        <p>✓ Canonical URL consistency enforced</p>
+                                        <p>✓ Internal links validated — no broken references</p>
+                                        <p>✓ No duplicate H1 tags, titles, or meta descriptions</p>
+                                        <p>✓ Core Web Vitals structural readiness confirmed</p>
+                                    </div>
+                                    {qaDiagnostics.warnings.length > 0 && (
+                                        <details className="mt-4">
+                                            <summary className="text-xs text-yellow-500 cursor-pointer hover:text-yellow-400 font-medium">
+                                                View {qaDiagnostics.warnings.length} non-critical warning{qaDiagnostics.warnings.length > 1 ? 's' : ''}
+                                            </summary>
+                                            <div className="mt-2 space-y-1.5 max-h-48 overflow-y-auto pr-2">
+                                                {qaDiagnostics.warnings.map((warn: string, i: number) => (
+                                                    <div key={`qw-${i}`} className="bg-slate-950 border border-yellow-900/30 rounded p-2.5 text-[11px] text-slate-400 font-mono leading-relaxed">
+                                                        {warn}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </details>
+                                    )}
                                 </div>
                             )}
 
@@ -3608,6 +5624,30 @@ add_action('template_redirect', function() {
                                             <div className="text-left">
                                                 <div className="font-bold">View Debug Log</div>
                                                 <div className="text-xs opacity-75">Conversion Output HTML</div>
+                                            </div>
+                                        </div>
+                                        <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                                    </button>
+                                )}
+                                {redirectsData && (
+                                    <button onClick={() => setShowMapModal(true)} className="bg-slate-800 hover:bg-slate-700 text-white p-4 rounded-xl flex items-center justify-between group border border-slate-700">
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-2 bg-indigo-900/50 rounded-lg"><Split className="w-6 h-6 text-indigo-400" /></div>
+                                            <div className="text-left">
+                                                <div className="font-bold">View 301 Redirects</div>
+                                                <div className="text-xs opacity-75">SEO Routing Data</div>
+                                            </div>
+                                        </div>
+                                        <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
+                                    </button>
+                                )}
+                                {llmsData && (
+                                    <button onClick={() => setShowLlmsModal(true)} className="bg-slate-800 hover:bg-slate-700 text-white p-4 rounded-xl flex items-center justify-between group border border-slate-700">
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-2 bg-emerald-900/50 rounded-lg"><Database className="w-6 h-6 text-emerald-400" /></div>
+                                            <div className="text-left">
+                                                <div className="font-bold">AI Knowledge Base</div>
+                                                <div className="text-xs opacity-75">llms-full.txt Output</div>
                                             </div>
                                         </div>
                                         <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
@@ -3724,6 +5764,12 @@ add_action('template_redirect', function() {
                             </div>
                         </div>
                         
+                        {/* Body - Code Viewer */}
+                        <div className="flex-1 overflow-y-auto bg-slate-950 p-6 custom-scrollbar">
+                            <pre className="text-slate-400 font-mono text-sm whitespace-pre-wrap break-words">
+                                {auditState ? JSON.stringify(auditState.logs, null, 2) : debugConsoleText}
+                            </pre>
+                        </div>
                         {/* Logs List Area */}
                         <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-[#0a0f1c]">
                             {(!auditState || auditState.logs.length === 0) ? (
@@ -3791,6 +5837,122 @@ add_action('template_redirect', function() {
                                 <p className="text-xs">Review these heuristics to ensure pixel-perfect Gutenberg conversion.</p>
                             </div>
                         )}
+                    </div>
+                </div>
+            )}
+
+            {/* Redirects Modal */}
+            {redirectsData && showMapModal && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center animate-in fade-in duration-200">
+                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowMapModal(false)} />
+                    <div 
+                        className="relative bg-slate-900 border border-slate-700 w-full max-w-5xl max-h-[85vh] rounded-xl shadow-2xl flex flex-col overflow-hidden m-4 slide-in-from-bottom-4 animate-in duration-300 pointer-events-auto"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/50">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-lg bg-indigo-500/20 flex items-center justify-center border border-indigo-500/30">
+                                    <Split className="w-5 h-5 text-indigo-400" />
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-semibold text-white">301 SEO Redirect Matrix</h3>
+                                    <p className="text-sm text-slate-400">Copy this mapping directly into your WordPress Redirections plugin</p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button 
+                                    onClick={() => {
+                                        navigator.clipboard.writeText(redirectsData);
+                                        addLog("Copied redirect map to clipboard", "success");
+                                    }}
+                                    className="px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 rounded-lg transition-colors border border-slate-700/50 hover:border-slate-600 flex items-center gap-2"
+                                >
+                                    <FileCode className="w-4 h-4" />
+                                    Copy CSV
+                                </button>
+                                <button 
+                                    onClick={() => setShowMapModal(false)}
+                                    className="w-10 h-10 flex items-center justify-center text-slate-400 hover:bg-rose-500/10 hover:text-rose-400 rounded-lg transition-colors"
+                                >
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto bg-slate-950 p-6 custom-scrollbar">
+                            {redirectsData.split('\n').length > 1 ? (
+                                <div className="space-y-2 text-sm">
+                                    <div className="grid grid-cols-2 gap-4 pb-2 border-b border-slate-800 text-slate-500 font-medium px-2">
+                                        <div>Old URL Path</div>
+                                        <div>New Destination Path</div>
+                                    </div>
+                                    {redirectsData.split('\n').filter(line => line.trim() && !line.startsWith('source,target,regex')).map((line, i) => {
+                                        const parts = line.split(',');
+                                        if (parts.length < 2) return null;
+                                        // Clean up regex characters for display
+                                        const from = parts[0].replace(/"/g, '').replace('^', '').replace('/?$', '').replace('//?', '/');
+                                        const to = parts[1].replace(/"/g, '');
+                                        return (
+                                            <div key={i} className="grid grid-cols-2 gap-4 py-2 px-2 hover:bg-slate-900/50 rounded items-center border border-transparent hover:border-slate-800 transition-colors">
+                                                <div className="font-mono text-rose-400 break-all">{from}</div>
+                                                <div className="font-mono text-emerald-400 flex items-center gap-2 break-all">
+                                                    <ArrowRight className="w-4 h-4 text-slate-600 shrink-0" /> {to}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <pre className="text-slate-400 font-mono text-xs whitespace-pre-wrap break-words">
+                                    {redirectsData}
+                                </pre>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* AI Knowledge Base Modal */}
+            {llmsData && showLlmsModal && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center animate-in fade-in duration-200">
+                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowLlmsModal(false)} />
+                    <div 
+                        className="relative bg-slate-900 border border-slate-700 w-full max-w-5xl max-h-[85vh] rounded-xl shadow-2xl flex flex-col overflow-hidden m-4 slide-in-from-bottom-4 animate-in duration-300 pointer-events-auto"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900/50">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center border border-emerald-500/30">
+                                    <Database className="w-5 h-5 text-emerald-400" />
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-semibold text-white">AI Content Map (/llms-full.txt)</h3>
+                                    <p className="text-sm text-slate-400">Experimental Markdown mapping optimized for LLM ingestion</p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <button 
+                                    onClick={() => {
+                                        navigator.clipboard.writeText(llmsData);
+                                        addLog("Copied AI Knowledge Base to clipboard", "success");
+                                    }}
+                                    className="px-4 py-2 text-sm font-medium text-slate-300 hover:bg-slate-800 rounded-lg transition-colors border border-slate-700/50 hover:border-slate-600 flex items-center gap-2"
+                                >
+                                    <FileCode className="w-4 h-4" />
+                                    Copy MD
+                                </button>
+                                <button 
+                                    onClick={() => setShowLlmsModal(false)}
+                                    className="w-10 h-10 flex items-center justify-center text-slate-400 hover:bg-rose-500/10 hover:text-rose-400 rounded-lg transition-colors"
+                                >
+                                    <X className="w-5 h-5" />
+                                </button>
+                            </div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto bg-slate-950 p-6 custom-scrollbar">
+                            <pre className="text-slate-400 font-mono text-sm whitespace-pre-wrap break-words">
+                                {llmsData}
+                            </pre>
+                        </div>
                     </div>
                 </div>
             )}

@@ -1,6 +1,6 @@
 /**
  * Theme Factory Blocks - Plugin Templates
- * Version: 2.2.0
+ * Version: 2.3.0
  * 
  * This file contains the PHP code for the companion plugin.
  * IMPORTANT: All PHP code must use straight quotes (', ") not curly quotes.
@@ -9,9 +9,9 @@
 export const PLUGIN_FILES: Record<string, string> = {
   'theme-factory-blocks.php': `<?php
 /**
- * Plugin Name: Theme Factory Blocks
+ * Plu` + `gin Name: Theme Factory Blocks
  * Description: Custom Gutenberg blocks and editor parity for Theme Factory themes.
- * Version: 2.2.0
+ * Version: 2.3.0
  * Author: Theme Factory AI
  * Text Domain: theme-factory-blocks
  * Requires at least: 6.0
@@ -20,7 +20,7 @@ export const PLUGIN_FILES: Record<string, string> = {
 
 if (!defined('ABSPATH')) exit;
 
-define('TFB_VERSION', '2.2.0');
+define('TFB_VERSION', '2.3.0');
 define('TFB_PATH', plugin_dir_path(__FILE__));
 define('TFB_URL', plugin_dir_url(__FILE__));
 
@@ -74,18 +74,10 @@ final class TFB_Blocks {
     );
 
     public static function init() {
-        add_action( 'init', array( __CLASS__, 'register_menus' ) );
         add_action( 'init', array( __CLASS__, 'register_blocks' ) );
         add_action( 'init', array( __CLASS__, 'register_block_category' ) );
         add_action( 'enqueue_block_editor_assets', array( __CLASS__, 'enqueue_editor_assets' ) );
         add_action( 'wp_enqueue_scripts', array( __CLASS__, 'enqueue_frontend_assets' ) );
-    }
-
-    public static function register_menus() {
-        register_nav_menus( array(
-            'tf_primary' => __( 'Primary Menu (TF)', 'theme-factory-blocks' ),
-            'tf_footer'  => __( 'Footer Menu (TF)', 'theme-factory-blocks' ),
-        ) );
     }
 
     public static function register_block_category() {
@@ -216,6 +208,64 @@ final class TFB_Blocks {
                 true 
             );
         }
+    }
+
+    // ── Dynamic Block Render Callbacks ──────────────────────────────────
+    // Since save() returns null, these PHP callbacks render the frontend output.
+    // $content contains the stored innerHTML from the converter (including wrapper divs).
+    
+    public static function render_page_shell($attributes, $content) {
+        return $content;
+    }
+
+    public static function render_container($attributes, $content) {
+        return $content;
+    }
+
+    public static function render_link_group($attributes, $content) {
+        return $content;
+    }
+
+    public static function render_svg($attributes, $content) {
+        // SVG blocks store base64-encoded SVG in the 'content' attribute.
+        // Decode and sanitize before rendering.
+        $encoded = isset($attributes['content']) ? $attributes['content'] : '';
+        if (empty($encoded)) {
+            return $content; // Fallback to stored innerHTML
+        }
+        $decoded = base64_decode($encoded);
+        if ($decoded === false) {
+            return $content;
+        }
+        $allowed_html = array(
+            'svg' => array('xmlns' => true, 'width' => true, 'height' => true, 'viewBox' => true, 'fill' => true, 'stroke' => true, 'stroke-width' => true, 'stroke-linecap' => true, 'stroke-linejoin' => true, 'class' => true, 'style' => true),
+            'path' => array('d' => true, 'fill' => true, 'stroke' => true),
+            'circle' => array('cx' => true, 'cy' => true, 'r' => true, 'fill' => true, 'stroke' => true),
+            'rect' => array('x' => true, 'y' => true, 'width' => true, 'height' => true, 'fill' => true, 'stroke' => true, 'rx' => true, 'ry' => true),
+            'line' => array('x1' => true, 'y1' => true, 'x2' => true, 'y2' => true, 'stroke' => true),
+            'polyline' => array('points' => true, 'fill' => true, 'stroke' => true),
+            'polygon' => array('points' => true, 'fill' => true, 'stroke' => true),
+            'g' => array('fill' => true, 'stroke' => true, 'transform' => true),
+            'defs' => array(),
+            'text' => array('x' => true, 'y' => true, 'fill' => true, 'font-size' => true),
+        );
+        return '<div class="wp-block-theme-factory-svg">' . wp_kses($decoded, $allowed_html) . '</div>';
+    }
+
+    public static function render_nav_toggle($attributes, $content) {
+        return $content;
+    }
+
+    public static function render_button($attributes, $content) {
+        return $content;
+    }
+
+    public static function render_input($attributes, $content) {
+        return $content;
+    }
+
+    public static function render_textarea($attributes, $content) {
+        return $content;
     }
 }
 
@@ -655,15 +705,17 @@ registerBlockType('theme-factory/page-shell', {
     category: 'theme-factory',
     icon: 'layout',
     attributes: { className: { type: 'string', default: '' } },
-    supports: { align: ['full', 'wide'] },
+    supports: {
+        align: ['full', 'wide'],
+        color: { background: true, text: true, gradients: true },
+        spacing: { margin: true, padding: true, blockGap: true },
+        typography: { fontSize: true, lineHeight: true }
+    },
     edit: function(props) {
         var blockProps = useBlockProps({ className: 'tf-page-shell-editor ' + getEditorClassName(props.attributes.className) });
         return el('div', blockProps, el(InnerBlocks));
     },
-    save: function(props) {
-        var blockProps = useBlockProps.save({ className: props.attributes.className });
-        return el('div', blockProps, el(InnerBlocks.Content));
-    }
+    save: function() { return el(InnerBlocks.Content); }
 });
 
 registerBlockType('theme-factory/container', {
@@ -678,10 +730,19 @@ registerBlockType('theme-factory/container', {
         extraAttributes: { type: 'string', default: '{}' },
         bgImage: { type: 'string', default: '' }
     },
-    supports: { align: ['full', 'wide'], html: false },
+    supports: {
+        align: ['full', 'wide'],
+        html: false,
+        color: { background: true, text: true, gradients: true },
+        spacing: { margin: true, padding: true, blockGap: true },
+        typography: { fontSize: true, lineHeight: true },
+        dimensions: { minHeight: true }
+    },
     edit: function(props) {
         var attributes = props.attributes;
-        var Tag = attributes.tagName || 'div';
+        var rawTag = attributes.tagName || 'div';
+        var editorUnsafeTags = ['button', 'a', 'input', 'textarea', 'select'];
+        var Tag = editorUnsafeTags.indexOf(rawTag) > -1 ? 'div' : rawTag;
         var styleObj = parseStyle(attributes.style);
         
         if (attributes.bgImage) {
@@ -736,35 +797,7 @@ registerBlockType('theme-factory/container', {
             el(Tag, blockProps, el(InnerBlocks))
         );
     },
-    save: function(props) {
-        var attributes = props.attributes;
-        var Tag = attributes.tagName || 'div';
-        var styleObj = parseStyle(attributes.style);
-        
-        if (attributes.bgImage) {
-            styleObj.backgroundImage = "url('" + attributes.bgImage + "')";
-            styleObj.backgroundSize = "cover";
-            styleObj.backgroundPosition = "center";
-        }
-        
-        var extraProps = {};
-        try {
-            if (attributes.extraAttributes) {
-                var parsed = JSON.parse(attributes.extraAttributes);
-                if (parsed && typeof parsed === 'object') {
-                    extraProps = parsed;
-                }
-            }
-        } catch(e) {}
-        
-        var blockProps = useBlockProps.save({ 
-            className: attributes.className, 
-            id: attributes.id || undefined, 
-            style: Object.keys(styleObj).length > 0 ? styleObj : undefined,
-            ...extraProps
-        });
-        return el(Tag, blockProps, el(InnerBlocks.Content));
-    }
+    save: function() { return el(InnerBlocks.Content); }
 });
 
 registerBlockType('theme-factory/link-group', {
@@ -772,6 +805,11 @@ registerBlockType('theme-factory/link-group', {
     category: 'theme-factory',
     icon: 'admin-links',
     attributes: { href: { type: 'string', default: '#' }, target: { type: 'string' }, rel: { type: 'string' }, className: { type: 'string', default: '' } },
+    supports: {
+        color: { background: true, text: true },
+        spacing: { margin: true, padding: true },
+        typography: { fontSize: true }
+    },
     edit: function(props) {
         var attributes = props.attributes;
         var blockProps = useBlockProps({ className: 'tf-link-group-editor ' + getEditorClassName(attributes.className) });
@@ -783,32 +821,22 @@ registerBlockType('theme-factory/link-group', {
             el('div', blockProps, el('span', { className: 'tf-link-badge' }, 'LINK: ' + (attributes.href || '#')), el('div', null, el(InnerBlocks)))
         );
     },
-    save: function(props) {
-        var attributes = props.attributes;
-        var linkProps = { href: attributes.href, className: attributes.className };
-        if (attributes.target) linkProps.target = attributes.target;
-        if (attributes.rel) linkProps.rel = attributes.rel;
-        var blockProps = useBlockProps.save(linkProps);
-        return el('a', blockProps, el(InnerBlocks.Content));
-    }
+    save: function() { return el(InnerBlocks.Content); }
 });
 
 registerBlockType('theme-factory/svg', {
     title: __('SVG Icon', 'theme-factory-blocks'),
     category: 'theme-factory',
     icon: 'art',
-    attributes: { svgHtml: { type: 'string', default: '' } },
+    attributes: { content: { type: 'string', default: '' } },
+    supports: { html: false },
     edit: function(props) {
         var blockProps = useBlockProps({ className: 'tf-svg-preview' });
         return el('div', blockProps,
-            el('textarea', { className: 'tf-code-editor', value: props.attributes.svgHtml, onChange: function(e) { props.setAttributes({ svgHtml: e.target.value }); }, placeholder: 'Paste SVG code here...', rows: 4 }),
-            el('div', { className: 'tf-svg-render', dangerouslySetInnerHTML: { __html: props.attributes.svgHtml } })
+            el('div', { className: 'tf-label' }, 'SVG Icon (preserved)')
         );
     },
-    save: function(props) {
-        var blockProps = useBlockProps.save();
-        return el('div', blockProps, el(wp.element.RawHTML, null, props.attributes.svgHtml));
-    }
+    save: function() { return null; }
 });
 
 registerBlockType('theme-factory/nav-toggle', {
@@ -820,10 +848,7 @@ registerBlockType('theme-factory/nav-toggle', {
         var blockProps = useBlockProps({ className: 'tf-nav-toggle-editor' });
         return el('div', blockProps, el('div', { className: 'tf-nav-toggle-label' }, 'Nav Toggle'), el(InnerBlocks));
     },
-    save: function(props) {
-        var blockProps = useBlockProps.save({ className: props.attributes.className });
-        return el('button', blockProps, el(InnerBlocks.Content));
-    }
+    save: function() { return el(InnerBlocks.Content); }
 });
 
 registerBlockType('theme-factory/button', {
@@ -831,6 +856,11 @@ registerBlockType('theme-factory/button', {
     category: 'theme-factory',
     icon: 'button',
     attributes: { text: { type: 'string', default: '' }, href: { type: 'string', default: '#' }, className: { type: 'string', default: '' }, target: { type: 'string' }, rel: { type: 'string' } },
+    supports: {
+        color: { background: true, text: true, gradients: true },
+        spacing: { margin: true, padding: true },
+        typography: { fontSize: true, lineHeight: true }
+    },
     edit: function(props) {
         var attributes = props.attributes;
         var blockProps = useBlockProps({ className: 'tf-button-wrapper' });
@@ -848,14 +878,7 @@ registerBlockType('theme-factory/button', {
             )
         );
     },
-    save: function(props) {
-        var attributes = props.attributes;
-        var linkProps = { href: attributes.href, className: attributes.className };
-        if (attributes.target) linkProps.target = attributes.target;
-        if (attributes.rel) linkProps.rel = attributes.rel;
-        var blockProps = useBlockProps.save(linkProps);
-        return el('a', blockProps, el(RichText.Content, { value: attributes.text }));
-    }
+    save: function() { return null; }
 });
 
 registerBlockType('theme-factory/input', {
@@ -901,17 +924,7 @@ registerBlockType('theme-factory/input', {
             )
         );
     },
-    save: function(props) {
-        var attributes = props.attributes;
-        var blockProps = useBlockProps.save({ className: attributes.className });
-        var inputProps = {
-            type: attributes.type,
-            name: attributes.name || undefined,
-            placeholder: attributes.placeholder || undefined
-        };
-        if (attributes.required) inputProps.required = true;
-        return el('input', Object.assign({}, blockProps, inputProps));
-    }
+    save: function() { return null; }
 });
 
 registerBlockType('theme-factory/textarea', {
@@ -946,17 +959,7 @@ registerBlockType('theme-factory/textarea', {
             )
         );
     },
-    save: function(props) {
-        var attributes = props.attributes;
-        var blockProps = useBlockProps.save({ className: attributes.className });
-        var textareaProps = {
-            name: attributes.name || undefined,
-            placeholder: attributes.placeholder || undefined,
-            rows: attributes.rows || undefined
-        };
-        if (attributes.required) textareaProps.required = true;
-        return el('textarea', Object.assign({}, blockProps, textareaProps));
-    }
+    save: function() { return null; }
 });
 
 console.log('Theme Factory Blocks: All blocks registered successfully');
@@ -1020,7 +1023,15 @@ console.log('Theme Factory Blocks: All blocks registered successfully');
     "icon": "layout",
     "description": "Outer wrapper for full-page layouts",
     "attributes": { "className": { "type": "string", "default": "" } },
-    "supports": { "align": ["full", "wide"], "html": false },
+    "supports": { 
+      "align": ["full", "wide"], 
+      "html": false,
+      "color": { "text": true, "background": true, "link": true, "gradients": true },
+      "spacing": { "margin": true, "padding": true, "blockGap": true },
+      "typography": { "fontSize": true, "lineHeight": true, "fontWeight": true, "fontStyle": true, "letterSpacing": true, "textDecoration": true, "textTransform": true },
+      "border": { "color": true, "radius": true, "style": true, "width": true },
+      "dimensions": { "minHeight": true, "aspectRatio": true }
+    },
     "textdomain": "theme-factory-blocks"
   }, null, 2),
 
@@ -1039,7 +1050,15 @@ console.log('Theme Factory Blocks: All blocks registered successfully');
       "style": { "type": "string", "default": "" },
       "extraAttributes": { "type": "string", "default": "{}" }
     },
-    "supports": { "align": ["full", "wide"], "html": false },
+    "supports": { 
+      "align": ["full", "wide"], 
+      "html": false,
+      "color": { "text": true, "background": true, "link": true, "gradients": true },
+      "spacing": { "margin": true, "padding": true, "blockGap": true },
+      "typography": { "fontSize": true, "lineHeight": true, "fontWeight": true, "fontStyle": true, "letterSpacing": true, "textDecoration": true, "textTransform": true },
+      "border": { "color": true, "radius": true, "style": true, "width": true },
+      "dimensions": { "minHeight": true, "aspectRatio": true }
+    },
     "textdomain": "theme-factory-blocks"
   }, null, 2),
 
@@ -1057,6 +1076,15 @@ console.log('Theme Factory Blocks: All blocks registered successfully');
       "rel": { "type": "string" },
       "className": { "type": "string", "default": "" }
     },
+    "supports": { 
+      "align": ["full", "wide"], 
+      "html": false,
+      "color": { "text": true, "background": true, "link": true, "gradients": true },
+      "spacing": { "margin": true, "padding": true, "blockGap": true },
+      "typography": { "fontSize": true, "lineHeight": true, "fontWeight": true, "fontStyle": true, "letterSpacing": true, "textDecoration": true, "textTransform": true },
+      "border": { "color": true, "radius": true, "style": true, "width": true },
+      "dimensions": { "minHeight": true, "aspectRatio": true }
+    },
     "textdomain": "theme-factory-blocks"
   }, null, 2),
 
@@ -1067,8 +1095,9 @@ console.log('Theme Factory Blocks: All blocks registered successfully');
     "title": "SVG Icon",
     "category": "theme-factory",
     "icon": "art",
-    "description": "Raw SVG Output",
-    "attributes": { "svgHtml": { "type": "string", "default": "" } },
+    "description": "Dynamic SVG Output (server-rendered)",
+    "attributes": { "content": { "type": "string", "default": "" } },
+    "supports": { "html": false },
     "textdomain": "theme-factory-blocks"
   }, null, 2),
 
@@ -1098,6 +1127,15 @@ console.log('Theme Factory Blocks: All blocks registered successfully');
       "className": { "type": "string", "default": "" },
       "target": { "type": "string" },
       "rel": { "type": "string" }
+    },
+    "supports": { 
+      "align": ["full", "wide"], 
+      "html": false,
+      "color": { "text": true, "background": true, "link": true, "gradients": true },
+      "spacing": { "margin": true, "padding": true, "blockGap": true },
+      "typography": { "fontSize": true, "lineHeight": true, "fontWeight": true, "fontStyle": true, "letterSpacing": true, "textDecoration": true, "textTransform": true },
+      "border": { "color": true, "radius": true, "style": true, "width": true },
+      "dimensions": { "minHeight": true, "aspectRatio": true }
     },
     "textdomain": "theme-factory-blocks"
   }, null, 2)

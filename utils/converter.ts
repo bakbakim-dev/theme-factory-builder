@@ -46,15 +46,15 @@ const SKIP_TAGS = new Set(['script', 'style', 'noscript', 'meta', 'link', 'head'
 const STRUCTURAL_TAGS = new Set(['div', 'article', 'main', 'header', 'footer', 'aside', 'nav', 'section']);
 
 export function createPlaceholder(title: string, message: string): string {
-    return `<!-- wp:group {"layout":{"type":"constrained"}} -->
-<div class="wp-block-group"><!-- wp:heading -->
+    return `<!-- wp:theme-factory/container {"className":"wp-block-theme-factory-container"} -->
+<div class="wp-block-theme-factory-container"><!-- wp:heading -->
 <h2 class="wp-block-heading">${escapeHtml(title)}</h2>
 <!-- /wp:heading -->
 
 <!-- wp:paragraph -->
 <p>${escapeHtml(message)}</p>
 <!-- /wp:paragraph --></div>
-<!-- /wp:group -->`;
+<!-- /wp:theme-factory/container -->`;
 }
 
 export function extractElementHtml(html: string, selector: string): string | null {
@@ -158,16 +158,16 @@ function groupAdjacentButtons(blocks: string[]): string[] {
     const flushButtons = () => {
         if (buttonBuffer.length === 0) return;
         if (buttonBuffer.length === 1) {
-            // Single button still needs a wp:buttons wrapper per WP core rules
-            result.push(`<!-- wp:buttons -->\n<div class="wp-block-buttons">\n${buttonBuffer[0]}\n</div>\n<!-- /wp:buttons -->`);
+            // Single button still needs a wrapper per WP conventions
+            result.push(`<!-- wp:theme-factory/container {"className":"wp-block-buttons"} -->\n<div class="wp-block-theme-factory-container wp-block-buttons">\n${buttonBuffer[0]}\n</div>\n<!-- /wp:theme-factory/container -->`);
         } else {
-            result.push(`<!-- wp:buttons -->\n<div class="wp-block-buttons">\n${buttonBuffer.join('\n')}\n</div>\n<!-- /wp:buttons -->`);
+            result.push(`<!-- wp:theme-factory/container {"className":"wp-block-buttons"} -->\n<div class="wp-block-theme-factory-container wp-block-buttons">\n${buttonBuffer.join('\n')}\n</div>\n<!-- /wp:theme-factory/container -->`);
         }
         buttonBuffer = [];
     };
     
     for (const block of blocks) {
-        if (block.trimStart().startsWith('<!-- wp:button ')) {
+        if (block.trimStart().startsWith('<!-- wp:theme-factory/button ')) {
             buttonBuffer.push(block);
         } else {
             flushButtons();
@@ -190,7 +190,17 @@ function processElement(el: HTMLElement, ctx: ConversionContext): string | strin
   
   // 1. Accordions (Radix UI, custom implementations)
   // Only detect elements that ARE accordion items by their own attributes
-  if (dataState === 'open' || dataState === 'closed' || 
+  // GUARD: Exclude Radix Select components — they also have data-state="closed"
+  // but are dropdown menus, not accordions.
+  const isRadixSelect = role === 'combobox' || 
+      el.hasAttribute('data-radix-select-trigger') || 
+      el.hasAttribute('data-radix-select-content') ||
+      el.hasAttribute('data-radix-select-viewport') ||
+      el.closest('[data-radix-select-trigger]') !== null ||
+      (tag === 'button' && el.closest('[data-radix-select-trigger]') !== null);
+  
+  if (!isRadixSelect && (
+      dataState === 'open' || dataState === 'closed' || 
       el.hasAttribute('data-accordion') || 
       el.hasAttribute('data-radix-accordion-item') ||
       el.hasAttribute('data-radix-accordion-content') ||
@@ -201,7 +211,7 @@ function processElement(el: HTMLElement, ctx: ConversionContext): string | strin
       className.includes('AccordionTrigger') ||
       className.includes('AccordionContent') ||
       className.includes('collapsible') ||
-      className.includes('faq-item')) {
+      className.includes('faq-item'))) {
       return createContainer(el, ctx, true);
   }
   
@@ -400,10 +410,14 @@ function processElement(el: HTMLElement, ctx: ConversionContext): string | strin
       if (socialResult) return socialResult;
   }
   
-  // HEURISTIC: Search form detection
+  // HEURISTIC: Form handling
+  // Search forms → createSearch, contact/general forms → preserve as HTML block
   if (tag === 'form') {
       const searchResult = createSearch(el, ctx);
       if (searchResult) return searchResult;
+      // Non-search forms (contact, signup, etc.) — preserve as raw HTML block
+      trackBlock(ctx, 'core/html');
+      return `<!-- wp:html -->\n${el.outerHTML}\n<!-- /wp:html -->`;
   }
   
   if (STRUCTURAL_TAGS.has(tag) || tag === 'div' || tag === 'section' || extraContainers.has(tag)) {
@@ -435,6 +449,16 @@ function processElement(el: HTMLElement, ctx: ConversionContext): string | strin
       return null;
   }
 
+  // Form elements: preserve as HTML when encountered outside a form context
+  // (inside a form, they're already captured by the form's core/html block)
+  if (['input', 'textarea', 'select', 'option', 'fieldset', 'legend'].includes(tag)) {
+      if (tag === 'select' || tag === 'textarea') {
+          trackBlock(ctx, 'core/html');
+          return `<!-- wp:html -->\n${el.outerHTML}\n<!-- /wp:html -->`;
+      }
+      return null; // input/option/fieldset handled by parent
+  }
+
   // Iframes: YouTube/Vimeo → core/embed, others → core/html
   if (tag === 'iframe') {
       const src = el.getAttribute('src') || '';
@@ -458,28 +482,237 @@ function processElement(el: HTMLElement, ctx: ConversionContext): string | strin
 }
 
 // ---------------------------------------------------------------------------
+// Tailwind to Gutenberg Dictionary (FSE Translation Engine)
+// ---------------------------------------------------------------------------
+const spacingMap: Record<string, string> = {
+    '0': '0', '1': '0.25rem', '2': '0.5rem', '3': '0.75rem', '4': '1rem',
+    '5': '1.25rem', '6': '1.5rem', '8': '2rem', '10': '2.5rem', '12': '3rem',
+    '16': '4rem', '20': '5rem', '24': '6rem', '32': '8rem', '40': '10rem',
+    '48': '12rem', '64': '16rem', 'auto': 'auto', 'px': '1px'
+};
+
+const fseColors = new Set(['primary', 'secondary', 'accent', 'background', 'foreground', 'muted', 'white', 'black', 'transparent']);
+
+export function parseTailwindAttributes(className: string): { attributes: any, remainingClasses: string } {
+    if (!className) return { attributes: {}, remainingClasses: '' };
+    
+    // Ignore responsive or state variants for global extraction (Gutenberg doesn't support them natively)
+    const classes = className.split(/\s+/).filter(Boolean);
+    const remainingClasses: string[] = [];
+    const attributes: any = {};
+    const style: any = {};
+    let spacing: any = null;
+    let color: any = null;
+    let typography: any = null;
+    
+    for (const cls of classes) {
+        let matched = false;
+        
+        // Skip hover/focus/md/lg classes
+        if (cls.includes(':')) {
+            remainingClasses.push(cls);
+            continue;
+        }
+        
+        // 1. Spacing - Padding
+        if (cls.match(/^p([trblxy]?)-([^:]+)$/)) {
+            const [, dir, val] = cls.match(/^p([trblxy]?)-([^:]+)$/)!;
+            const remVal = spacingMap[val] || (val.includes('[') ? val.replace(/[\[\]]/g, '') : null);
+            if (remVal) {
+                if (!spacing) spacing = {};
+                if (!spacing.padding) spacing.padding = {};
+                if (!dir) { spacing.padding.top = remVal; spacing.padding.bottom = remVal; spacing.padding.left = remVal; spacing.padding.right = remVal; }
+                else if (dir === 't') spacing.padding.top = remVal;
+                else if (dir === 'b') spacing.padding.bottom = remVal;
+                else if (dir === 'l') spacing.padding.left = remVal;
+                else if (dir === 'r') spacing.padding.right = remVal;
+                else if (dir === 'x') { spacing.padding.left = remVal; spacing.padding.right = remVal; }
+                else if (dir === 'y') { spacing.padding.top = remVal; spacing.padding.bottom = remVal; }
+                matched = true;
+            }
+        }
+        
+        // 2. Spacing - Margin
+        // CRITICAL: Preserve mx-auto / my-auto as CSS classes — WordPress core blocks
+        // do NOT render Gutenberg JSON style.spacing.margin as inline CSS, so converting
+        // auto-margins to JSON attributes silently breaks centering on the frontend.
+        else if (cls.match(/^-?m([trblxy]?)-([^:]+)$/)) {
+            const isNegative = cls.startsWith('-');
+            const [, dir, val] = cls.match(/^-?m([trblxy]?)-([^:]+)$/)!;
+            const remValBase = spacingMap[val] || (val.includes('[') ? val.replace(/[\[\]]/g, '') : null);
+            if (remValBase) {
+                // Keep auto-margin classes as CSS classes (Tailwind handles them perfectly)
+                // instead of converting to Gutenberg JSON spacing that WP won't render
+                if (remValBase === 'auto') {
+                    remainingClasses.push(cls);
+                    matched = true;
+                } else {
+                    const remVal = isNegative && remValBase !== '0' ? `-${remValBase}` : remValBase;
+                    if (!spacing) spacing = {};
+                    if (!spacing.margin) spacing.margin = {};
+                    if (!dir) { spacing.margin.top = remVal; spacing.margin.bottom = remVal; spacing.margin.left = remVal; spacing.margin.right = remVal; }
+                    else if (dir === 't') spacing.margin.top = remVal;
+                    else if (dir === 'b') spacing.margin.bottom = remVal;
+                    else if (dir === 'l') spacing.margin.left = remVal;
+                    else if (dir === 'r') spacing.margin.right = remVal;
+                    else if (dir === 'x') { spacing.margin.left = remVal; spacing.margin.right = remVal; }
+                    else if (dir === 'y') { spacing.margin.top = remVal; spacing.margin.bottom = remVal; }
+                    matched = true;
+                }
+            }
+        }
+        
+        // 3. Colors
+        else if (cls.startsWith('bg-')) {
+            const colorName = cls.replace('bg-', '');
+            if (fseColors.has(colorName)) {
+                attributes.backgroundColor = colorName;
+                attributes.className = attributes.className ? attributes.className + ` has-${colorName}-background-color has-background` : `has-${colorName}-background-color has-background`;
+                matched = true;
+            } else if (colorName.includes('[')) { // Hex colors
+                const hex = colorName.replace(/[\[\]]/g, '');
+                if (!color) color = {};
+                color.background = hex;
+                attributes.className = attributes.className ? attributes.className + ' has-background' : 'has-background';
+                matched = true;
+            }
+        }
+        // Text alignment classes -> Gutenberg align attribute
+        else if (cls === 'text-center' || cls === 'text-right' || cls === 'text-left') {
+            attributes.align = cls.replace('text-', '');
+            matched = true;
+        }
+        else if (cls.startsWith('text-')) {
+            const colorName = cls.replace('text-', '');
+            if (fseColors.has(colorName)) {
+                attributes.textColor = colorName;
+                attributes.className = attributes.className ? attributes.className + ` has-${colorName}-color has-text-color` : `has-${colorName}-color has-text-color`;
+                matched = true;
+            } else if (colorName.includes('[')) {
+                const hex = colorName.replace(/[\[\]]/g, '');
+                if (!color) color = {};
+                color.text = hex;
+                attributes.className = attributes.className ? attributes.className + ' has-text-color' : 'has-text-color';
+                matched = true;
+            } else if (['xs', 'sm', 'base', 'lg', 'xl', '2xl', '3xl', '4xl', '5xl', '6xl', '7xl', '8xl', '9xl'].includes(colorName)) {
+                // Typography maps
+                const fontSizeMap: Record<string, string> = {
+                    'xs': 'x-small', 'sm': 'small', 'base': 'medium', 'lg': 'large', 'xl': 'x-large', 
+                    '2xl': 'xx-large', '3xl': '3xl', '4xl': '4xl', '5xl': '5xl', '6xl': '6xl'
+                };
+                if (fontSizeMap[colorName]) {
+                    attributes.fontSize = fontSizeMap[colorName];
+                } else if (!typography) {
+                    typography = {};
+                    typography.fontSize = colorName === '8xl' ? '6rem' : colorName === '9xl' ? '8rem' : '4rem';
+                }
+                matched = true;
+            }
+        }
+
+        // 4. Flexbox Layouts natively support in Gutenberg 6.1+
+        else if (cls === 'flex' || cls === 'flex-col' || cls === 'items-center' || cls === 'justify-center' || cls === 'justify-between' || cls === 'gap-4' || cls === 'gap-8') {
+             // We keep layout classes for now as mapping deeply into wp:group layout={type:flex} has side effects on width.
+             // We'll let `remainingClasses.push(cls)` run.
+             matched = false;
+        }
+        
+        // Strip out the matched Tailwind classes so they don't fight Gutenberg's native CSS!
+        if (!matched) {
+            remainingClasses.push(cls);
+        }
+    }
+    
+    if (spacing) style.spacing = spacing;
+    if (color) style.color = color;
+    if (typography) style.typography = typography;
+    
+    if (Object.keys(style).length > 0) {
+        attributes.style = style;
+    }
+    
+    return {
+        attributes,
+        remainingClasses: remainingClasses.join(' ')
+    };
+}
+
+// ---------------------------------------------------------------------------
 // Block Generators
 // ---------------------------------------------------------------------------
 
 function createHeading(el: HTMLElement, tag: string, ctx: ConversionContext): string {
-  const level = parseInt(tag.replace('h', ''));
   const content = cleanInlineHtml(el.innerHTML);
-  const className = getClassName(el);
-  const attrs: any = { level };
-  if (className) attrs.className = className;
+  if (!content) return '';
+  
+  const level = parseInt(tag.charAt(1));
+  const rawClassName = getClassName(el);
+  
+  const { attributes, remainingClasses } = parseTailwindAttributes(rawClassName);
+  attributes.level = level;
+  
+  // Inherit text alignment from parent containers if not set on the element itself
+  if (!attributes.align) {
+      let parent = el.parentElement;
+      while (parent && parent.id !== 'root') {
+          const parentClasses = (parent.getAttribute('class') || '').split(/\s+/);
+          if (parentClasses.includes('text-center')) { attributes.textAlign = 'center'; break; }
+          if (parentClasses.includes('text-right')) { attributes.textAlign = 'right'; break; }
+          if (parentClasses.includes('text-left')) { break; }
+          parent = parent.parentElement;
+      }
+  } else {
+      // Headings use textAlign, not align
+      attributes.textAlign = attributes.align;
+      delete attributes.align;
+  }
+  
+  // Combine custom classes and FSE injected classes (like has-primary-color)
+  const fseClasses = attributes.className || '';
+  const alignClass = attributes.textAlign === 'center' ? 'has-text-align-center' : attributes.textAlign === 'right' ? 'has-text-align-right' : '';
+  const finalClasses = [remainingClasses, fseClasses, alignClass].filter(Boolean).join(' ');
+  if (finalClasses) attributes.className = finalClasses;
+  
   trackBlock(ctx, 'core/heading');
   
-  return `<!-- wp:heading ${JSON.stringify(attrs)} -->\n<${tag} class="wp-block-heading ${className}">${content}</${tag}>\n<!-- /wp:heading -->`;
+  const attrsStr = Object.keys(attributes).length > 0 ? ` ${JSON.stringify(attributes)}` : '';
+  const classAttr = finalClasses ? ` class="wp-block-heading ${finalClasses}"` : ` class="wp-block-heading"`;
+  
+  return `<!-- wp:heading${attrsStr} -->\n<${tag}${classAttr}>${content}</${tag}>\n<!-- /wp:heading -->`;
 }
 
 function createParagraph(content: string, ctx: ConversionContext, el?: HTMLElement): string {
     const cleaned = cleanInlineHtml(content);
     if (!cleaned) return '';
-    const className = el ? getClassName(el) : '';
-    const attrs = className ? `{"className":"${className}"}` : '';
-    const classAttr = className ? ` class="${className}"` : '';
+    const rawClassName = el ? getClassName(el) : '';
+    
+    const { attributes, remainingClasses } = parseTailwindAttributes(rawClassName);
+    
+    // Inherit text alignment from parent containers if not set on the element itself
+    if (!attributes.align && el) {
+        let parent = el.parentElement;
+        while (parent && parent.id !== 'root') {
+            const parentClasses = (parent.getAttribute('class') || '').split(/\s+/);
+            if (parentClasses.includes('text-center')) { attributes.align = 'center'; break; }
+            if (parentClasses.includes('text-right')) { attributes.align = 'right'; break; }
+            if (parentClasses.includes('text-left')) { break; } // Explicit left = default
+            parent = parent.parentElement;
+        }
+    }
+    
+    const fseClasses = attributes.className || '';
+    const finalClasses = [remainingClasses, fseClasses].filter(Boolean).join(' ');
+    if (finalClasses) attributes.className = finalClasses;
+    
+    // Add alignment CSS class for Gutenberg
+    const alignClass = attributes.align === 'center' ? ' has-text-align-center' : attributes.align === 'right' ? ' has-text-align-right' : '';
+    
     trackBlock(ctx, 'core/paragraph');
-    return `<!-- wp:paragraph ${attrs} -->\n<p${classAttr}>${cleaned}</p>\n<!-- /wp:paragraph -->`;
+    
+    const attrsStr = Object.keys(attributes).length > 0 ? ` ${JSON.stringify(attributes)}` : '';
+    const classAttr = (finalClasses || alignClass) ? ` class="${[finalClasses, alignClass.trim()].filter(Boolean).join(' ')}"` : '';
+    
+    return `<!-- wp:paragraph${attrsStr} -->\n<p${classAttr}>${cleaned}</p>\n<!-- /wp:paragraph -->`;
 }
 
 function createList(el: HTMLElement, tag: string, ctx: ConversionContext): string {
@@ -664,8 +897,13 @@ function createButton(el: HTMLElement, ctx: ConversionContext, innerBtn?: HTMLEl
     if (target === '_blank') attrs.linkTarget = '_blank';
     if (rel) attrs.rel = rel;
 
-
-
+    // AUTO-DETECT: If the link has NO background color class (no bg-*), it's a text-style link.
+    // WordPress core/button injects a dark background via wp-block-button__link, which destroys
+    // the appearance of text links like "Learn More →". Use theme-factory/button to preserve styling.
+    const hasBgClass = /\bbg-/.test(className);
+    if (!hasBgClass && !useThemeFactory) {
+        useThemeFactory = true;
+    }
     if (useThemeFactory) {
         // Build as a self-styled theme-factory/button that doesn't conflict with WordPress defaults
         const tfAttrs: any = { text: cleanText, href };
@@ -676,19 +914,15 @@ function createButton(el: HTMLElement, ctx: ConversionContext, innerBtn?: HTMLEl
         return `<!-- wp:theme-factory/button ${JSON.stringify(tfAttrs)} -->\n<a class="wp-block-theme-factory-button ${className}" href="${escapeAttr(href)}"${target ? ` target="${escapeAttr(target)}"` : ''}${rel ? ` rel="${escapeAttr(rel)}"` : ''}>${cleanText}</a>\n<!-- /wp:theme-factory/button -->`;
     }
 
-    // WordPress core button requires these exact classes in this exact order
-    const linkClasses = ['wp-block-button__link', 'wp-element-button'];
-    if (className) {
-        className.split(' ').forEach(c => {
-            if (c && !linkClasses.includes(c)) linkClasses.push(c);
-        });
-    }
-    const finalClass = linkClasses.join(' ');
-
-    // Output must match WordPress core button save function exactly
-    return `<!-- wp:button ${JSON.stringify(attrs)} -->
-<div class="wp-block-button"><a class="${finalClass}" href="${escapeAttr(href)}"${target ? ` target="${escapeAttr(target)}"` : ''}${rel ? ` rel="${escapeAttr(rel)}"` : ''}>${cleanText}</a></div>
-<!-- /wp:button -->`;
+    // ALL buttons use theme-factory/button (dynamic block, no validation).
+    // Core wp:button injects specific classes that may conflict with Tailwind styling.
+    const tfAttrs2: any = { text: cleanText, href };
+    if (className) tfAttrs2.className = className;
+    if (target) tfAttrs2.target = target;
+    if (rel) tfAttrs2.rel = rel;
+    
+    trackBlock(ctx, 'theme-factory/button');
+    return `<!-- wp:theme-factory/button ${JSON.stringify(tfAttrs2)} -->\n<a class="wp-block-theme-factory-button ${className}" href="${escapeAttr(href)}"${target ? ` target="${escapeAttr(target)}"` : ''}${rel ? ` rel="${escapeAttr(rel)}"` : ''}>${cleanText}</a>\n<!-- /wp:theme-factory/button -->`;
 }
 
 function createFormInput(el: HTMLInputElement | HTMLTextAreaElement, tag: string): string {
@@ -716,6 +950,21 @@ function createFormInput(el: HTMLInputElement | HTMLTextAreaElement, tag: string
 }
 
 function createContainer(el: HTMLElement, ctx: ConversionContext, supportInteractivity: boolean = false): string {
+    const elClassName = getClassName(el);
+    
+    // ─── HEURISTIC: Form-containing Card wrapper → preserve as core/html ─────
+    // When a Card-like container (with border, rounded, shadow, bg-card) wraps a <form>,
+    // preserve the entire container as raw HTML so the form layout stays intact.
+    const hasForm = el.querySelector('form');
+    if (hasForm) {
+        const isCardLike = elClassName.includes('rounded') || elClassName.includes('shadow') || 
+            elClassName.includes('border') || elClassName.includes('bg-card') || elClassName.includes('bg-white');
+        if (isCardLike) {
+            trackBlock(ctx, 'core/html');
+            return `<!-- wp:html -->\n${el.outerHTML}\n<!-- /wp:html -->`;
+        }
+    }
+    
     // ─── HEURISTIC: Radix/Headless UI Accordion → core/details ────────
     // Detect accordion containers with data-orientation="vertical" and
     // children that have data-state + role="region" patterns
@@ -728,7 +977,7 @@ function createContainer(el: HTMLElement, ctx: ConversionContext, supportInterac
         for (const item of items) {
             // Each accordion item: has a trigger (button with question) and panel (div with answer)
             const trigger = item.querySelector('button[data-state], h3 button, [role="heading"] button');
-            const panel = item.querySelector('[role="region"], [data-state][id]');
+            const panel = item.querySelector('[role="region"], [data-state][id]:not(button):not(h3)');
             
             if (trigger && panel) {
                 // Extract question text from trigger (skip SVG chevron icons)
@@ -743,8 +992,67 @@ function createContainer(el: HTMLElement, ctx: ConversionContext, supportInterac
                 questionText = questionText.trim();
                 if (!questionText) questionText = trigger.textContent?.trim() || 'Question';
                 
+                // CRITICAL: Remove Radix trigger elements (H3, button) from the DOM
+                // BEFORE processing the panel. This prevents them from leaking into
+                // the details block output as duplicate question text or broken elements.
+                const triggerHeader = item.querySelector('h3, [role="heading"]');
+                if (triggerHeader) triggerHeader.remove();
+                else if (trigger.parentElement === item) trigger.remove();
+                
+                // Remove any standalone SVG chevron icons from the item
+                const svgIcons = item.querySelectorAll('svg');
+                svgIcons.forEach(svg => {
+                    // Only remove small chevron icons, not decorative SVGs
+                    const w = svg.getAttribute('width');
+                    const h = svg.getAttribute('height');
+                    if ((w && parseInt(w) <= 24) || (h && parseInt(h) <= 24) || 
+                        svg.classList.contains('shrink-0') || svg.classList.contains('lucide')) {
+                        svg.remove();
+                    }
+                });
+                
                 // Process answer panel content
-                const answerContent = processChildren(panel as HTMLElement, ctx).join('\n\n');
+                // ShadCN wraps content in an inner div (class="pb-4 pt-0") — process its children
+                let answerContent = '';
+                const innerWrapper = panel.querySelector(':scope > div');
+                if (innerWrapper && innerWrapper.textContent?.trim()) {
+                    answerContent = processChildren(innerWrapper as HTMLElement, ctx).join('\n\n');
+                }
+                if (!answerContent) {
+                    answerContent = processChildren(panel as HTMLElement, ctx).join('\n\n');
+                }
+                
+                // DUPLICATE DETECTION: Check if the "answer" is just the question repeated
+                // (happens when AccordionContent is conditionally rendered and not force-mounted)
+                const normalizeText = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+                const questionNorm = normalizeText(questionText);
+                const answerPlainText = normalizeText(
+                    answerContent
+                        .replace(/<!--\s*\/?wp:[a-zA-Z0-9/-]+\s*(?:\{[^}]*\})?\s*\/?-->/g, '')
+                        .replace(/<[^>]+>/g, '')
+                );
+                
+                const isDuplicate = !answerPlainText ||
+                    answerPlainText === questionNorm ||
+                    questionNorm.includes(answerPlainText) ||
+                    (answerPlainText.includes(questionNorm) && answerPlainText.length < questionNorm.length * 2.5);
+                
+                if (isDuplicate) {
+                    // Try faqData lookup
+                    if (ctx.faqData && ctx.faqData.length > 0) {
+                        const match = ctx.faqData.find(faq => {
+                            const faqQ = normalizeText(faq.q);
+                            return faqQ === questionNorm || faqQ.includes(questionNorm) || questionNorm.includes(faqQ);
+                        });
+                        if (match && match.a) {
+                            answerContent = `<!-- wp:paragraph -->\n<p>${escapeHtml(match.a)}</p>\n<!-- /wp:paragraph -->`;
+                        } else {
+                            answerContent = `<!-- wp:paragraph -->\n<p>(Answer content not available — please add your answer here)</p>\n<!-- /wp:paragraph -->`;
+                        }
+                    } else {
+                        answerContent = `<!-- wp:paragraph -->\n<p>(Answer content not available — please add your answer here)</p>\n<!-- /wp:paragraph -->`;
+                    }
+                }
                 
                 // Strip Radix UI/Tailwind classes that interfere with native <details> behavior
                 const itemClass = getClassName(item)
@@ -759,7 +1067,51 @@ function createContainer(el: HTMLElement, ctx: ConversionContext, supportInterac
                 
                 trackBlock(ctx, 'core/details');
                 detailsBlocks.push(
-                    `<!-- wp:details ${JSON.stringify(attrs)} -->\n<details class="wp-block-details${itemClass ? ' ' + itemClass : ''}">\n<summary>${escapeHtml(questionText)}</summary>\n${answerContent}\n</details>\n<!-- /wp:details -->`
+                    `<!-- wp:details ${JSON.stringify(attrs)} -->\n<details class="wp-block-details${itemClass ? ' ' + itemClass : ''}">\n<summary>${escapeHtml(questionText)}</summary>\n\n${answerContent}\n\n</details>\n<!-- /wp:details -->`
+                );
+            } else if (trigger) {
+                // Panel is missing (Radix didn't force-mount it), but we have a trigger.
+                // Extract question and look up the answer from faqData.
+                const normalizeText = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+                let qText = '';
+                for (const node of Array.from(trigger.childNodes)) {
+                    if (node.nodeType === Node.TEXT_NODE) {
+                        qText += (node.textContent || '').trim() + ' ';
+                    } else if (node instanceof HTMLElement && node.tagName.toLowerCase() !== 'svg' && !node.querySelector('svg')) {
+                        qText += (node.textContent || '').trim() + ' ';
+                    }
+                }
+                qText = qText.trim();
+                if (!qText) qText = trigger.textContent?.trim() || '';
+                
+                let answerContent = '';
+                if (qText && ctx.faqData && ctx.faqData.length > 0) {
+                    const qNorm = normalizeText(qText);
+                    const match = ctx.faqData.find(faq => {
+                        const faqQ = normalizeText(faq.q);
+                        return faqQ === qNorm || faqQ.includes(qNorm) || qNorm.includes(faqQ);
+                    });
+                    if (match && match.a) {
+                        answerContent = `<!-- wp:paragraph -->\n<p>${escapeHtml(match.a)}</p>\n<!-- /wp:paragraph -->`;
+                    }
+                }
+                if (!answerContent) {
+                    answerContent = `<!-- wp:paragraph -->\n<p>(Answer content not available — please add your answer here)</p>\n<!-- /wp:paragraph -->`;
+                }
+                
+                const itemClass = getClassName(item)
+                    .replace(/\boverflow-hidden\b/g, '')
+                    .replace(/\btransition-all\b/g, '')
+                    .replace(/data-\[[^\]]*\]:[^\s]*/g, '')
+                    .replace(/\banimation-[^\s]*/g, '')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                const attrs: any = {};
+                if (itemClass) attrs.className = itemClass;
+                
+                trackBlock(ctx, 'core/details');
+                detailsBlocks.push(
+                    `<!-- wp:details ${JSON.stringify(attrs)} -->\n<details class="wp-block-details${itemClass ? ' ' + itemClass : ''}">\n<summary>${escapeHtml(qText)}</summary>\n\n${answerContent}\n\n</details>\n<!-- /wp:details -->`
                 );
             } else {
                 // Not a standard accordion item — process normally
@@ -776,12 +1128,104 @@ function createContainer(el: HTMLElement, ctx: ConversionContext, supportInterac
         }
     }
 
+    // ─── HEURISTIC: Individual accordion item → core/details ──────────
+    // When processElement catches a single data-state="closed" item and
+    // routes it here, the parent-level accordion heuristics above won't fire.
+    // Detect: this element itself has data-state AND contains a trigger button
+    // but is NOT an accordion parent container (no data-orientation).
+    const elDataState = el.getAttribute('data-state');
+    const elTrigger = el.querySelector('button[data-state]:not([role="combobox"]):not([data-radix-select-trigger]), button[aria-expanded]:not([role="combobox"]), a[aria-expanded]');
+    const isIndividualAccordionItem = (elDataState === 'open' || elDataState === 'closed')
+        && elTrigger
+        && !el.hasAttribute('data-orientation')
+        && !el.querySelector('[data-orientation="vertical"]');
+    
+    if (isIndividualAccordionItem) {
+        // Extract question text from trigger (skip SVG chevron icons)
+        let questionText = '';
+        for (const node of Array.from(elTrigger.childNodes)) {
+            if (node.nodeType === Node.TEXT_NODE) {
+                questionText += (node.textContent || '').trim() + ' ';
+            } else if (node instanceof HTMLElement && node.tagName.toLowerCase() !== 'svg' && node.tagName.toLowerCase() !== 'div' && !node.querySelector('svg')) {
+                questionText += (node.textContent || '').trim() + ' ';
+            }
+        }
+        questionText = questionText.trim();
+        if (!questionText) questionText = elTrigger.textContent?.trim() || '';
+        
+        if (questionText && questionText.length > 3) {
+            // Look for answer content in the DOM first
+            let answerHtml = '';
+            const normalizeText = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+            const qNorm = normalizeText(questionText);
+            
+            // Check DOM panels (role="region", content divs)
+            const contentPanel = el.querySelector('[role="region"], [data-radix-accordion-content]') as HTMLElement | null;
+            if (contentPanel && contentPanel.textContent?.trim()) {
+                const panelText = normalizeText(contentPanel.textContent);
+                // Verify panel text isn't just the question repeated
+                const isDuplicate = !panelText || panelText === qNorm || 
+                    qNorm.includes(panelText) ||
+                    (panelText.includes(qNorm) && panelText.length < qNorm.length * 2.5);
+                if (!isDuplicate) {
+                    // Remove trigger elements from DOM before processing panel
+                    const triggerClone = el.cloneNode(true) as HTMLElement;
+                    const triggerToRemove = triggerClone.querySelector('button[data-state], button[aria-expanded], h3, [role="heading"]');
+                    if (triggerToRemove) triggerToRemove.remove();
+                    triggerClone.querySelectorAll('svg').forEach(svg => {
+                        const w = svg.getAttribute('width');
+                        const h = svg.getAttribute('height');
+                        if ((w && parseInt(w) <= 24) || (h && parseInt(h) <= 24) || svg.classList.contains('shrink-0') || svg.classList.contains('lucide')) {
+                            svg.remove();
+                        }
+                    });
+                    const panelInClone = triggerClone.querySelector('[role="region"], [data-radix-accordion-content]') as HTMLElement | null;
+                    if (panelInClone) {
+                        const innerWrapper = panelInClone.querySelector(':scope > div');
+                        if (innerWrapper && innerWrapper.textContent?.trim()) {
+                            answerHtml = processChildren(innerWrapper as HTMLElement, ctx).join('\n\n');
+                        }
+                        if (!answerHtml) {
+                            answerHtml = processChildren(panelInClone, ctx).join('\n\n');
+                        }
+                    }
+                }
+            }
+            
+            // faqData lookup if DOM answer is empty/duplicate
+            if (!answerHtml && ctx.faqData && ctx.faqData.length > 0) {
+                const match = ctx.faqData.find(faq => {
+                    const faqQ = normalizeText(faq.q);
+                    return faqQ === qNorm || faqQ.includes(qNorm) || qNorm.includes(faqQ);
+                });
+                if (match && match.a) {
+                    answerHtml = `<!-- wp:paragraph -->\n<p>${escapeHtml(match.a)}</p>\n<!-- /wp:paragraph -->`;
+                }
+            }
+            
+            if (!answerHtml) {
+                answerHtml = `<!-- wp:paragraph -->\n<p>(Answer content not available — please add your answer here)</p>\n<!-- /wp:paragraph -->`;
+            }
+            
+            const itemClass = getClassName(el)
+                .replace(/\boverflow-hidden\b/g, '')
+                .replace(/\btransition-\w+\b/g, '')
+                .replace(/data-\[[^\]]*\]:[^\s]*/g, '')
+                .replace(/\s+/g, ' ').trim();
+            const attrs: any = {};
+            if (itemClass) attrs.className = itemClass;
+            
+            trackBlock(ctx, 'core/details');
+            return `<!-- wp:details ${JSON.stringify(attrs)} -->\n<details class="wp-block-details${itemClass ? ' ' + itemClass : ''}">\n<summary>${escapeHtml(questionText)}</summary>\n${answerHtml}\n</details>\n<!-- /wp:details -->`;
+        }
+    }
+
     // ─── HEURISTIC: Button-based FAQ accordion → core/details ─────────
     // Catches FAQ patterns where each child has a button with data-state
     // but NO data-orientation or role="region" (e.g., custom ShadCN accordions)
     // Answer content is often missing (React conditionally renders it)
     const directKids = Array.from(el.children).filter(c => c instanceof HTMLElement) as HTMLElement[];
-    const buttonFaqItems = directKids.filter(kid => kid.querySelector('button[data-state], a[aria-expanded]'));
+    const buttonFaqItems = directKids.filter(kid => kid.querySelector('button[data-state]:not([role="combobox"]):not([data-radix-select-trigger]), a[aria-expanded]'));
     
     // We trigger if it's a group of 2+ items, OR if it's a single item whose text looks like a question
     // Guard: don't treat large wrapper containers as a single FAQ item.
@@ -789,15 +1233,14 @@ function createContainer(el: HTMLElement, ctx: ConversionContext, supportInterac
     // or many descendant FAQ buttons (which indicates it wraps multiple accordion groups).
     const singleCandidate = buttonFaqItems.length === 1 ? buttonFaqItems[0] : null;
     const isSingleQuestion = singleCandidate !== null
-        && (singleCandidate.textContent || '').trim().includes('?')
         && !singleCandidate.querySelector('[data-orientation="vertical"]')
-        && (singleCandidate.querySelectorAll('button[data-state]').length <= 2);
+        && (singleCandidate.querySelectorAll('button[data-state]:not([role="combobox"])').length <= 2);
     
     if ((buttonFaqItems.length >= 2 && buttonFaqItems.length >= directKids.length * 0.6) || isSingleQuestion) {
         const detailsBlocks: string[] = [];
         
         for (const item of buttonFaqItems) {
-            const trigger = item.querySelector('button[data-state], a[aria-expanded]');
+            const trigger = item.querySelector('button[data-state]:not([role="combobox"]):not([data-radix-select-trigger]), a[aria-expanded]');
             if (!trigger) continue;
             
             // Extract question text (skip SVGs)
@@ -827,9 +1270,23 @@ function createContainer(el: HTMLElement, ctx: ConversionContext, supportInterac
             
             // If no faqData match, check if the item has a sibling/child content panel
             if (!answerHtml) {
-                const contentPanel = item.querySelector('[role="region"], .accordion-content, [class*="pb-4"], [class*="content"]');
+                // PRIORITY: Try [role="region"] FIRST — this is the Radix AccordionContent panel.
+                // The generic [data-state="closed"] selector can match trigger wrappers before
+                // the answer panel in DOM order, causing the question to be extracted as the answer.
+                let contentPanel = item.querySelector('[role="region"]') as HTMLElement | null;
+                
+                // Only fall back to broader selectors if role=region not found
+                if (!contentPanel || !contentPanel.textContent?.trim()) {
+                    contentPanel = item.querySelector('.accordion-content, [class*="faq-answer"], [id*="content"]') as HTMLElement | null;
+                }
+                
                 if (contentPanel && contentPanel.textContent?.trim()) {
-                    answerHtml = processChildren(contentPanel as HTMLElement, ctx).join('\n\n');
+                    // Verify the content is NOT just the question repeated
+                    const panelText = contentPanel.textContent.trim().toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+                    const qText = questionText.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+                    if (panelText !== qText && !(panelText.includes(qText) && panelText.length < qText.length * 1.5)) {
+                        answerHtml = processChildren(contentPanel as HTMLElement, ctx).join('\n\n');
+                    }
                 }
             }
             
@@ -1069,29 +1526,29 @@ function createContainer(el: HTMLElement, ctx: ConversionContext, supportInterac
         return createContainer(el, ctx, true);
     }
 
-    // Use core/group instead of theme-factory/container
-    const attributes: any = {
-        layout: { type: 'default' }
-    };
-    if (className) attributes.className = className;
-
-    // Add tagName if not div (core/group supports tagName)
+    // ─── ALL containers use theme-factory/container (dynamic block) ───
+    // Previously this fell through to core/group, but core blocks validate
+    // their save function output against stored HTML, causing "Block contains
+    // unexpected or invalid content" errors whenever the converter HTML
+    // doesn't perfectly match WP's internal formatting.
+    // theme-factory/container is dynamic (save returns null) → no validation.
+    const attributes: any = {};
     if (tagName !== 'div') attributes.tagName = tagName;
+    if (className) attributes.className = className;
+    if (id) attributes.id = id;
 
-    // CRITICAL FIX: Store inline styles in HTML, NOT in block attributes
-    // WordPress core blocks don't use attributes.style for custom CSS
-    // Inline styles should be rendered directly in the HTML output
     let styleAttr = '';
     if (styleString) {
-        // Sanitize and normalize the style string
         const cleaned = styleString.trim().replace(/\s+/g, ' ');
+        attributes.style = cleaned;
         styleAttr = ` style="${escapeAttr(cleaned)}"`;
     }
 
-    const finalClass = `wp-block-group ${className}`.trim();
-    const idAttr = id ? ` id="${id}"` : '';
+    const finalClass = `wp-block-theme-factory-container ${className}`.trim();
+    const idAttr = id ? ` id="${escapeAttr(id)}"` : '';
+    trackBlock(ctx, 'theme-factory/container');
 
-    return `<!-- wp:group ${JSON.stringify(attributes)} -->\n<${tagName} class="${finalClass}"${idAttr}${styleAttr}>\n${content}\n</${tagName}>\n<!-- /wp:group -->`;
+    return `<!-- wp:theme-factory/container ${JSON.stringify(attributes)} -->\n<${tagName} class="${finalClass}"${idAttr}${styleAttr}>\n${content}\n</${tagName}>\n<!-- /wp:theme-factory/container -->`;
 }
 
 function createSvgBlock(el: HTMLElement, ctx?: ConversionContext): string {
@@ -1107,9 +1564,11 @@ function createSvgBlock(el: HTMLElement, ctx?: ConversionContext): string {
         });
     }
 
-    // Base64 encode the SVG html
+    // Base64 encode the SVG html — attribute name MUST match the deployed plugin's block.json
+    // The deployed plugin (whipify 3.0/theme-factory-blocks) uses "content" attribute,
+    // and its PHP render_svg() calls base64_decode($attributes['content'])
     const encoded = btoa(unescape(encodeURIComponent(rawSvg)));
-    const attrs = { svgHtml: encoded }; // Store encoded SVG in attribute
+    const attrs = { content: encoded }; // MUST be "content" to match deployed plugin
     return `<!-- wp:theme-factory/svg ${JSON.stringify(attrs)} -->\n<div class="wp-block-theme-factory-svg">${rawSvg}</div>\n<!-- /wp:theme-factory/svg -->`;
 }
 
@@ -1485,22 +1944,83 @@ function createAudio(el: HTMLElement, ctx: ConversionContext): string {
     if (loop) attrs.loop = true;
     if (muted) attrs.muted = true;
     
-    return `<!-- wp:audio ${JSON.stringify(attrs)} -->\n<figure class="wp-block-audio${className ? ' ' + className : ''}"><audio${autoplay?' autoplay':''}${controls?' controls':''}${loop?' loop':''}${muted?' muted':''}${safeSrc?` src="${safeSrc}"`:''}>${sources}</audio></figure>\n<!-- /wp:audio -->`;
+    return `<!-- wp:audio ${JSON.stringify(attrs)} -->\n<figure class="wp-block-audio${className ? ' ' + className : ''}"><audio${autoplay?' autoplay':''}${controls?' controls':''}${loop?' loop':''}${muted?' muted':''}${safeSrc?` src="${safeSrc}"`:''}>` + sources + `</audio></figure>\n<!-- /wp:audio -->`;
 }
 
 function createDetails(el: HTMLElement, ctx: ConversionContext): string {
     const summaryEl = el.querySelector('summary');
     let summaryContent = 'Details';
+    let summaryTextRaw = '';
     if (summaryEl) {
-        summaryContent = escapeHtml(summaryEl.textContent || 'Details');
+        // Extract only text from summary, skipping SVG icons
+        let summaryParts: string[] = [];
+        for (const node of Array.from(summaryEl.childNodes)) {
+            if (node.nodeType === Node.TEXT_NODE) {
+                summaryParts.push((node.textContent || '').trim());
+            } else if (node instanceof HTMLElement && node.tagName.toLowerCase() !== 'svg' && !node.querySelector('svg')) {
+                summaryParts.push((node.textContent || '').trim());
+            }
+        }
+        summaryTextRaw = summaryParts.join(' ').trim() || summaryEl.textContent?.trim() || 'Details';
+        summaryContent = escapeHtml(summaryTextRaw);
         summaryEl.remove(); // Remove so it doesn't get processed into child blocks
     }
     
-    const contentBlocks = processChildren(el, ctx).join('\n\n');
+    // CRITICAL: Strip Radix accordion remnants that may have leaked into the details element.
+    const radixHeaders = el.querySelectorAll('h3, [role="heading"]');
+    radixHeaders.forEach(h => {
+        if (h.querySelector('button[data-state]') || h.querySelector('[aria-expanded]')) {
+            h.remove();
+        }
+    });
+    const radixButtons = el.querySelectorAll('button[data-state]');
+    radixButtons.forEach(btn => btn.remove());
+    el.querySelectorAll('svg').forEach(svg => {
+        const w = svg.getAttribute('width');
+        const h = svg.getAttribute('height');
+        if ((w && parseInt(w) <= 24) || (h && parseInt(h) <= 24) || 
+            svg.classList.contains('shrink-0') || svg.classList.contains('lucide')) {
+            svg.remove();
+        }
+    });
+    
+    // Process remaining children into blocks
+    let contentBlocks = processChildren(el, ctx).join('\n\n');
+    
+    // Detect when the "answer" content is just a repeat of the question.
+    const normalizeText = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+    const questionNorm = normalizeText(summaryTextRaw);
+    const contentPlainText = normalizeText(
+        contentBlocks
+            .replace(/<!--\s*\/?wp:[a-zA-Z0-9/-]+\s*(?:\{[^}]*\})?\s*\/?-->/g, '')
+            .replace(/<[^>]+>/g, '')
+    );
+    
+    const isDuplicateContent = !contentPlainText || 
+        contentPlainText === questionNorm ||
+        contentPlainText.includes(questionNorm) && contentPlainText.length < questionNorm.length * 1.5;
+    
+    if (isDuplicateContent) {
+        if (ctx.faqData && ctx.faqData.length > 0) {
+            const match = ctx.faqData.find(faq => {
+                const faqQ = normalizeText(faq.q);
+                return faqQ === questionNorm || faqQ.includes(questionNorm) || questionNorm.includes(faqQ) ||
+                       faqQ.substring(0, 30) === questionNorm.substring(0, 30);
+            });
+            if (match && match.a) {
+                contentBlocks = `<!-- wp:paragraph -->\n<p>${escapeHtml(match.a)}</p>\n<!-- /wp:paragraph -->`;
+            } else {
+                contentBlocks = `<!-- wp:paragraph -->\n<p>(Answer content not available — please add your answer here)</p>\n<!-- /wp:paragraph -->`;
+            }
+        } else {
+            contentBlocks = `<!-- wp:paragraph -->\n<p>(Answer content not available — please add your answer here)</p>\n<!-- /wp:paragraph -->`;
+        }
+    }
+    
     const className = getClassName(el);
     const attrs = className ? `{"className":"${className}"}` : '{}';
     
-    return `<!-- wp:details ${attrs} -->\n<details class="wp-block-details${className ? ' ' + className : ''}"><summary>${summaryContent}</summary>${contentBlocks}</details>\n<!-- /wp:details -->`;
+    return `<!-- wp:details ${attrs} -->\n<details class="wp-block-details${className ? ' ' + className : ''}">\n<summary>${summaryContent}</summary>\n\n${contentBlocks}\n\n</details>\n<!-- /wp:details -->`;
 }
 
 function createTable(el: HTMLElement, ctx: ConversionContext): string {
