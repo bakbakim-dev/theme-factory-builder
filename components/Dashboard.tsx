@@ -10,6 +10,29 @@ import { PLUGIN_FILES } from '../utils/plugintemplates';
 interface DashboardProps { onConversionComplete: (record: ConversionRecord, zipBlob: Blob) => void; }
 
 const sanitizeForPhp = (str: string): string => str.replace(/['"\\]/g, '').replace(/[^a-zA-Z0-9_\-./]/g, '_');
+const decodeLooseUnicodeEscapes = (str: string): string => (str || '').replace(/u([0-9a-fA-F]{4})/g, (match, hex) => {
+    const code = parseInt(hex, 16);
+    return Number.isFinite(code) ? String.fromCharCode(code) : match;
+});
+const decodeHtmlEntities = (str: string): string => {
+    if (!str || typeof document === 'undefined') return str || '';
+    const textarea = document.createElement('textarea');
+    textarea.innerHTML = str;
+    return textarea.value;
+};
+const normalizeLooseText = (str: string): string => decodeHtmlEntities(decodeLooseUnicodeEscapes(str || ''));
+const escapeHtml = (str: string): string => normalizeLooseText(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+const toWpCommentBlockName = (blockName: string): string => blockName.startsWith('core/') ? blockName.slice(5) : blockName;
+const serializeWpBlock = (blockName: string, attributes: Record<string, any> | undefined, innerContent: string): string => {
+    const normalizedAttributes = attributes && Object.keys(attributes).length > 0 ? ` ${JSON.stringify(attributes)}` : '';
+    return `<!-- wp:${toWpCommentBlockName(blockName)}${normalizedAttributes} -->\n${innerContent}\n<!-- /wp:${toWpCommentBlockName(blockName)} -->`;
+};
+const REMOTE_BUILD_REQUEST_TIMEOUT_MS = 60 * 60 * 1000;
 
 const InfoTooltip: React.FC<{ title: string, content: React.ReactNode, link?: string }> = ({ title, content, link }) => {
     const [isOpen, setIsOpen] = useState(false);
@@ -500,10 +523,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             formData.append('render_wait_time', renderDelay.toString());
             addLog(`Sending ${routePaths.length} routes for build + prerendering...`, 'info'); setStep(STEPS.WAKING_UP); setProgress(10);
             await waitForHealth(remoteConfig.url); setStep(STEPS.UPLOADING_REMOTE); addLog(`Uploading to ${remoteConfig.url}...`);
-            abortControllerRef.current = new AbortController(); const uploadTimeout = setTimeout(() => abortControllerRef.current?.abort(), 15 * 60 * 1000);
+            abortControllerRef.current = new AbortController(); const uploadTimeout = setTimeout(() => abortControllerRef.current?.abort(), REMOTE_BUILD_REQUEST_TIMEOUT_MS);
             let response;
             try { response = await fetch(remoteConfig.url, { method: 'POST', headers: { 'Authorization': `Bearer ${remoteConfig.apiKey}`, 'ngrok-skip-browser-warning': 'true' }, body: formData, signal: abortControllerRef.current.signal }); clearTimeout(uploadTimeout); }
-            catch (e: unknown) { const err = e as Error; if (err.name === 'AbortError') throw new Error("Upload Timed Out (15m)."); throw e; }
+            catch (e: unknown) { const err = e as Error; if (err.name === 'AbortError') throw new Error("Remote build request timed out before the server acknowledged the job (60m)."); throw e; }
             if (!response.ok) { const errText = await response.text(); throw new Error(`Remote Build Failed (${response.status}): ${errText}`); }
             if (response.status === 202) { 
                 const jobData = await response.json(); 
@@ -1152,8 +1175,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         // Note: LocalBusiness schema was moved to the intelligent Schema Router in the route loop
         finalFooterContent = stickyMobileCTA + visibleEntityFacts + finalFooterContent;
 
-        // TIER 1 POLISH: Auto-Lazy Load all images in footer
-        finalFooterContent = finalFooterContent.replace(/<img(?!.*loading=["']lazy["'])((?![^>]*class=["'][^"']*(?:hero|no-lazy|lcp)[^"']*["'])[^>]*)>/gi, '<img loading="lazy"$1>');
+        // Avoid mutating saved block HTML with loading attributes here.
+        // WordPress core image blocks do not round-trip custom loading attributes reliably.
 
         // TIER 1 POLISH: Dynamic Copyright Year
         // Find "2024", "2023", etc. in footer text and replace with PHP year output
@@ -1339,10 +1362,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
   
   function findAnswerForQuestion(q) {
     var faq = window.FAQ_DATA || [];
+    q = normalizeLooseText(q || '');
+    if (!looksLikeQuestionText(q)) return null;
     // Normalize for matching
     var qNorm = (q || '').toLowerCase().replace(/[?!.,;:'"()[\]{}]/g, '').replace(/\s+/g, ' ').trim();
     for (var i = 0; i < faq.length; i++) {
-      var itemQ = (faq[i].q || '').toLowerCase().replace(/[?!.,;:'"()[\]{}]/g, '').replace(/\s+/g, ' ').trim();
+      var itemQ = normalizeLooseText(faq[i].q || '').toLowerCase().replace(/[?!.,;:'"()[\]{}]/g, '').replace(/\s+/g, ' ').trim();
       if (qNorm.indexOf(itemQ) !== -1 || itemQ.indexOf(qNorm) !== -1 ||
           qNorm.substring(0, 30) === itemQ.substring(0, 30)) {
         return faq[i].a;
@@ -1414,6 +1439,57 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         '</div>';
     });
   }
+
+  function normalizeDomIdReference(value) {
+    if (!value) return '';
+    var token = normalizeLooseText(String(value)).trim();
+    if (!token) return '';
+    var prefix = '';
+    if (token.charAt(0) === '#') {
+      prefix = '#';
+      token = token.slice(1);
+    }
+    token = token.replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+    return token ? prefix + token : '';
+  }
+
+  function looksLikeQuestionText(value) {
+    var raw = normalizeLooseText(value || '').replace(/\s+/g, ' ').trim();
+    if (!raw || raw.length < 8 || raw.length > 220) return false;
+    if (raw.indexOf('?') !== -1) return true;
+    var normalized = raw.toLowerCase().replace(/[?!.,;:'"()[\]{}]/g, '').replace(/\s+/g, ' ').trim();
+    return /^(who|what|when|where|why|how|can|could|do|does|did|is|are|will|would|should|have|has|had)\b/.test(normalized);
+  }
+
+  function containerHasFaqContext(container) {
+    if (!(container instanceof HTMLElement)) return false;
+    var classText = ((container.className || '') + ' ' + (container.id || '')).toLowerCase();
+    if (/(^|[\s_-])(faq|accordion|question|questions)(?=$|[\s_-])/.test(classText)) {
+      return true;
+    }
+    var parent = container.closest('section, article, main, aside, div');
+    if (!parent) return false;
+    var headings = parent.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    for (var i = 0; i < headings.length; i++) {
+      var headingText = (headings[i].textContent || '').toLowerCase();
+      if (headingText.indexOf('faq') !== -1 || headingText.indexOf('question') !== -1 || headingText.indexOf('frequently asked') !== -1 || headingText.indexOf('common questions') !== -1) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function resolveControlledElement(id) {
+    if (!id) return null;
+
+    var exactMatch = document.getElementById(id);
+    if (exactMatch) return exactMatch;
+
+    var normalizedId = normalizeDomIdReference(id).replace(/^#/, '');
+    if (!normalizedId || normalizedId === id) return null;
+
+    return document.getElementById(normalizedId);
+  }
   
   // v8.8: Inject content into empty Radix panels by aria-controls
   // This handles panels that have Radix IDs like radix-:r0:
@@ -1425,7 +1501,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       var panelId = trigger.getAttribute('aria-controls');
       if (!panelId) return;
 
-      var panel = document.getElementById(panelId);
+      var panel = resolveControlledElement(panelId);
       if (!panel) return;
 
       // If panel already has real content, do nothing
@@ -1480,6 +1556,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     spaceContainers.forEach(function(container) {
       // Skip if already initialized
       if (container.getAttribute('data-tf-faq-init')) return;
+      if (!containerHasFaqContext(container)) return;
       
       var kids = Array.from(container.children).filter(function(k) { return k instanceof HTMLElement; });
       if (kids.length < 3) return;
@@ -1488,6 +1565,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       // The trigger can be:
       //   - The child itself if it's a <button> or <a href="#">
       //   - A <button> or <a> found INSIDE the child (wrapped in a div)
+      //   - A div row with question text + chevron SVG (legacy Theme Factory FAQ cards)
+      function looksLikeFaqTrigger(node) {
+        if (!(node instanceof HTMLElement)) return false;
+        var text = normalizeLooseText((node.textContent || '').replace(/\\s+/g, ' ').trim());
+        var hasChevron = !!node.querySelector('svg');
+        var hasKnownAnswer = !!findAnswerForQuestion(text);
+        if (!looksLikeQuestionText(text)) return false;
+        return hasKnownAnswer && (text.indexOf('?') !== -1 || hasChevron);
+      }
+
       function findTrigger(kid) {
         // Case 1: The kid IS a button/anchor trigger
         if (kid.tagName === 'BUTTON' || (kid.tagName === 'A' && kid.getAttribute('href') === '#')) {
@@ -1495,17 +1582,30 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         }
         // Case 2: Kid wraps a button or <a href="#">
         var btn = kid.querySelector('button, a[href="#"]');
-        return btn || null;
+        if (btn) return btn;
+
+        // Case 3: FAQ row div with text + chevron icon
+        if (looksLikeFaqTrigger(kid)) {
+          return kid;
+        }
+        for (var i = 0; i < kid.children.length; i++) {
+          var child = kid.children[i];
+          if (looksLikeFaqTrigger(child)) {
+            return child;
+          }
+        }
+        return null;
       }
       
-      // Count how many children look like FAQ questions (text contains ?)
+      // Count how many children look like FAQ questions with a known answer.
       var faqPairs = [];
       for (var i = 0; i < kids.length; i++) {
         var trigger = findTrigger(kids[i]);
         if (!trigger) continue;
-        var text = (trigger.textContent || '').trim();
-        if (text.includes('?') || (text.length > 15 && text.length < 300)) {
-          faqPairs.push({ item: kids[i], trigger: trigger, question: text });
+        var text = normalizeLooseText((trigger.textContent || '').trim());
+        var answer = findAnswerForQuestion(text);
+        if (answer) {
+          faqPairs.push({ item: kids[i], trigger: trigger, question: text, answer: answer });
         }
       }
       
@@ -1524,8 +1624,6 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         if (trigger.__tfFaqBound) return;
         trigger.__tfFaqBound = true;
         
-        var questionText = pair.question;
-        
         // Create answer panel
         var answerPanel = document.createElement('div');
         answerPanel.className = 'tf-faq-answer';
@@ -1534,13 +1632,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         answerPanel.style.transition = 'max-height 0.3s ease-out';
         answerPanel.style.padding = '0 1.5rem';
         
-        // Try to find answer from faqData
-        var answer = findAnswerForQuestion(questionText);
-        if (answer) {
-          answerPanel.innerHTML = '<div style="padding: 0 0 1.5rem 0; color: hsl(var(--muted-foreground, 215 16% 47%)); font-size: 0.875rem; line-height: 1.6;">' + answer + '</div>';
-        } else {
-          answerPanel.innerHTML = '<div style="padding: 0 0 1.5rem 0; color: hsl(var(--muted-foreground, 215 16% 47%)); font-size: 0.875rem; line-height: 1.6;"><em>Answer coming soon.</em></div>';
-        }
+        answerPanel.innerHTML = '<div style="padding: 0 0 1.5rem 0; color: hsl(var(--muted-foreground, 215 16% 47%)); font-size: 0.875rem; line-height: 1.6;">' + pair.answer + '</div>';
         
         // Insert answer. If trigger IS the item (direct child), insert after it.
         // If trigger is inside a wrapper, insert inside the wrapper after the trigger.
@@ -1563,6 +1655,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         }
         
         // Style the trigger for accordion-like appearance
+        if (trigger.tagName !== 'BUTTON' && trigger.tagName !== 'A') {
+          trigger.setAttribute('role', 'button');
+          if (!trigger.getAttribute('tabindex')) {
+            trigger.setAttribute('tabindex', '0');
+          }
+        }
+        trigger.setAttribute('aria-expanded', 'false');
         trigger.style.cursor = 'pointer';
         trigger.style.display = 'flex';
         trigger.style.alignItems = 'center';
@@ -1588,7 +1687,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         }
         
         // Bind click handler
-        trigger.addEventListener('click', function(e) {
+        function toggleFaq(e) {
           e.preventDefault();
           e.stopPropagation();
           
@@ -1599,6 +1698,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           } else {
             answerPanel.style.maxHeight = answerPanel.scrollHeight + 'px';
           }
+          trigger.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
           
           // Rotate chevron
           var svg = trigger.querySelector('svg');
@@ -1610,6 +1710,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           var itemContainer = trigger.closest('.tf-faq-item') || trigger.parentElement;
           if (itemContainer && itemContainer !== container) {
             itemContainer.style.borderColor = isOpen ? '#e5e7eb' : 'hsl(var(--primary, 160 100% 35%))';
+          }
+        }
+
+        trigger.addEventListener('click', toggleFaq);
+        trigger.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' || e.key === ' ') {
+            toggleFaq(e);
           }
         });
       });
@@ -1636,7 +1743,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       // Find content by aria-controls first (most accurate)
       var content = null;
       var controlsId = trigger.getAttribute('aria-controls');
-      if (controlsId) content = document.getElementById(controlsId);
+      if (controlsId) content = resolveControlledElement(controlsId);
 
       // Fallback: search within item
       if (!content && item) {
@@ -1795,7 +1902,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     window.addEventListener('resize', function() {
       document.querySelectorAll('button[aria-controls][aria-expanded="true"]').forEach(function(btn) {
         var id = btn.getAttribute('aria-controls');
-        var panel = id ? document.getElementById(id) : null;
+        var panel = id ? resolveControlledElement(id) : null;
         if (panel) panel.style.maxHeight = panel.scrollHeight + 'px';
       });
     });
@@ -1835,7 +1942,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           activeTrigger = trigger;
           var panelId = trigger.getAttribute('aria-controls');
           if (panelId) {
-            activePanel = document.getElementById(panelId);
+            activePanel = resolveControlledElement(panelId);
           }
         }
       });
@@ -1846,7 +1953,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         group.triggers.forEach(function(trigger) {
           var panelId = trigger.getAttribute('aria-controls');
           if (!panelId) return;
-          var panel = document.getElementById(panelId);
+          var panel = resolveControlledElement(panelId);
           if (!panel) return;
           // Skip panels that already have real content
           if (panel.innerHTML && panel.innerHTML.trim().length > 50) return;
@@ -1871,7 +1978,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             
             var pId = t.getAttribute('aria-controls');
             if (pId) {
-              var p = document.getElementById(pId);
+              var p = resolveControlledElement(pId);
               if (p) {
                 p.setAttribute('data-state', 'inactive');
                 p.style.display = 'none';
@@ -1884,7 +1991,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           trigger.setAttribute('aria-selected', 'true');
           trigger.setAttribute('tabindex', '0');
           
-          var targetPanel = document.getElementById(targetPanelId);
+          var targetPanel = resolveControlledElement(targetPanelId);
           if (targetPanel) {
             targetPanel.setAttribute('data-state', 'active');
             targetPanel.style.display = '';
@@ -2090,6 +2197,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       
       // Attach dot indicator handlers
       dots.forEach(function(dot, i) {
+        var dotText = (dot.textContent || '').replace(/\s+/g, ' ').trim();
+        if (dotText === 'Button') {
+          dot.textContent = '';
+        }
+        if (!dot.getAttribute('aria-label')) {
+          dot.setAttribute('aria-label', 'Go to slide ' + (i + 1));
+        }
         dot.style.cursor = 'pointer';
         dot.addEventListener('click', function(e) {
           e.preventDefault();
@@ -2546,7 +2660,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           var panelId = trigger.getAttribute('aria-controls');
           if (!panelId) return;
           
-          var panel = document.getElementById(panelId);
+          var panel = resolveControlledElement(panelId);
           if (!panel) return;
           
           // Deactivate all tabs in this tablist
@@ -2558,7 +2672,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             // Hide corresponding panel
             var tPanelId = t.getAttribute('aria-controls');
             if (tPanelId) {
-              var tPanel = document.getElementById(tPanelId);
+              var tPanel = resolveControlledElement(tPanelId);
               if (tPanel) {
                 tPanel.setAttribute('data-state', 'inactive');
                 tPanel.setAttribute('hidden', '');
@@ -2609,7 +2723,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           e.preventDefault();
           
           var panelId = tab.getAttribute('aria-controls');
-          var panel = panelId ? document.getElementById(panelId) : null;
+          var panel = panelId ? resolveControlledElement(panelId) : null;
           
           // Deactivate all tabs in this tablist
           tabs.forEach(function(t) {
@@ -2620,7 +2734,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             // Hide corresponding panel
             var tPanelId = t.getAttribute('aria-controls');
             if (tPanelId) {
-              var tPanel = document.getElementById(tPanelId);
+              var tPanel = resolveControlledElement(tPanelId);
               if (tPanel) {
                 tPanel.setAttribute('data-state', 'inactive');
                 tPanel.setAttribute('hidden', '');
@@ -3320,6 +3434,76 @@ function ${themeFnPrefix}_import_content() {
 
     // 1. Array to hold filename => new attachment URL mappings
     $uploaded_images = array();
+    $external_images = array();
+
+    $import_remote_image = function($image_url) use (&$external_images) {
+        $image_url = esc_url_raw($image_url);
+        if (!$image_url) return '';
+        if (isset($external_images[$image_url])) return $external_images[$image_url];
+
+        $site_host = wp_parse_url(home_url('/'), PHP_URL_HOST);
+        $image_host = wp_parse_url($image_url, PHP_URL_HOST);
+        if (!$image_host || $image_host === $site_host) {
+            $external_images[$image_url] = $image_url;
+            return $image_url;
+        }
+
+        $source_hash = md5($image_url);
+        $existing_ids = get_posts(array(
+            'post_type' => 'attachment',
+            'post_status' => 'inherit',
+            'posts_per_page' => 1,
+            'fields' => 'ids',
+            'meta_key' => '_tf_source_url_hash',
+            'meta_value' => $source_hash,
+        ));
+        if (!empty($existing_ids[0])) {
+            $existing_url = wp_get_attachment_url((int) $existing_ids[0]);
+            if ($existing_url) {
+                $external_images[$image_url] = set_url_scheme($existing_url, 'https');
+                return $external_images[$image_url];
+            }
+        }
+
+        $path = wp_parse_url($image_url, PHP_URL_PATH);
+        $filename = $path ? basename($path) : 'imported-image';
+        if (!$filename || strpos($filename, '.') === false) {
+            $head = wp_safe_remote_head($image_url, array('timeout' => 20));
+            $content_type = is_wp_error($head) ? '' : wp_remote_retrieve_header($head, 'content-type');
+            $extension_map = array(
+                'image/jpeg' => 'jpg',
+                'image/jpg' => 'jpg',
+                'image/png' => 'png',
+                'image/webp' => 'webp',
+                'image/gif' => 'gif',
+                'image/svg+xml' => 'svg',
+            );
+            $extension = isset($extension_map[$content_type]) ? $extension_map[$content_type] : 'jpg';
+            $filename = ($filename && 'imported-image' !== $filename ? $filename : 'imported-image') . '.' . $extension;
+        }
+        $filename = sanitize_file_name(rawurldecode($filename));
+
+        $tmp = download_url($image_url, 30);
+        if (is_wp_error($tmp)) return '';
+
+        $file_array = array(
+            'name' => $filename,
+            'tmp_name' => $tmp,
+        );
+
+        $attachment_id = media_handle_sideload($file_array, 0);
+        if (is_wp_error($attachment_id)) {
+            @unlink($tmp);
+            return '';
+        }
+
+        update_post_meta($attachment_id, '_tf_source_url_hash', $source_hash);
+        $attachment_url = wp_get_attachment_url($attachment_id);
+        if (!$attachment_url) return '';
+
+        $external_images[$image_url] = set_url_scheme($attachment_url, 'https');
+        return $external_images[$image_url];
+    };
     
     // 2. Scan theme directories for images
     $theme_dir = get_template_directory();
@@ -3413,6 +3597,22 @@ function ${themeFnPrefix}_import_content() {
                     $html = str_replace("url('/images/" . $filename . "')", "url('" . $media_url . "')", $html);
                 }
 
+                // Resolve any leftover theme placeholders so Gutenberg sees a real URL,
+                // even when an asset did not map into the Media Library.
+                $theme_uri = untrailingslashit(get_stylesheet_directory_uri());
+                $html = str_replace('__THEME_URI__', $theme_uri, $html);
+
+                // Localize remote images so the WordPress clone does not depend on third-party hosts.
+                if (preg_match_all('/(?:src|data-src)=["\\\'](https?:\\/\\/[^"\\\']+)["\\\']/i', $html, $remote_matches)) {
+                    $remote_urls = array_unique($remote_matches[1]);
+                    foreach ($remote_urls as $remote_url) {
+                        $local_url = $import_remote_image($remote_url);
+                        if ($local_url) {
+                            $html = str_replace($remote_url, $local_url, $html);
+                        }
+                    }
+                }
+
                 wp_update_post(array('ID' => $page_id, 'post_content' => $html));
                 $count++;
             }
@@ -3424,7 +3624,7 @@ function ${themeFnPrefix}_import_content() {
         update_option('page_on_front', (int) $home_page_id); 
     }
     
-    return $count . " pages imported successfully, with " . count($uploaded_images) . " images added to the Media Library!";
+    return $count . " pages imported successfully, with " . (count($uploaded_images) + count($external_images)) . " images added to the Media Library!";
 }
 
 
@@ -4321,11 +4521,8 @@ ${faqBlocks.join('\n\n')}`;
                         addLog(`  📈 Injected FAQPage JSON-LD Schema for ${pageFaqs.length} questions`, 'success');
                     }
 
-                    // TIER 1 POLISH: Auto-Lazy Load all images (except those with specific classes or explicitly eager)
-                    // We only apply lazy loading to images that don't look like above-the-fold hero images
-                    let imgCountBefore = (rewrittenBlocks.match(/<img\b/gi) || []).length;
-                    rewrittenBlocks = rewrittenBlocks.replace(/<img(?!.*loading=["']lazy["'])(?!.*loading=["']eager["'])((?![^>]*class=["'][^"']*(?:hero|no-lazy|lcp|above-the-fold)[^"']*["'])[^>]*)>/gi, '<img loading="lazy"$1>');
-                    addLog(`  🖼 Added native lazy loading to images`, 'success');
+                    // Avoid mutating serialized block HTML with loading attributes here.
+                    // That caused Gutenberg core/image validation failures on reopen.
 
                     // TIER 1 POLISH: Dynamic Copyright Year anywhere in the page blocks
                     rewrittenBlocks = rewrittenBlocks.replace(/(©|Copyright|[Cc]opyright[^>]*>)[^\d]*202[0-9]/g, '$1 <?php echo date("Y"); ?>');
@@ -4334,13 +4531,21 @@ ${faqBlocks.join('\n\n')}`;
                     let breadcrumbHtml = '';
                     let relatedLinksHtml = '';
                     if (!isHome && !isNoIndex) {
-                        breadcrumbHtml = `
-<!-- wp:group {"className":"tf-breadcrumbs"} -->
-<div class="wp-block-group tf-breadcrumbs" style="padding: 1rem 1.5rem; background: #f8f9fa; border-bottom: 1px solid #eee; margin-bottom: 2rem; font-size: 0.875rem;">
-    <a href="/" style="color: #666; text-decoration: none;">Home</a> <span style="margin: 0 0.5rem; color: #ccc;">/</span> <span style="color: #333; font-weight: 500;">${pageH1}</span>
-</div>
-<!-- /wp:group -->
-`;
+                        const breadcrumbLabel = escapeHtml(pageH1 || route.title || '');
+                        breadcrumbHtml = serializeWpBlock(
+                            'theme-factory/container',
+                            {
+                                className: 'tf-breadcrumbs',
+                                customStyle: {
+                                    padding: '1rem 1.5rem',
+                                    background: '#f8f9fa',
+                                    'border-bottom': '1px solid #eee',
+                                    'margin-bottom': '2rem',
+                                    'font-size': '0.875rem'
+                                }
+                            },
+                            `<!-- wp:paragraph {"className":"tf-breadcrumbs__text"} -->\n<p class="tf-breadcrumbs__text"><a href="/">Home</a> <span class="tf-breadcrumbs__separator">/</span> <span class="tf-breadcrumbs__current">${breadcrumbLabel}</span></p>\n<!-- /wp:paragraph -->`
+                        );
                         let siblings = [];
                         let isAiGenerated = false;
 
@@ -4369,17 +4574,29 @@ ${faqBlocks.join('\n\n')}`;
                         }
 
                         if (siblings.length > 0) {
-                            const badgeHtml = isAiGenerated ? `<span style="font-size: 0.7rem; background: #dcfce7; color: #166534; padding: 0.2rem 0.5rem; border-radius: 99px; margin-left: 0.5rem; vertical-align: middle; font-weight: 600;">✨ AI Selected</span>` : '';
-                            relatedLinksHtml = `
-<!-- wp:group {"className":"tf-related-links-module"} -->
-<div class="wp-block-group tf-related-links-module" style="margin-top: 4rem; padding: 3rem 1.5rem; background: #f8f9fa;">
-    <h3 style="margin-bottom: 1.5rem; text-align: center;">Related Links${badgeHtml}</h3>
-    <div style="display: flex; flex-wrap: wrap; gap: 1rem; justify-content: center;">
-        ${siblings.map(sib => `<a href="${sib.path.endsWith('/') ? sib.path : sib.path + '/'}" style="padding: 0.75rem 1.5rem; background: #fff; border: 1px solid #ddd; border-radius: 4px; color: inherit; text-decoration: none; font-weight: 500; transition: all 0.2s;">${sib.title}</a>`).join('')}
-    </div>
-</div>
-<!-- /wp:group -->
-`;
+                            const relatedButtons = siblings.map(sib => {
+                                const siblingUrl = sib.path.endsWith('/') ? sib.path : `${sib.path}/`;
+                                return `<!-- wp:button {"url":"${siblingUrl}","className":"tf-related-links-module__button"} -->\n<div class="wp-block-button tf-related-links-module__button"><a class="wp-block-button__link wp-element-button" href="${siblingUrl}">${escapeHtml(sib.title)}</a></div>\n<!-- /wp:button -->`;
+                            }).join('\n\n');
+                            const relatedBlocks = [
+                                `<!-- wp:heading {"textAlign":"center","level":3,"className":"tf-related-links-module__heading"} -->\n<h3 class="wp-block-heading has-text-align-center tf-related-links-module__heading">Related Links</h3>\n<!-- /wp:heading -->`,
+                                isAiGenerated
+                                    ? `<!-- wp:paragraph {"align":"center","className":"tf-related-links-module__note"} -->\n<p class="has-text-align-center tf-related-links-module__note">AI-selected related pages</p>\n<!-- /wp:paragraph -->`
+                                    : '',
+                                serializeWpBlock('theme-factory/buttons', { className: 'tf-related-links-module__buttons justify-center' }, relatedButtons)
+                            ].filter(Boolean).join('\n\n');
+                            relatedLinksHtml = serializeWpBlock(
+                                'theme-factory/container',
+                                {
+                                    className: 'tf-related-links-module',
+                                    customStyle: {
+                                        'margin-top': '4rem',
+                                        padding: '3rem 1.5rem',
+                                        background: '#f8f9fa'
+                                    }
+                                },
+                                relatedBlocks
+                            );
                             addLog(`  🔗 Injected Related Links module with ${siblings.length} internal links ${isAiGenerated ? '(✨ AI)' : ''}`, 'success');
                         }
                         addLog(`  🍞 Injected visual Breadcrumb navigation`, 'success');
@@ -4387,8 +4604,12 @@ ${faqBlocks.join('\n\n')}`;
 
                     const isSameClass = currentRootClasses === rootClasses;
                     const wrapperClasses = isSameClass ? 'entry-content' : `entry-content ${currentRootClasses}`;
-                    // Use core wp:group block instead of custom page-shell (requires no plugin)
-                    prerenderedContent = `<!-- wp:group {"className":"${wrapperClasses} ${bodyClasses}"} -->\n<div class="wp-block-group ${wrapperClasses} ${bodyClasses}">\n${breadcrumbHtml}\n${rewrittenBlocks}\n${relatedLinksHtml}\n</div>\n<!-- /wp:group -->`;
+                    const shellClasses = `${wrapperClasses} ${bodyClasses}`.trim();
+                    prerenderedContent = serializeWpBlock(
+                        'theme-factory/page-shell',
+                        shellClasses ? { className: shellClasses } : undefined,
+                        [breadcrumbHtml, rewrittenBlocks, relatedLinksHtml].filter(Boolean).join('\n')
+                    );
                     successCount++;
                     addLog(`  ✓ ${route.title}: Converted to Gutenberg blocks`, 'success');
 

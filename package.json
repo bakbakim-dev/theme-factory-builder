@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "audit:block-contracts": "node scripts/audit-block-contracts.mjs"
   },
   "dependencies": {
     "jszip": "3.10.1",

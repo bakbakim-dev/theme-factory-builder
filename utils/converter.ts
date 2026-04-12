@@ -44,17 +44,212 @@ export interface ConversionContext {
 
 const SKIP_TAGS = new Set(['script', 'style', 'noscript', 'meta', 'link', 'head', 'template']);
 const STRUCTURAL_TAGS = new Set(['div', 'article', 'main', 'header', 'footer', 'aside', 'nav', 'section']);
+const DYNAMIC_CONTAINER_SAFE_TAGS = new Set(['div', 'section', 'article', 'main', 'aside', 'header', 'footer', 'nav', 'span', 'form']);
+const HTML_IDREF_ATTRIBUTES = new Set(['aria-controls', 'aria-labelledby', 'aria-describedby', 'aria-owns', 'aria-details', 'aria-flowto', 'aria-activedescendant']);
+
+function decodeLooseUnicodeEscapes(value: string): string {
+  if (!value) return '';
+  return value.replace(/u([0-9a-fA-F]{4})/g, (match, hex) => {
+    const code = parseInt(hex, 16);
+    return Number.isFinite(code) ? String.fromCharCode(code) : match;
+  });
+}
+
+function decodeHtmlEntities(value: string): string {
+  if (!value || typeof document === 'undefined') return value || '';
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = value;
+  return textarea.value;
+}
+
+function normalizeLooseText(value: string): string {
+  if (!value) return '';
+  return decodeHtmlEntities(decodeLooseUnicodeEscapes(value));
+}
+
+function toCommentBlockName(blockName: string): string {
+  return blockName.startsWith('core/') ? blockName.slice(5) : blockName;
+}
+
+function normalizeBlockAttributes(attributes?: Record<string, any>): Record<string, any> {
+  const normalized: Record<string, any> = {};
+  if (!attributes) return normalized;
+
+  for (const [key, value] of Object.entries(attributes)) {
+    if (value === undefined || value === null || value === '') continue;
+    if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0) continue;
+    normalized[key] = value;
+  }
+
+  return normalized;
+}
+
+function serializeDynamicBlock(blockName: string, attributes: Record<string, any>, innerContent: string): string {
+  const commentName = toCommentBlockName(blockName);
+  const normalized = normalizeBlockAttributes(attributes);
+  const attrs = Object.keys(normalized).length > 0 ? ` ${JSON.stringify(normalized)}` : '';
+  return `<!-- wp:${commentName}${attrs} -->\n${innerContent}\n<!-- /wp:${commentName} -->`;
+}
+
+function serializeSelfClosingBlock(blockName: string, attributes: Record<string, any>): string {
+  const commentName = toCommentBlockName(blockName);
+  const normalized = normalizeBlockAttributes(attributes);
+  const attrs = Object.keys(normalized).length > 0 ? ` ${JSON.stringify(normalized)}` : '';
+  return `<!-- wp:${commentName}${attrs} /-->`;
+}
+
+function getTopLevelBlockName(markup: string): string | null {
+  const match = markup.match(/<!--\s*wp:([a-zA-Z0-9-]+(?:\/[a-zA-Z0-9-]+)?)\b/);
+  if (!match) return null;
+  const blockName = match[1];
+  return blockName.includes('/') ? blockName : `core/${blockName}`;
+}
+
+function parseInlineStyleObject(styleString: string): Record<string, string> {
+  const styles: Record<string, string> = {};
+  if (!styleString) return styles;
+
+  for (const rule of styleString.split(';')) {
+    if (!rule || !rule.includes(':')) continue;
+    const [property, ...valueParts] = rule.split(':');
+    const key = property.trim().toLowerCase();
+    const value = valueParts.join(':').trim();
+    if (!key || !value) continue;
+    styles[key] = value;
+  }
+
+  return styles;
+}
+
+function dedupeClassTokens(className: string): string {
+  if (!className) return '';
+  return Array.from(new Set(className.split(/\s+/).filter(Boolean))).join(' ');
+}
+
+function normalizeAssetUrl(src: string): string {
+  if (!src) return '';
+  return src
+    .replace(/^\/?assets\//, '__THEME_URI__/assets/')
+    .replace(/^\/?images\//, '__THEME_URI__/images/');
+}
+
+function sanitizeHtmlIdValue(value: string): string {
+  if (!value) return '';
+  return decodeLooseUnicodeEscapes(value).trim().replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function normalizeHtmlIdReferenceValue(value: string, allowMultiple: boolean = true): string {
+  if (!value) return '';
+  const decoded = decodeLooseUnicodeEscapes(value);
+  if (!allowMultiple) {
+    const trimmed = decoded.trim();
+    if (!trimmed) return '';
+    const hasHashPrefix = trimmed.startsWith('#');
+    const normalized = sanitizeHtmlIdValue(hasHashPrefix ? trimmed.slice(1) : trimmed);
+    return normalized ? `${hasHashPrefix ? '#' : ''}${normalized}` : '';
+  }
+  return decoded
+    .split(/\s+/)
+    .map((token) => {
+      const trimmed = token.trim();
+      if (!trimmed) return '';
+      const hasHashPrefix = trimmed.startsWith('#');
+      const normalized = sanitizeHtmlIdValue(hasHashPrefix ? trimmed.slice(1) : trimmed);
+      return normalized ? `${hasHashPrefix ? '#' : ''}${normalized}` : '';
+    })
+    .filter(Boolean)
+    .join(' ');
+}
+
+function encodeBase64Utf8(value: string): string {
+  return btoa(unescape(encodeURIComponent(value)));
+}
+
+function normalizeQuestionText(value: string): string {
+  return normalizeLooseText(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function looksLikeQuestionText(value: string): boolean {
+  const raw = normalizeLooseText(value).replace(/\s+/g, ' ').trim();
+  if (!raw || raw.length < 8 || raw.length > 220) return false;
+  if (raw.includes('?')) return true;
+  const normalized = normalizeQuestionText(raw);
+  return /^(who|what|when|where|why|how|can|could|do|does|did|is|are|will|would|should|have|has|had)\b/.test(normalized);
+}
+
+function findFaqAnswerMarkup(questionText: string, ctx: ConversionContext): string {
+  if (!questionText || !ctx.faqData || ctx.faqData.length === 0) {
+    return '';
+  }
+
+  if (!looksLikeQuestionText(questionText)) {
+    return '';
+  }
+
+  const questionNorm = normalizeQuestionText(questionText);
+  if (!questionNorm) {
+    return '';
+  }
+
+  const match = ctx.faqData.find((faq) => {
+    const faqNorm = normalizeQuestionText(faq.q);
+    return faqNorm === questionNorm || faqNorm.includes(questionNorm) || questionNorm.includes(faqNorm);
+  });
+
+  if (!match?.a) {
+    return '';
+  }
+
+  return `<!-- wp:paragraph -->\n<p>${escapeHtml(match.a)}</p>\n<!-- /wp:paragraph -->`;
+}
+
+function extractQuestionTextFromElement(el: HTMLElement): string {
+  const clone = el.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll('svg, button, [aria-hidden="true"]').forEach((node) => node.remove());
+  return normalizeLooseText((clone.textContent || '').replace(/\s+/g, ' ').trim());
+}
+
+function hasExplicitTextColorClass(className: string): boolean {
+  return /\btext-(?!xs\b|sm\b|base\b|lg\b|xl\b|[2-9]xl\b|left\b|center\b|right\b|justify\b|start\b|end\b|clip\b|ellipsis\b|wrap\b|nowrap\b|balance\b|pretty\b)/.test(className);
+}
+
+function isDotStyleButton(className: string): boolean {
+  if (!className) return false;
+  return /\brounded-full\b/.test(className) && /\b(?:w|h)-(?:2|2\.5|3|3\.5)\b/.test(className);
+}
+
+function canUseCoreButton(el: HTMLElement, innerBtn: HTMLElement | undefined, className: string, cleanText: string): boolean {
+  if (!cleanText) return false;
+  if (innerBtn) return false;
+  if (el.querySelector('svg, img, div, p, h1, h2, h3, h4, h5, h6, ul, ol')) return false;
+  if (className.includes('w-full') || className.includes('flex') || className.includes('grid')) return false;
+  if (isTailwindStyledButton(className)) return false;
+  if (/\b(bg-|rounded|shadow|border|px-\d|py-\d|gap-|items-center|justify-center|inline-flex)\b/.test(className)) return false;
+  return true;
+}
+
+function createCoreButtonBlock(text: string, href: string, className: string, target?: string | null, rel?: string | null): string {
+  const attrs: Record<string, any> = { url: href };
+  if (className) attrs.className = className;
+  if (target === '_blank') attrs.linkTarget = '_blank';
+  if (rel) attrs.rel = rel;
+  const attrsString = Object.keys(attrs).length > 0 ? ` ${JSON.stringify(attrs)}` : '';
+  const wrapperClass = `wp-block-button${className ? ` ${className}` : ''}`;
+  let anchorAttrs = `href="${escapeAttr(href)}"`;
+  if (target) anchorAttrs += ` target="${escapeAttr(target)}"`;
+  if (rel) anchorAttrs += ` rel="${escapeAttr(rel)}"`;
+  return `<!-- wp:button${attrsString} -->\n<div class="${wrapperClass}"><a class="wp-block-button__link wp-element-button" ${anchorAttrs}>${text}</a></div>\n<!-- /wp:button -->`;
+}
 
 export function createPlaceholder(title: string, message: string): string {
-    return `<!-- wp:theme-factory/container {"className":"wp-block-theme-factory-container"} -->
-<div class="wp-block-theme-factory-container"><!-- wp:heading -->
-<h2 class="wp-block-heading">${escapeHtml(title)}</h2>
-<!-- /wp:heading -->
-
-<!-- wp:paragraph -->
-<p>${escapeHtml(message)}</p>
-<!-- /wp:paragraph --></div>
-<!-- /wp:theme-factory/container -->`;
+    return serializeDynamicBlock('theme-factory/container', {}, [
+      `<!-- wp:heading -->\n<h2 class="wp-block-heading">${escapeHtml(title)}</h2>\n<!-- /wp:heading -->`,
+      `<!-- wp:paragraph -->\n<p>${escapeHtml(message)}</p>\n<!-- /wp:paragraph -->`
+    ].join('\n\n'));
 }
 
 export function extractElementHtml(html: string, selector: string): string | null {
@@ -109,7 +304,12 @@ export function convertToGutenbergBlocks(
     }
     
     const serialized = cleaned.join('\n\n');
-    const validation = validateBlockMarkup(serialized);
+    const structuralValidation = validateBlockMarkup(serialized);
+    const contractValidation = validateCustomBlockContracts(serialized);
+    const validation = {
+      isValid: structuralValidation.isValid && contractValidation.isValid,
+      errors: [...structuralValidation.errors, ...contractValidation.errors]
+    };
     const { editabilityScore, confidenceScore } = computeScores(ctx);
     const themeTokens = extractThemeTokenSuggestions(ctx);
     
@@ -144,30 +344,42 @@ function processChildren(parent: Element, ctx: ConversionContext): string[] {
   }
   
   // POST-PROCESS: Wrap adjacent core/button blocks in core/buttons container
-  return groupAdjacentButtons(blocks);
+  return groupAdjacentButtons(blocks, ctx);
 }
 
 /**
  * Group consecutive wp:button blocks into wp:buttons containers.
  * WordPress requires: wp:buttons > wp:button (parent-child relationship).
  */
-function groupAdjacentButtons(blocks: string[]): string[] {
+function groupAdjacentButtons(blocks: string[], ctx: ConversionContext): string[] {
     const result: string[] = [];
     let buttonBuffer: string[] = [];
+    let bufferType: 'core' | 'custom' | null = null;
     
     const flushButtons = () => {
         if (buttonBuffer.length === 0) return;
-        if (buttonBuffer.length === 1) {
-            // Single button still needs a wrapper per WP conventions
-            result.push(`<!-- wp:theme-factory/container {"className":"wp-block-buttons"} -->\n<div class="wp-block-theme-factory-container wp-block-buttons">\n${buttonBuffer[0]}\n</div>\n<!-- /wp:theme-factory/container -->`);
+        if (bufferType === 'core') {
+            trackBlock(ctx, 'core/buttons');
+            result.push(`<!-- wp:buttons -->\n<div class="wp-block-buttons">\n${buttonBuffer.join('\n')}\n</div>\n<!-- /wp:buttons -->`);
+        } else if (buttonBuffer.length === 1) {
+            result.push(buttonBuffer[0]);
         } else {
-            result.push(`<!-- wp:theme-factory/container {"className":"wp-block-buttons"} -->\n<div class="wp-block-theme-factory-container wp-block-buttons">\n${buttonBuffer.join('\n')}\n</div>\n<!-- /wp:theme-factory/container -->`);
+            trackBlock(ctx, 'theme-factory/buttons');
+            result.push(serializeDynamicBlock('theme-factory/buttons', {}, buttonBuffer.join('\n\n')));
         }
         buttonBuffer = [];
+        bufferType = null;
     };
     
     for (const block of blocks) {
-        if (block.trimStart().startsWith('<!-- wp:theme-factory/button ')) {
+        const blockName = getTopLevelBlockName(block);
+        const nextType = blockName === 'core/button' ? 'core' : blockName === 'theme-factory/button' ? 'custom' : null;
+
+        if (nextType) {
+            if (bufferType && bufferType !== nextType) {
+                flushButtons();
+            }
+            bufferType = nextType;
             buttonBuffer.push(block);
         } else {
             flushButtons();
@@ -340,12 +552,8 @@ function processElement(el: HTMLElement, ctx: ConversionContext): string | strin
       // This prevents WP's wp-block-button width:100% rules from taking over
       // Also inject 'self-center w-fit' to break flex-stretch inheritance from parent
       if (textOnly && isTailwindStyledButton(className)) {
-          // Add classes to break flex stretch (specificity war fix)
-          const currentClass = el.getAttribute('class') || '';
-          if (!currentClass.includes('self-center')) {
-              el.setAttribute('class', currentClass + ' self-center w-fit');
-          }
-          return createButton(el, ctx, el, true);
+          const forcedClassName = dedupeClassTokens(`${className} self-center w-fit`);
+          return createButton(el, ctx, undefined, true, forcedClassName);
       }
       
       // TEXT-LINK DETECTION: Navigation-style text links (no bg, no border, no padding)
@@ -372,6 +580,12 @@ function processElement(el: HTMLElement, ctx: ConversionContext): string | strin
   }
   
   if (tag === 'button') {
+      const parentEl = el.parentElement;
+      const siblingSelect = parentEl ? parentEl.querySelector('select') : null;
+      if (role === 'combobox' && siblingSelect) {
+          return null;
+      }
+
       // CRITICAL: Preserve interactive buttons that rely on JS behavior
       // Tab triggers, accordion triggers, and other ARIA components must stay as <button>
       if (role === 'tab' || 
@@ -392,10 +606,17 @@ function processElement(el: HTMLElement, ctx: ConversionContext): string | strin
   // Forms inputs mapping
   if (tag === 'input' || tag === 'textarea') {
       const type = el.getAttribute('type');
-      if (type === 'hidden' || type === 'submit' || type === 'button') {
-          return createHtmlBlock(el);
+      if (type === 'hidden') {
+          return null;
+      }
+      if (type === 'submit' || type === 'button' || type === 'reset') {
+          return createFormButtonFromInput(el as HTMLInputElement, ctx);
       }
       return createFormInput(el as HTMLInputElement | HTMLTextAreaElement, tag);
+  }
+
+  if (tag === 'select') {
+      return createFormSelect(el as HTMLSelectElement, ctx);
   }
 
   // Structural / Container
@@ -411,13 +632,11 @@ function processElement(el: HTMLElement, ctx: ConversionContext): string | strin
   }
   
   // HEURISTIC: Form handling
-  // Search forms → createSearch, contact/general forms → preserve as HTML block
+  // Search forms → createSearch, contact/general forms → strict dynamic form wrapper
   if (tag === 'form') {
       const searchResult = createSearch(el, ctx);
       if (searchResult) return searchResult;
-      // Non-search forms (contact, signup, etc.) — preserve as raw HTML block
-      trackBlock(ctx, 'core/html');
-      return `<!-- wp:html -->\n${el.outerHTML}\n<!-- /wp:html -->`;
+      return createContainer(el, ctx, true);
   }
   
   if (STRUCTURAL_TAGS.has(tag) || tag === 'div' || tag === 'section' || extraContainers.has(tag)) {
@@ -449,14 +668,12 @@ function processElement(el: HTMLElement, ctx: ConversionContext): string | strin
       return null;
   }
 
-  // Form elements: preserve as HTML when encountered outside a form context
-  // (inside a form, they're already captured by the form's core/html block)
+  // Form elements: preserve them as typed custom blocks even outside a form context.
   if (['input', 'textarea', 'select', 'option', 'fieldset', 'legend'].includes(tag)) {
-      if (tag === 'select' || tag === 'textarea') {
-          trackBlock(ctx, 'core/html');
-          return `<!-- wp:html -->\n${el.outerHTML}\n<!-- /wp:html -->`;
-      }
-      return null; // input/option/fieldset handled by parent
+      if (tag === 'select') return createFormSelect(el as HTMLSelectElement, ctx);
+      if (tag === 'textarea') return createFormInput(el as HTMLTextAreaElement, tag);
+      if (tag === 'input') return createFormInput(el as HTMLInputElement, tag);
+      return null; // option/fieldset/legend handled by parent containers
   }
 
   // Iframes: YouTube/Vimeo → core/embed, others → core/html
@@ -748,7 +965,7 @@ function createImage(img: HTMLImageElement, ctx?: ConversionContext): string {
     const src = img.getAttribute('src') || '';
     if (!src) return '';
 
-    const safeSrc = src.replace(/^\/?assets\//, '__THEME_URI__/assets/');
+    const safeSrc = normalizeAssetUrl(src);
     if (ctx) trackBlock(ctx, 'core/image');
     const alt = img.getAttribute('alt') || '';
     
@@ -765,7 +982,6 @@ function createImage(img: HTMLImageElement, ctx?: ConversionContext): string {
     const className = getClassName(img);
     const width = img.getAttribute('width') || img.width || '';
     const height = img.getAttribute('height') || img.height || '';
-    const loading = img.getAttribute('loading') || 'lazy'; // Default to lazy loading
 
     const attrs: any = {};
     if (className) attrs.className = className;
@@ -773,11 +989,10 @@ function createImage(img: HTMLImageElement, ctx?: ConversionContext): string {
     if (height) attrs.height = parseInt(height.toString());
 
     // Build image tag with performance attributes
-    let imgTag = `<img src="${safeSrc}" alt="${escapeAttr(alt)}"`;
+    let imgTag = `<img src="${escapeAttr(safeSrc)}" alt="${escapeAttr(alt)}"`;
     if (width && height) {
         imgTag += ` width="${width}" height="${height}"`; // Prevent CLS
     }
-    imgTag += ` loading="${loading}"`; // Lazy loading for performance
     imgTag += '/>';
 
     return `<!-- wp:image ${JSON.stringify(attrs)} -->\n<figure class="wp-block-image${className ? ' ' + className : ''}">${imgTag}</figure>\n<!-- /wp:image -->`;
@@ -791,7 +1006,7 @@ function createLinkedImage(img: HTMLImageElement, anchor: HTMLElement, ctx: Conv
     const src = img.getAttribute('src') || '';
     if (!src) return '';
 
-    const safeSrc = src.replace(/^\/?assets\//, '__THEME_URI__/assets/');
+    const safeSrc = normalizeAssetUrl(src);
     trackBlock(ctx, 'core/image');
     const alt = img.getAttribute('alt') || '';
     const href = anchor.getAttribute('href') || '#';
@@ -804,16 +1019,15 @@ function createLinkedImage(img: HTMLImageElement, anchor: HTMLElement, ctx: Conv
     
     const width = img.getAttribute('width') || img.width || '';
     const height = img.getAttribute('height') || img.height || '';
-    const loading = img.getAttribute('loading') || 'lazy';
 
     const attrs: any = { linkDestination: 'custom' };
     if (combinedClass) attrs.className = combinedClass;
     if (width) attrs.width = parseInt(width.toString());
     if (height) attrs.height = parseInt(height.toString());
 
-    let imgTag = `<img src="${safeSrc}" alt="${escapeAttr(alt)}"`;
+    let imgTag = `<img src="${escapeAttr(safeSrc)}" alt="${escapeAttr(alt)}"`;
     if (width && height) imgTag += ` width="${width}" height="${height}"`;
-    imgTag += ` loading="${loading}"/>`;
+    imgTag += '/>';
 
     let anchorAttrs = `href="${escapeAttr(href)}"`;
     if (target) anchorAttrs += ` target="${escapeAttr(target)}"`;
@@ -837,31 +1051,31 @@ function createLinkGroup(el: HTMLElement, ctx: ConversionContext): string {
         className = (className + ' cursor-pointer').trim();
     }
 
-    const attrs: any = { 
-        className: className,
-        // We still store the href contextually but don't output an <a> wrapper
-        url: href
-    };
-    
-    // We use a standard container but inject a data-href attribute
-    // The Dashboard.tsx will attach a click listener to handle the navigation
-    let containerHtml = `<!-- wp:theme-factory/container ${JSON.stringify(attrs)} -->\n<div class="wp-block-theme-factory-container ${className}" data-href="${escapeAttr(href)}"${target ? ` data-target="${escapeAttr(target)}"` : ''}>\n${children}\n</div>\n<!-- /wp:theme-factory/container -->`;
-    
-    return containerHtml;
+    const attrs: any = { href };
+    if (className) attrs.className = className;
+    if (target) attrs.target = target;
+    if (rel) attrs.rel = rel;
+
+    trackBlock(ctx, 'theme-factory/link-group');
+    return serializeDynamicBlock('theme-factory/link-group', attrs, children);
 }
 
-function createButton(el: HTMLElement, ctx: ConversionContext, innerBtn?: HTMLElement, useThemeFactory: boolean = false): string {
-    const href = el.getAttribute('href') || '#';
+function createButton(el: HTMLElement, ctx: ConversionContext, innerBtn?: HTMLElement, useThemeFactory: boolean = false, forcedClassName?: string): string {
+    const explicitHref = el.getAttribute('href') || '';
+    const href = explicitHref || '#';
     const target = el.getAttribute('target');
     const rel = el.getAttribute('rel');
+    const ariaLabel = el.getAttribute('aria-label') || el.getAttribute('title') || '';
+    const buttonType = el.tagName.toLowerCase() === 'button' ? (el.getAttribute('type') || 'button') : '';
     
-    let contentEl = innerBtn || el;
-    let text = cleanInlineHtml(contentEl.innerHTML);
+    const contentEl = innerBtn || el;
+    const text = cleanInlineHtml(contentEl.innerHTML);
     
-    let className = getClassName(el);
-    if (innerBtn) {
-        className = (className + ' ' + getClassName(innerBtn)).trim();
+    let className = forcedClassName || getClassName(el);
+    if (innerBtn && innerBtn !== el) {
+        className = `${className} ${getClassName(innerBtn)}`.trim();
     }
+    className = dedupeClassTokens(className);
     
     // HEURISTIC AUDIT: Empty Buttons
     if (!text.trim() && !contentEl.querySelector('svg') && ctx?.logs) {
@@ -877,8 +1091,9 @@ function createButton(el: HTMLElement, ctx: ConversionContext, innerBtn?: HTMLEl
     // If a button has layout classes (flex, grid, w-full), it MAY be a complex container.
     // BUT: if it has a real href (not just "#"), it's a styled link that needs to stay as a button
     // to preserve navigation (e.g., "Book Now" → #contact, "See Pricing" → /edmonton/)
-    const hasRealHref = href && href !== '#' && !href.startsWith('javascript:');
-    if (!hasRealHref && (className.includes('w-full') || className.includes('flex') || className.includes('grid'))) {
+    const hasRealHref = explicitHref && explicitHref !== '#' && !explicitHref.startsWith('javascript:');
+    const isFormActionButton = el.tagName.toLowerCase() === 'button' && ['submit', 'reset', 'button'].includes(buttonType);
+    if (!hasRealHref && !isFormActionButton && (className.includes('w-full') || className.includes('flex') || className.includes('grid'))) {
         // Map complex button structures to our fully editable container mechanism instead
         return createContainer(el, ctx, true);
     }
@@ -891,11 +1106,11 @@ function createButton(el: HTMLElement, ctx: ConversionContext, innerBtn?: HTMLEl
     // Use textContent to get decoded text, then escape it once for HTML output
     // This avoids double-encoding (innerHTML already has &amp; which would become &amp;amp;)
     const cleanText = escapeHtml(contentEl.textContent?.trim() || '');
+    const isDotButton = !cleanText && isDotStyleButton(className);
 
-    const attrs: any = {};
-    if (className) attrs.className = className;
-    if (target === '_blank') attrs.linkTarget = '_blank';
-    if (rel) attrs.rel = rel;
+    if (/\bbg-white(?:\/\d+)?\b/.test(className) && !hasExplicitTextColorClass(className)) {
+        className = dedupeClassTokens(`${className} text-primary`);
+    }
 
     // AUTO-DETECT: If the link has NO background color class (no bg-*), it's a text-style link.
     // WordPress core/button injects a dark background via wp-block-button__link, which destroys
@@ -904,31 +1119,33 @@ function createButton(el: HTMLElement, ctx: ConversionContext, innerBtn?: HTMLEl
     if (!hasBgClass && !useThemeFactory) {
         useThemeFactory = true;
     }
-    if (useThemeFactory) {
-        // Build as a self-styled theme-factory/button that doesn't conflict with WordPress defaults
-        const tfAttrs: any = { text: cleanText, href };
-        if (className) tfAttrs.className = className;
-        if (target) tfAttrs.target = target;
-        if (rel) tfAttrs.rel = rel;
-        
-        return `<!-- wp:theme-factory/button ${JSON.stringify(tfAttrs)} -->\n<a class="wp-block-theme-factory-button ${className}" href="${escapeAttr(href)}"${target ? ` target="${escapeAttr(target)}"` : ''}${rel ? ` rel="${escapeAttr(rel)}"` : ''}>${cleanText}</a>\n<!-- /wp:theme-factory/button -->`;
+
+    if (!isFormActionButton && !useThemeFactory && canUseCoreButton(el, innerBtn, className, cleanText)) {
+        trackBlock(ctx, 'core/button');
+        return createCoreButtonBlock(cleanText, href, className, target, rel);
     }
 
-    // ALL buttons use theme-factory/button (dynamic block, no validation).
-    // Core wp:button injects specific classes that may conflict with Tailwind styling.
-    const tfAttrs2: any = { text: cleanText, href };
-    if (className) tfAttrs2.className = className;
-    if (target) tfAttrs2.target = target;
-    if (rel) tfAttrs2.rel = rel;
+    const tfAttrs: any = { text: cleanText, href };
+    if (className) tfAttrs.className = className;
+    if (target) tfAttrs.target = target;
+    if (rel) tfAttrs.rel = rel;
+    if (ariaLabel) tfAttrs.ariaLabel = ariaLabel;
+    if (isFormActionButton) {
+        tfAttrs.tagName = 'button';
+        tfAttrs.buttonType = buttonType;
+        delete tfAttrs.href;
+    }
+    if (isDotButton && !tfAttrs.ariaLabel) tfAttrs.ariaLabel = 'Carousel control';
     
     trackBlock(ctx, 'theme-factory/button');
-    return `<!-- wp:theme-factory/button ${JSON.stringify(tfAttrs2)} -->\n<a class="wp-block-theme-factory-button ${className}" href="${escapeAttr(href)}"${target ? ` target="${escapeAttr(target)}"` : ''}${rel ? ` rel="${escapeAttr(rel)}"` : ''}>${cleanText}</a>\n<!-- /wp:theme-factory/button -->`;
+    return serializeSelfClosingBlock('theme-factory/button', tfAttrs);
 }
 
 function createFormInput(el: HTMLInputElement | HTMLTextAreaElement, tag: string): string {
     const isTextarea = tag === 'textarea';
     const type = el.getAttribute('type') || 'text';
     const name = el.getAttribute('name') || '';
+    const id = el.getAttribute('id') || '';
     const placeholder = el.getAttribute('placeholder') || '';
     const className = getClassName(el);
     const required = el.hasAttribute('required');
@@ -936,6 +1153,7 @@ function createFormInput(el: HTMLInputElement | HTMLTextAreaElement, tag: string
     const attrs: any = {};
     if (className) attrs.className = className;
     if (name) attrs.name = name;
+    if (id) attrs.id = id;
     if (placeholder) attrs.placeholder = placeholder;
     if (required) attrs.required = required;
     
@@ -949,21 +1167,48 @@ function createFormInput(el: HTMLInputElement | HTMLTextAreaElement, tag: string
     }
 }
 
+function createFormButtonFromInput(el: HTMLInputElement, ctx: ConversionContext): string {
+    const text = escapeHtml(el.getAttribute('value') || '');
+    const className = dedupeClassTokens(getClassName(el));
+    const buttonType = el.getAttribute('type') || 'submit';
+    const ariaLabel = el.getAttribute('aria-label') || el.getAttribute('title') || '';
+    const attrs: any = {
+        text,
+        tagName: 'button',
+        buttonType
+    };
+    if (className) attrs.className = className;
+    if (ariaLabel) attrs.ariaLabel = ariaLabel;
+    trackBlock(ctx, 'theme-factory/button');
+    return serializeSelfClosingBlock('theme-factory/button', attrs);
+}
+
+function createFormSelect(el: HTMLSelectElement, ctx: ConversionContext): string {
+    const className = dedupeClassTokens(getClassName(el));
+    const name = el.getAttribute('name') || '';
+    const id = el.getAttribute('id') || '';
+    const required = el.hasAttribute('required');
+    const siblingTrigger = el.parentElement?.querySelector('button[role="combobox"]');
+    const triggerText = siblingTrigger?.textContent?.trim() || '';
+    const options = Array.from(el.querySelectorAll('option')).map((option) => ({
+        label: (option.textContent || '').trim(),
+        value: option.getAttribute('value') || '',
+        selected: option.hasAttribute('selected')
+    }));
+
+    const attrs: any = { options };
+    if (className) attrs.className = className;
+    if (name) attrs.name = name;
+    if (id) attrs.id = id;
+    if (required) attrs.required = true;
+    if (triggerText) attrs.placeholder = triggerText;
+
+    trackBlock(ctx, 'theme-factory/select');
+    return serializeSelfClosingBlock('theme-factory/select', attrs);
+}
+
 function createContainer(el: HTMLElement, ctx: ConversionContext, supportInteractivity: boolean = false): string {
     const elClassName = getClassName(el);
-    
-    // ─── HEURISTIC: Form-containing Card wrapper → preserve as core/html ─────
-    // When a Card-like container (with border, rounded, shadow, bg-card) wraps a <form>,
-    // preserve the entire container as raw HTML so the form layout stays intact.
-    const hasForm = el.querySelector('form');
-    if (hasForm) {
-        const isCardLike = elClassName.includes('rounded') || elClassName.includes('shadow') || 
-            elClassName.includes('border') || elClassName.includes('bg-card') || elClassName.includes('bg-white');
-        if (isCardLike) {
-            trackBlock(ctx, 'core/html');
-            return `<!-- wp:html -->\n${el.outerHTML}\n<!-- /wp:html -->`;
-        }
-    }
     
     // ─── HEURISTIC: Radix/Headless UI Accordion → core/details ────────
     // Detect accordion containers with data-orientation="vertical" and
@@ -1340,8 +1585,7 @@ function createContainer(el: HTMLElement, ctx: ConversionContext, supportInterac
     }
     
     if (bgImage) {
-        bgImage = bgImage.replace(/^\/?assets\//, '__THEME_URI__/assets/');
-        supportInteractivity = true; // Force theme-factory/container to support bgImage attribute
+        bgImage = normalizeAssetUrl(bgImage);
     }
 
     let content = children;
@@ -1413,105 +1657,131 @@ function createContainer(el: HTMLElement, ctx: ConversionContext, supportInterac
         }
     }
 
-    // If supportInteractivity is true, we map to theme-factory/container to allow custom data/aria/role attributes
-    if (supportInteractivity) {
-        const attributes: any = {};
-        if (tagName !== 'div') attributes.tagName = tagName;
+    const buildContainerAttributes = (includeHtmlAttributes: boolean): Record<string, any> => {
+        const attributes: Record<string, any> = {};
+        const safeTagName = DYNAMIC_CONTAINER_SAFE_TAGS.has(tagName) ? tagName : 'div';
+        if (safeTagName !== 'div') attributes.tagName = safeTagName;
         if (className) attributes.className = className;
-        if (id) attributes.id = id;
+        const normalizedId = sanitizeHtmlIdValue(id);
+        if (normalizedId) attributes.id = normalizedId;
         if (bgImage) attributes.bgImage = bgImage;
-        
-        // Extract all interactive attributes
-        const extraAttrs: Record<string, string> = {};
-        for (let i = 0; i < el.attributes.length; i++) {
-            const attr = el.attributes[i];
-            const name = attr.name;
-            if (name.startsWith('data-') || name.startsWith('aria-') || name === 'role' || name === 'hidden') {
-                extraAttrs[name] = attr.value;
+
+        const styleObject = parseInlineStyleObject(styleString.trim().replace(/\s+/g, ' '));
+        if (includeHtmlAttributes) {
+            const role = el.getAttribute('role') || '';
+            if (role === 'tabpanel' || el.hasAttribute('data-orientation')) {
+                delete styleObject['max-height'];
+                delete styleObject['height'];
+                delete styleObject['overflow'];
             }
         }
-        
-        // Save them to extraAttributes
-        if (Object.keys(extraAttrs).length > 0) {
-            attributes.extraAttributes = JSON.stringify(extraAttrs);
+        if (Object.keys(styleObject).length > 0) {
+            attributes.customStyle = styleObject;
         }
 
-        let styleAttr = '';
-        if (styleString) {
-            let cleaned = styleString.trim().replace(/\s+/g, ' ');
-            // Handle max-height/visibility on tabs and accordions
-            if (extraAttrs['role'] === 'tabpanel' || extraAttrs['data-orientation']) {
-                 cleaned = cleaned
-                    .replace(/max-height:\s*0(px)?;?/gi, '')
-                    .replace(/(?<![a-z-])height:\s*0(px)?;?/gi, '')
-                    .replace(/overflow:\s*hidden;?/gi, '')
-                    .trim();
-            }
-            if (cleaned) {
-                // Inline styles for theme-factory/container are mapped to attributes.style as string
-                attributes.style = cleaned;
-                styleAttr = ` style="${escapeAttr(cleaned)}"`;
-            }
-        }
-
-        // Apply them textually for the inner block wrapper
-        let extraHtmlAttrs = '';
-        for (const [k, v] of Object.entries(extraAttrs)) {
-             if (k === 'hidden' && !v) {
-                 extraHtmlAttrs += ` hidden`;
-             } else {
-                 extraHtmlAttrs += ` ${k}="${escapeAttr(v)}"`;
-             }
-        }
-        // Remove hidden from tabpanel initially so it is editable and not display:none forever (will be fixed by frontend JS runtime)
-        if (extraAttrs['role'] === 'tabpanel' && extraAttrs['hidden'] !== undefined) {
-             extraHtmlAttrs = extraHtmlAttrs.replace(/\\s*hidden(=["']?["']?)?/, '');
-        }
-
-        const finalClass = `wp-block-theme-factory-container ${className}`.trim();
-        const idAttr = id ? ` id="${escapeAttr(id)}"` : '';
-        trackBlock(ctx, 'theme-factory/container');
-        
-        // HEURISTIC AUDIT: Risky Gutenberg CSS
-        if (ctx?.logs) {
-            const hasRiskyPositioning = /\b(absolute|fixed|-mt-|z-\[|z-\d+)\b/.test(className) || 
-                                        /position:\s*absolute/i.test(styleString) || 
-                                        /position:\s*fixed/i.test(styleString);
-                                        
-            if (hasRiskyPositioning) {
-                // Find exactly which ones matched
-                const matches: string[] = Array.from(className.match(/\b(absolute|fixed|-mt-\d+|z-\[\d+\]|z-\d+)\b/g) || []);
-                if (styleString.match(/position:\s*(absolute|fixed)/i)) matches.push('inline-position');
-                
-                ctx.logs.push({
-                    type: 'warn',
-                    message: 'Risky Editor Canvas Positioning',
-                    suggestion: `Gutenberg injects div wrappers that often break these styles: [${matches.join(', ')}]. Consider using flex/grid layouts or 'relative' positioning instead.`,
-                    snippet: `<${tagName} class="${finalClass}" ...>`
-                });
-            }
-            
-            // HEURISTIC AUDIT: Hardcoded or Arbitrary Colors
-            if (ctx?.logs) {
-                const hardcodedHexOrHsl = (styleString.match(/(#[0-9a-fA-F]{3,6}|hsl\(.*?\)|rgb\(.*?\))/g) || []);
-                const arbitraryTailwindColor = (className.match(/(text|bg|border|fill|stroke)-\[[^\]]+\]/g) || []);
-                
-                const allHardcodedColors = [...new Set([...hardcodedHexOrHsl, ...arbitraryTailwindColor])];
-
-                if (allHardcodedColors.length > 0) {
-                     // Track colors for theme token suggestions
-                     allHardcodedColors.forEach(c => trackColor(ctx, c));
-                     ctx.logs.push({
-                        type: 'info',
-                        message: 'Hardcoded Color Detected',
-                        suggestion: `Found ${allHardcodedColors.join(', ')}. These colors won't sync with the WordPress Theme Customizer palette natively. Use Tailwind theme variables (e.g., 'text-primary' or 'bg-accent') instead if you want user-editable theme colors.`,
-                        snippet: `<${tagName} class="${className}" style="${styleString.replace(/"/g, "'")}">`
-                     });
+        if (includeHtmlAttributes) {
+            const htmlAttributes: Record<string, string | boolean> = {};
+            for (let i = 0; i < el.attributes.length; i++) {
+                const attr = el.attributes[i];
+                const name = attr.name;
+                if (name.startsWith('data-') || name.startsWith('aria-') || name === 'role' || name === 'hidden' || name === 'tabindex') {
+                    const rawValue = name === 'hidden' ? true : attr.value;
+                    if (rawValue === true) {
+                        htmlAttributes[name] = true;
+                    } else if (HTML_IDREF_ATTRIBUTES.has(name)) {
+                        const normalizedValue = normalizeHtmlIdReferenceValue(rawValue, name !== 'aria-controls' && name !== 'aria-activedescendant');
+                        if (normalizedValue) {
+                            htmlAttributes[name] = normalizedValue;
+                        }
+                    } else {
+                        htmlAttributes[name] = rawValue;
+                    }
                 }
             }
+            if (Object.keys(htmlAttributes).length > 0) {
+                attributes.htmlAttributes = htmlAttributes;
+            }
         }
 
-        return `<!-- wp:theme-factory/container ${JSON.stringify(attributes)} -->\n<${tagName} class="${finalClass}"${idAttr}${styleAttr}${extraHtmlAttrs}>\n${content}\n</${tagName}>\n<!-- /wp:theme-factory/container -->`;
+        return attributes;
+    };
+
+    const directFaqCards = directKids.filter((kid) => {
+        const questionText = extractQuestionTextFromElement(kid);
+        if (!questionText || questionText.length < 8) return false;
+        const hasChevron = !!kid.querySelector('svg');
+        const faqAnswer = findFaqAnswerMarkup(questionText, ctx);
+        return questionText.includes('?') || (hasChevron && !!faqAnswer);
+    });
+
+    const faqGroupLike = /\bspace-y-\d+\b/.test(elClassName) || /\bfaq\b/i.test(elClassName);
+    if (faqGroupLike && directFaqCards.length >= 3 && directFaqCards.length >= directKids.length * 0.6) {
+        const detailsBlocks: string[] = [];
+
+        for (const item of directFaqCards) {
+            const questionText = extractQuestionTextFromElement(item);
+            if (!questionText) continue;
+
+            const answerHtml = findFaqAnswerMarkup(questionText, ctx) || `<!-- wp:paragraph -->\n<p>(Answer content not available â€” please add your answer here)</p>\n<!-- /wp:paragraph -->`;
+            const itemClass = dedupeClassTokens(
+                getClassName(item)
+                    .replace(/\boverflow-hidden\b/g, '')
+                    .replace(/\btransition-\w+\b/g, '')
+                    .replace(/data-\[[^\]]*\]:[^\s]*/g, '')
+                    .replace(/\s+/g, ' ')
+                    .trim()
+            );
+            const attrs: any = {};
+            if (itemClass) attrs.className = itemClass;
+
+            trackBlock(ctx, 'core/details');
+            detailsBlocks.push(
+                `<!-- wp:details ${JSON.stringify(attrs)} -->\n<details class="wp-block-details${itemClass ? ' ' + itemClass : ''}">\n<summary>${escapeHtml(questionText)}</summary>\n${answerHtml}\n</details>\n<!-- /wp:details -->`
+            );
+        }
+
+        if (detailsBlocks.length > 0) {
+            trackBlock(ctx, 'theme-factory/container');
+            return serializeDynamicBlock('theme-factory/container', buildContainerAttributes(false), detailsBlocks.join('\n\n'));
+        }
+    }
+
+    // HEURISTIC AUDIT: Risky Gutenberg CSS
+    if (ctx?.logs) {
+        const hasRiskyPositioning = /\b(absolute|fixed|-mt-|z-\[|z-\d+)\b/.test(className) || 
+                                    /position:\s*absolute/i.test(styleString) || 
+                                    /position:\s*fixed/i.test(styleString);
+                                    
+        if (hasRiskyPositioning) {
+            const matches: string[] = Array.from(className.match(/\b(absolute|fixed|-mt-\d+|z-\[\d+\]|z-\d+)\b/g) || []);
+            if (styleString.match(/position:\s*(absolute|fixed)/i)) matches.push('inline-position');
+            
+            ctx.logs.push({
+                type: 'warn',
+                message: 'Risky Editor Canvas Positioning',
+                suggestion: `Gutenberg injects div wrappers that often break these styles: [${matches.join(', ')}]. Consider using flex/grid layouts or 'relative' positioning instead.`,
+                snippet: `<${tagName} class="${className}" ...>`
+            });
+        }
+        
+        const hardcodedHexOrHsl = (styleString.match(/(#[0-9a-fA-F]{3,6}|hsl\(.*?\)|rgb\(.*?\))/g) || []);
+        const arbitraryTailwindColor = (className.match(/(text|bg|border|fill|stroke)-\[[^\]]+\]/g) || []);
+        const allHardcodedColors = [...new Set([...hardcodedHexOrHsl, ...arbitraryTailwindColor])];
+
+        if (allHardcodedColors.length > 0) {
+             allHardcodedColors.forEach(c => trackColor(ctx, c));
+             ctx.logs.push({
+                type: 'info',
+                message: 'Hardcoded Color Detected',
+                suggestion: `Found ${allHardcodedColors.join(', ')}. These colors won't sync with the WordPress Theme Customizer palette natively. Use Tailwind theme variables (e.g., 'text-primary' or 'bg-accent') instead if you want user-editable theme colors.`,
+                snippet: `<${tagName} class="${className}" style="${styleString.replace(/"/g, "'")}">`
+             });
+        }
+    }
+
+    if (supportInteractivity) {
+        trackBlock(ctx, 'theme-factory/container');
+        return serializeDynamicBlock('theme-factory/container', buildContainerAttributes(true), content);
     }
 
     // CRITICAL FIX: Detect containers with DIRECT flex/grid layout classes
@@ -1526,29 +1796,8 @@ function createContainer(el: HTMLElement, ctx: ConversionContext, supportInterac
         return createContainer(el, ctx, true);
     }
 
-    // ─── ALL containers use theme-factory/container (dynamic block) ───
-    // Previously this fell through to core/group, but core blocks validate
-    // their save function output against stored HTML, causing "Block contains
-    // unexpected or invalid content" errors whenever the converter HTML
-    // doesn't perfectly match WP's internal formatting.
-    // theme-factory/container is dynamic (save returns null) → no validation.
-    const attributes: any = {};
-    if (tagName !== 'div') attributes.tagName = tagName;
-    if (className) attributes.className = className;
-    if (id) attributes.id = id;
-
-    let styleAttr = '';
-    if (styleString) {
-        const cleaned = styleString.trim().replace(/\s+/g, ' ');
-        attributes.style = cleaned;
-        styleAttr = ` style="${escapeAttr(cleaned)}"`;
-    }
-
-    const finalClass = `wp-block-theme-factory-container ${className}`.trim();
-    const idAttr = id ? ` id="${escapeAttr(id)}"` : '';
     trackBlock(ctx, 'theme-factory/container');
-
-    return `<!-- wp:theme-factory/container ${JSON.stringify(attributes)} -->\n<${tagName} class="${finalClass}"${idAttr}${styleAttr}>\n${content}\n</${tagName}>\n<!-- /wp:theme-factory/container -->`;
+    return serializeDynamicBlock('theme-factory/container', buildContainerAttributes(false), content);
 }
 
 function createSvgBlock(el: HTMLElement, ctx?: ConversionContext): string {
@@ -1567,9 +1816,22 @@ function createSvgBlock(el: HTMLElement, ctx?: ConversionContext): string {
     // Base64 encode the SVG html — attribute name MUST match the deployed plugin's block.json
     // The deployed plugin (whipify 3.0/theme-factory-blocks) uses "content" attribute,
     // and its PHP render_svg() calls base64_decode($attributes['content'])
-    const encoded = btoa(unescape(encodeURIComponent(rawSvg)));
-    const attrs = { content: encoded }; // MUST be "content" to match deployed plugin
-    return `<!-- wp:theme-factory/svg ${JSON.stringify(attrs)} -->\n<div class="wp-block-theme-factory-svg">${rawSvg}</div>\n<!-- /wp:theme-factory/svg -->`;
+    const encoded = encodeBase64Utf8(rawSvg);
+    const attrs = { content: encoded };
+    if (ctx) trackBlock(ctx, 'theme-factory/svg');
+    return serializeSelfClosingBlock('theme-factory/svg', attrs);
+}
+
+function preparePreservedHtml(el: HTMLElement, ctx?: ConversionContext): string {
+    const clone = el.cloneNode(true) as HTMLElement;
+    cleanMuiArtifacts(clone);
+    stripReactAnimationArtifacts(clone);
+
+    if (ctx?.faqData && ctx.faqData.length > 0) {
+        injectFaqAnswersIntoElement(clone, ctx.faqData);
+    }
+
+    return clone.outerHTML;
 }
 
 const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr', 'iframe', 'canvas']);
@@ -1594,22 +1856,7 @@ function createHtmlFragment(el: HTMLElement, ctx?: ConversionContext): string {
 }
 
 function createHtmlBlock(el: HTMLElement, ctx?: ConversionContext): string {
-    // Clone and clean artefacts before serialization to remove "white box" issues
-    const clone = el.cloneNode(true) as HTMLElement;
-    cleanMuiArtifacts(clone);
-    
-    // CRITICAL FIX: Strip React animation artifacts from ALL descendants
-    // React apps use opacity-0 + JS to fade elements in. Without JS they stay invisible.
-    // This must run on the clone BEFORE serialization to outerHTML.
-    stripReactAnimationArtifacts(clone);
-    
-    // CRITICAL: Inject FAQ answers into empty accordion content divs at BUILD TIME
-    // This ensures answers are in the HTML source (SEO-friendly) and don't require JS
-    if (ctx?.faqData && ctx.faqData.length > 0) {
-        injectFaqAnswersIntoElement(clone, ctx.faqData);
-    }
-
-    const html = clone.outerHTML;
+    const html = preparePreservedHtml(el, ctx);
     
     // HEURISTIC AUDIT: Uneditable Raw Blocks
     // wp:html cannot be edited visually. We must alert the developer that they built
@@ -1894,7 +2141,7 @@ function createSeparator(el: HTMLElement): string {
 
 function createVideo(el: HTMLElement, ctx: ConversionContext): string {
     const src = el.getAttribute('src') || '';
-    const safeSrc = src.replace(/^\/?assets\//, '__THEME_URI__/assets/');
+    const safeSrc = normalizeAssetUrl(src);
     const className = getClassName(el);
     
     const autoplay = el.hasAttribute('autoplay');
@@ -1903,12 +2150,12 @@ function createVideo(el: HTMLElement, ctx: ConversionContext): string {
     const muted = el.hasAttribute('muted');
     const playsinline = el.hasAttribute('playsinline');
     const posterAttr = el.getAttribute('poster');
-    const poster = posterAttr ? posterAttr.replace(/^\/?assets\//, '__THEME_URI__/assets/') : '';
+    const poster = posterAttr ? normalizeAssetUrl(posterAttr) : '';
     
     const sources = Array.from(el.querySelectorAll('source')).map(s => {
         const sSrc = s.getAttribute('src') || '';
         const type = s.getAttribute('type') || '';
-        return `<source src="${sSrc.replace(/^\/?assets\//, '__THEME_URI__/assets/')}"${type ? ` type="${type}"` : ''} />`;
+        return `<source src="${escapeAttr(normalizeAssetUrl(sSrc))}"${type ? ` type="${type}"` : ''} />`;
     }).join('\n');
     
     const attrs: any = {};
@@ -1924,7 +2171,7 @@ function createVideo(el: HTMLElement, ctx: ConversionContext): string {
 
 function createAudio(el: HTMLElement, ctx: ConversionContext): string {
     const src = el.getAttribute('src') || '';
-    const safeSrc = src.replace(/^\/?assets\//, '__THEME_URI__/assets/');
+    const safeSrc = normalizeAssetUrl(src);
     const className = getClassName(el);
     
     const autoplay = el.hasAttribute('autoplay');
@@ -1935,7 +2182,7 @@ function createAudio(el: HTMLElement, ctx: ConversionContext): string {
     const sources = Array.from(el.querySelectorAll('source')).map(s => {
         const sSrc = s.getAttribute('src') || '';
         const type = s.getAttribute('type') || '';
-        return `<source src="${sSrc.replace(/^\/?assets\//, '__THEME_URI__/assets/')}"${type ? ` type="${type}"` : ''} />`;
+        return `<source src="${escapeAttr(normalizeAssetUrl(sSrc))}"${type ? ` type="${type}"` : ''} />`;
     }).join('\n');
     
     const attrs: any = {};
@@ -2031,23 +2278,21 @@ function createTable(el: HTMLElement, ctx: ConversionContext): string {
     // core/table ONLY supports plain text/inline HTML in cells.
     // If any cell contains block-level content, preserve as a styled container instead.
     const hasRichContent = el.querySelector('td button, td a, td div, td img, td svg, th button, th a[class], th div');
-    if (hasRichContent) {
-        // Preserve as raw HTML table wrapped in our editable container
-        // This keeps prices, CTA buttons, and styled elements intact
-        const fullTable = el.outerHTML;
-        const finalClass = `wp-block-theme-factory-container ${className}`.trim();
-        trackBlock(ctx, 'theme-factory/container');
-        
+    const hasStyledLayoutClasses = /\b(?:w-|min-w-|max-w-|bg-|rounded|shadow|border|text-|align-|overflow-|whitespace-|sticky|top-|left-|right-|table-auto|table-fixed)\b/.test(className);
+    if (hasRichContent || hasStyledLayoutClasses) {
         if (ctx?.logs) {
             ctx.logs.push({
                 type: 'info',
-                message: 'Rich Table Preserved',
-                suggestion: 'This table contains buttons/links/styled elements inside cells. It was preserved as a container block instead of core/table to maintain visual fidelity. Edit the HTML directly if needed.',
+                message: 'Styled Table Preserved',
+                suggestion: 'This table uses styling or rich cell content that core/table cannot round-trip safely. It was preserved as a visual custom table block instead of risking invalid Gutenberg markup.',
                 snippet: `<table class="${className}"> (${el.querySelectorAll('td, th').length} cells with rich content)`
             });
         }
-        
-        return `<!-- wp:theme-factory/container {"className":"${className}"} -->\n<div class="${finalClass}">\n${fullTable}\n</div>\n<!-- /wp:theme-factory/container -->`;
+
+        trackBlock(ctx, 'theme-factory/table');
+        return serializeSelfClosingBlock('theme-factory/table', {
+            content: encodeBase64Utf8(preparePreservedHtml(el, ctx))
+        });
     }
 
     // Gutenberg core table requires completely flattened innerHTML for table cells,
@@ -2161,7 +2406,7 @@ function createGallery(el: HTMLElement, ctx: ConversionContext): string {
     const imgs = Array.from(el.querySelectorAll('img')) as HTMLImageElement[];
     
     const imageBlocks = imgs.map(img => {
-        const src = (img.getAttribute('src') || '').replace(/^\/?assets\//, '__THEME_URI__/assets/');
+        const src = normalizeAssetUrl(img.getAttribute('src') || '');
         const alt = img.getAttribute('alt') || '';
         return `<!-- wp:image -->\n<figure class="wp-block-image"><img src="${src}" alt="${escapeAttr(alt)}"/></figure>\n<!-- /wp:image -->`;
     }).join('\n\n');
@@ -2183,7 +2428,7 @@ function createMediaText(el: HTMLElement, ctx: ConversionContext, kids: HTMLElem
     
     // Find the actual <img> in the media side
     const img = mediaKid.tagName.toLowerCase() === 'img' ? mediaKid as HTMLImageElement : mediaKid.querySelector('img') as HTMLImageElement;
-    const src = img ? (img.getAttribute('src') || '').replace(/^\/?assets\//, '__THEME_URI__/assets/') : '';
+    const src = img ? normalizeAssetUrl(img.getAttribute('src') || '') : '';
     const alt = img ? (img.getAttribute('alt') || '') : '';
     
     const textContent = processChildren(textKid, ctx).join('\n\n');
@@ -2255,7 +2500,7 @@ function detectEmbedProvider(src: string): { provider: string; url: string } | n
 // ---------------------------------------------------------------------------
 
 function getClassName(el: Element): string {
-  let cn = el.getAttribute('class') || '';
+  let cn = decodeLooseUnicodeEscapes(el.getAttribute('class') || '');
   if (!cn) return '';
 
   // STRIP VIEWPORT HEIGHTS:
@@ -2272,7 +2517,7 @@ function getClassName(el: Element): string {
   // Blanket regex catches animate-tilt, animate-fade-in, animate-scale-in, etc.
   cn = cn.replace(/\banimate-[\w-]+\b/g, '');
 
-  return cn.trim().replace(/\s+/g, ' ');
+  return dedupeClassTokens(cn.trim().replace(/\s+/g, ' '));
 }
 
 /**
@@ -2365,7 +2610,7 @@ function cleanMuiArtifacts(el: HTMLElement) {
 
 export function escapeHtml(unsafe: string): string {
     if (!unsafe) return '';
-    return unsafe
+    return normalizeLooseText(unsafe)
          .replace(/&/g, "&amp;")
          .replace(/</g, "&lt;")
          .replace(/>/g, "&gt;")
@@ -2413,13 +2658,14 @@ function validateBlockMarkup(markup: string): { isValid: boolean; errors: string
     const stack: string[] = [];
     
     // Match opening and closing block comments
-    const blockPattern = /<!--\s*(\/?)wp:([a-zA-Z0-9-]+\/?\w*)\s*(?:\{[^}]*\})?\s*(\/?)\s*-->/g;
-    let match;
+    const blockPattern = /<!--\s*(\/?)wp:([a-zA-Z0-9-]+(?:\/[a-zA-Z0-9-]+)?)[\s\S]*?-->/g;
+    let match: RegExpExecArray | null;
     
     while ((match = blockPattern.exec(markup)) !== null) {
         const isClosing = match[1] === '/';
         const blockName = match[2];
-        const isSelfClosing = match[3] === '/';
+        const rawComment = match[0];
+        const isSelfClosing = !isClosing && /\/\s*-->$/.test(rawComment);
         
         if (isSelfClosing) continue; // Self-closing blocks are valid on their own
         
@@ -2438,6 +2684,52 @@ function validateBlockMarkup(markup: string): { isValid: boolean; errors: string
         errors.push(`Unclosed block: wp:${unclosed}`);
     }
     
+    return { isValid: errors.length === 0, errors };
+}
+
+function validateCustomBlockContracts(markup: string): { isValid: boolean; errors: string[] } {
+    const errors: string[] = [];
+
+    if (/<!--\s*wp:theme-factory\/container\s+[^>]*"style":"[^"]+"/.test(markup)) {
+        errors.push('theme-factory/container must not serialize legacy string style attributes.');
+    }
+
+    if (/<!--\s*wp:theme-factory\/container\s+[^>]*"extraAttributes":"[^"]+"/.test(markup)) {
+        errors.push('theme-factory/container must not serialize legacy extraAttributes blobs.');
+    }
+
+    if (/<!--\s*wp:theme-factory\/container(?:\s+[^>]*)?-->\s*<[^>]+class="[^"]*wp-block-theme-factory-container/m.test(markup)) {
+        errors.push('theme-factory/container should store only inner block content, not a saved wrapper element.');
+    }
+
+    if (/<!--\s*wp:image(?:\s+[^>]*)?-->[\s\S]*?<img[^>]+\sloading=/.test(markup)) {
+        errors.push('core/image blocks must not serialize loading attributes because Gutenberg does not round-trip them reliably.');
+    }
+
+    if (/<!--\s*wp:group\s+[^>]*"className":"tf-breadcrumbs"/.test(markup)) {
+        errors.push('Breadcrumb modules must not be serialized as handcrafted core/group markup.');
+    }
+
+    if (/<!--\s*wp:group\s+[^>]*"className":"tf-related-links-module"/.test(markup)) {
+        errors.push('Related links modules must not be serialized as handcrafted core/group markup.');
+    }
+
+    if (/<!--\s*wp:theme-factory\/button(?:\s+[^>]*)?-->\s*<a\b[\s\S]*?<!--\s*\/wp:theme-factory\/button\s*-->/.test(markup)) {
+        errors.push('theme-factory/button should serialize as a self-closing dynamic block, not saved anchor HTML.');
+    }
+
+    if (/<!--\s*wp:theme-factory\/svg(?:\s+[^>]*)?-->\s*<div\b[\s\S]*?<!--\s*\/wp:theme-factory\/svg\s*-->/.test(markup)) {
+        errors.push('theme-factory/svg should serialize as a self-closing dynamic block, not saved wrapper HTML.');
+    }
+
+    if (/<!--\s*wp:theme-factory\/table(?:\s+[^>]*)?-->\s*<div\b[\s\S]*?<!--\s*\/wp:theme-factory\/table\s*-->/.test(markup)) {
+        errors.push('theme-factory/table should serialize as a self-closing dynamic block, not saved wrapper HTML.');
+    }
+
+    if (/<!--\s*wp:theme-factory\/container\s+[^>]*"className":"wp-block-buttons"/.test(markup)) {
+        errors.push('Button groups must use core/buttons or theme-factory/buttons, not theme-factory/container with wp-block-buttons.');
+    }
+
     return { isValid: errors.length === 0, errors };
 }
 
