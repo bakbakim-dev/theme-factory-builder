@@ -451,19 +451,31 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
 
     const toggleRoute = (path: string) => { const next = new Set(selectedRoutes); if (next.has(path)) next.delete(path); else next.add(path); setSelectedRoutes(next); };
 
-    // Pre-extract FAQ data from a source ZIP that has TSX files.
-    // This is needed because builder pipelines produce dist-only ZIPs (no source TSX),
+    // Pre-extract FAQ data from source files before the builder strips them out.
+    // This is needed because builder pipelines produce dist-only ZIPs (no source files),
     // so FAQ extraction inside processConversion would find nothing.
     const preExtractFaqFromSource = async (sourceZipContent: any): Promise<{q: string, a: string}[]> => {
         const faq: {q: string, a: string}[] = [];
+        const normalizeJsValue = (value: string): string =>
+            (value || '')
+                .replace(/\\u([0-9a-fA-F]{4})/g, (_m, hex) => String.fromCharCode(parseInt(hex, 16)))
+                .replace(/\\n/g, ' ')
+                .replace(/\\r/g, ' ')
+                .replace(/\\t/g, ' ')
+                .replace(/\\'/g, "'")
+                .replace(/\\"/g, '"')
+                .replace(/\\`/g, '`')
+                .replace(/\s+/g, ' ')
+                .trim();
         const allSrcFiles = Object.keys(sourceZipContent.files).filter(n => !sourceZipContent.files[n].dir && !n.includes('__MACOSX'));
         const normPath = (p: string) => p.replace(/\\/g, '/').toLowerCase();
-        const tsxFiles = allSrcFiles.filter(f => {
+        const sourceFaqFiles = allSrcFiles.filter(f => {
             const n = normPath(f);
-            return (n.endsWith('.tsx') || n.endsWith('.jsx')) && !n.includes('node_modules') && !n.endsWith('.d.ts') &&
+            return (n.endsWith('.tsx') || n.endsWith('.jsx') || n.endsWith('.ts') || n.endsWith('.js') || n.endsWith('.json')) &&
+                !n.includes('node_modules') && !n.endsWith('.d.ts') &&
                 (n.includes('/src/pages/') || n.includes('/src/components/') || n.includes('/pages/') || n.includes('/components/') || n.includes('faq') || n.includes('accordion') || n.includes('data') || n.includes('constants'));
         });
-        for (const filePath of tsxFiles) {
+        for (const filePath of sourceFaqFiles) {
             try {
                 const content = await sourceZipContent.files[filePath].async('string');
                 let match;
@@ -475,16 +487,25 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                         faq.push({ q, a });
                     }
                 }
-                const inlineFaqRegex = /\{\s*q:\s*["']([^"']+)["']\s*,\s*a:\s*["']([^"']+)["']\s*\}/g;
+                const inlineFaqRegex = /\{\s*q\s*:\s*(['"`])((?:\\.|(?!\1)[\s\S])*?)\1\s*,\s*a\s*:\s*(['"`])((?:\\.|(?!\3)[\s\S])*?)\3\s*\}/g;
                 while ((match = inlineFaqRegex.exec(content)) !== null) {
-                    const q = match[1].trim(); const a = match[2].trim();
+                    const q = normalizeJsValue(match[2]).trim();
+                    const a = normalizeJsValue(match[4]).trim();
+                    if (q && a && q.length > 5 && a.length > 10 && !faq.some(item => item.q.toLowerCase() === q.toLowerCase())) {
+                        faq.push({ q, a });
+                    }
+                }
+                const namedFaqRegex = /(?:question|title)\s*:\s*(['"`])((?:\\.|(?!\1)[\s\S])*?)\1[\s\S]{0,400}?(?:answer|content)\s*:\s*(['"`])((?:\\.|(?!\3)[\s\S])*?)\3/gi;
+                while ((match = namedFaqRegex.exec(content)) !== null) {
+                    const q = normalizeJsValue(match[2]).trim();
+                    const a = normalizeJsValue(match[4]).trim();
                     if (q && a && q.length > 5 && a.length > 10 && !faq.some(item => item.q.toLowerCase() === q.toLowerCase())) {
                         faq.push({ q, a });
                     }
                 }
             } catch { /* skip unreadable files */ }
         }
-        if (faq.length > 0) addLog(`Pre-extracted ${faq.length} FAQ items from source TSX files`, 'success');
+        if (faq.length > 0) addLog(`Pre-extracted ${faq.length} FAQ items from source files`, 'success');
         return faq;
     };
 
@@ -1199,6 +1220,24 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
   'use strict';
   
 
+  function decodeLooseUnicodeEscapes(str) {
+    return (str || '').replace(/u([0-9a-fA-F]{4})/g, function(match, hex) {
+      var code = parseInt(hex, 16);
+      return Number.isFinite(code) ? String.fromCharCode(code) : match;
+    });
+  }
+
+  function decodeHtmlEntities(str) {
+    if (!str || typeof document === 'undefined') return str || '';
+    var textarea = document.createElement('textarea');
+    textarea.innerHTML = str;
+    return textarea.value;
+  }
+
+  function normalizeLooseText(str) {
+    return decodeHtmlEntities(decodeLooseUnicodeEscapes(str || ''));
+  }
+
 
 
 
@@ -1461,21 +1500,48 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     return /^(who|what|when|where|why|how|can|could|do|does|did|is|are|will|would|should|have|has|had)\b/.test(normalized);
   }
 
+  function hasFaqHeadingSignal(text) {
+    var headingText = normalizeLooseText(text || '').toLowerCase();
+    if (!headingText) return false;
+    return headingText.indexOf('faq') !== -1 ||
+           headingText.indexOf('question') !== -1 ||
+           headingText.indexOf('frequently asked') !== -1 ||
+           headingText.indexOf('common questions') !== -1;
+  }
+
   function containerHasFaqContext(container) {
     if (!(container instanceof HTMLElement)) return false;
-    var classText = ((container.className || '') + ' ' + (container.id || '')).toLowerCase();
-    if (/(^|[\s_-])(faq|accordion|question|questions)(?=$|[\s_-])/.test(classText)) {
-      return true;
+    var classSignal = /(^|[\s_-])(faq|accordion|question|questions)(?=$|[\s_-])/;
+
+    // Check self + up to 4 ancestors for FAQ class/id or FAQ headings.
+    var node = container;
+    for (var depth = 0; node && depth < 5; depth++) {
+      var classText = ((node.className || '') + ' ' + (node.id || '')).toLowerCase();
+      if (classSignal.test(classText)) return true;
+
+      var headings = node.querySelectorAll ? node.querySelectorAll('h1, h2, h3, h4, h5, h6') : [];
+      for (var i = 0; i < headings.length; i++) {
+        if (hasFaqHeadingSignal(headings[i].textContent || '')) return true;
+      }
+
+      node = node.parentElement;
     }
-    var parent = container.closest('section, article, main, aside, div');
-    if (!parent) return false;
-    var headings = parent.querySelectorAll('h1, h2, h3, h4, h5, h6');
-    for (var i = 0; i < headings.length; i++) {
-      var headingText = (headings[i].textContent || '').toLowerCase();
-      if (headingText.indexOf('faq') !== -1 || headingText.indexOf('question') !== -1 || headingText.indexOf('frequently asked') !== -1 || headingText.indexOf('common questions') !== -1) {
+
+    // If heading is a sibling (common converted layout), inspect nearby previous siblings.
+    var prev = container.previousElementSibling;
+    var hops = 0;
+    while (prev && hops < 5) {
+      if (/^H[1-6]$/i.test(prev.tagName || '') && hasFaqHeadingSignal(prev.textContent || '')) {
         return true;
       }
+      var nestedHeading = prev.querySelector ? prev.querySelector('h1, h2, h3, h4, h5, h6') : null;
+      if (nestedHeading && hasFaqHeadingSignal(nestedHeading.textContent || '')) {
+        return true;
+      }
+      prev = prev.previousElementSibling;
+      hops++;
     }
+
     return false;
   }
 
@@ -1609,8 +1675,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         }
       }
       
-      // Need at least 3 FAQ-like items AND they should be the majority
-      if (faqPairs.length < 3 || faqPairs.length < kids.length * 0.5) return;
+      // Need at least 3 resolvable FAQ items.
+      // If nearly all children look like questions, allow sparse answer coverage
+      // so sections still initialize when faq-data extraction is incomplete.
+      var questionLikeCount = 0;
+      for (var qIdx = 0; qIdx < kids.length; qIdx++) {
+        var qTrigger = findTrigger(kids[qIdx]);
+        if (!qTrigger) continue;
+        var qText = normalizeLooseText((qTrigger.textContent || '').trim());
+        if (looksLikeQuestionText(qText)) questionLikeCount++;
+      }
+
+      if (faqPairs.length < 3) return;
+      var mostlyQuestionRows = questionLikeCount >= 3 && questionLikeCount >= kids.length * 0.8;
+      if (!mostlyQuestionRows && faqPairs.length < kids.length * 0.5) return;
       
       // Skip details-based accordions (already working natively)
       if (container.querySelector('details, summary')) return;
@@ -2648,48 +2726,79 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
   // Initialize Radix Tabs - handle click to switch active tab
   function initTabs() {
     var tabLists = document.querySelectorAll('[role="tablist"]');
+
+    function getTabTriggers(tabList) {
+      return Array.from(tabList.querySelectorAll('[role="tab"]')).filter(function(el) {
+        return el instanceof HTMLElement;
+      });
+    }
+
+    function getTabPanel(trigger) {
+      var panelId = trigger.getAttribute('aria-controls');
+      return panelId ? resolveControlledElement(panelId) : null;
+    }
+
+    function applyTabState(triggers, activeTrigger) {
+      triggers.forEach(function(t) {
+        var isActive = t === activeTrigger;
+        t.setAttribute('data-state', isActive ? 'active' : 'inactive');
+        t.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        t.setAttribute('tabindex', isActive ? '0' : '-1');
+        if (t.tagName !== 'BUTTON') {
+          t.style.cursor = 'pointer';
+        }
+
+        var tPanel = getTabPanel(t);
+        if (!tPanel) return;
+
+        tPanel.setAttribute('data-state', isActive ? 'active' : 'inactive');
+        if (isActive) {
+          tPanel.removeAttribute('hidden');
+          tPanel.style.display = '';
+          tPanel.style.maxHeight = 'none';
+          tPanel.style.height = 'auto';
+          tPanel.style.overflow = 'visible';
+        } else {
+          tPanel.setAttribute('hidden', '');
+          tPanel.style.display = 'none';
+        }
+      });
+    }
     
     tabLists.forEach(function(tabList) {
-      var triggers = tabList.querySelectorAll('[role="tab"]');
+      if (tabList.getAttribute('data-tf-tabs-init')) return;
+      tabList.setAttribute('data-tf-tabs-init', 'true');
+
+      var triggers = getTabTriggers(tabList);
+      if (!triggers.length) return;
+
+      var activeTrigger = null;
+      for (var i = 0; i < triggers.length; i++) {
+        var candidate = triggers[i];
+        if (candidate.getAttribute('data-state') === 'active' || candidate.getAttribute('aria-selected') === 'true') {
+          activeTrigger = candidate;
+          break;
+        }
+      }
+      if (!activeTrigger) activeTrigger = triggers[0];
+
+      applyTabState(triggers, activeTrigger);
       
       triggers.forEach(function(trigger) {
-        trigger.addEventListener('click', function(e) {
-          e.preventDefault();
-          
-          // Get the panel ID from aria-controls
-          var panelId = trigger.getAttribute('aria-controls');
-          if (!panelId) return;
-          
-          var panel = resolveControlledElement(panelId);
-          if (!panel) return;
-          
-          // Deactivate all tabs in this tablist
-          triggers.forEach(function(t) {
-            t.setAttribute('data-state', 'inactive');
-            t.setAttribute('aria-selected', 'false');
-            t.setAttribute('tabindex', '-1');
-            
-            // Hide corresponding panel
-            var tPanelId = t.getAttribute('aria-controls');
-            if (tPanelId) {
-              var tPanel = resolveControlledElement(tPanelId);
-              if (tPanel) {
-                tPanel.setAttribute('data-state', 'inactive');
-                tPanel.setAttribute('hidden', '');
-              }
-            }
-          });
-          
-          // Activate clicked tab
-          trigger.setAttribute('data-state', 'active');
-          trigger.setAttribute('aria-selected', 'true');
-          trigger.setAttribute('tabindex', '0');
-          
-          // Show corresponding panel
-          panel.setAttribute('data-state', 'active');
-          panel.removeAttribute('hidden');
-          
-          console.log('Tab switched to:', panelId);
+        if (trigger.__tfTabBound) return;
+        trigger.__tfTabBound = true;
+
+        function activateTab(e) {
+          if (e) e.preventDefault();
+          applyTabState(triggers, trigger);
+          console.log('Tab switched to:', trigger.getAttribute('aria-controls'));
+        }
+
+        trigger.addEventListener('click', activateTab);
+        trigger.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' || e.key === ' ') {
+            activateTab(e);
+          }
         });
       });
     });
@@ -2713,7 +2822,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       if (tabs.length < 2) return; // Need at least 2 tabs
       
       // Skip if already initialized
-      if (tabList.getAttribute('data-tf-init')) return;
+      if (tabList.getAttribute('data-tf-init') || tabList.getAttribute('data-tf-tabs-init')) return;
       tabList.setAttribute('data-tf-init', 'true');
       
       console.log('GENERIC TABS: Found tablist with', tabs.length, 'tabs');
@@ -2926,6 +3035,18 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     };
     
     // Extract Q/A from build artifacts (compiled JS/HTML)
+    const normalizeExtractedJsString = (value: string): string =>
+      (value || '')
+        .replace(/\\u([0-9a-fA-F]{4})/g, (_m, hex) => String.fromCharCode(parseInt(hex, 16)))
+        .replace(/\\n/g, ' ')
+        .replace(/\\r/g, ' ')
+        .replace(/\\t/g, ' ')
+        .replace(/\\'/g, "'")
+        .replace(/\\"/g, '"')
+        .replace(/\\`/g, '`')
+        .replace(/\s+/g, ' ')
+        .trim();
+
     const extractFaqFromBuildText = (text: string): {q: string, a: string}[] => {
       const out: {q: string, a: string}[] = [];
       
@@ -2933,7 +3054,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       const tagRe = /<AccordionTrigger\b[^>]*>([\s\S]*?)<\/AccordionTrigger>[\s\S]*?<AccordionContent\b[^>]*>([\s\S]*?)<\/AccordionContent>/g;
       
       // Pattern B: common "q:" "a:" object literals in built JS
-      const inlineRe = /\{\s*q:\s*["'\`]([\s\S]*?)["'\`]\s*,\s*a:\s*["'\`]([\s\S]*?)["'\`]\s*\}/g;
+      const inlineRe = /\{\s*q\s*:\s*(['"`])((?:\\.|(?!\1)[\s\S])*?)\1\s*,\s*a\s*:\s*(['"`])((?:\\.|(?!\3)[\s\S])*?)\3\s*\}/g;
       
       // Small cleaner for both
       const clean = (s: string) =>
@@ -2952,8 +3073,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       }
       
       while ((m = inlineRe.exec(text)) !== null) {
-        const q = clean(m[1]);
-        const a = clean(m[2]);
+        const q = clean(normalizeExtractedJsString(m[2] || ''));
+        const a = clean(normalizeExtractedJsString(m[4] || ''));
         if (q && a && a.length > 10) out.push({ q, a });
       }
       
@@ -2967,7 +3088,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     const sourceTsxFiles = allFiles.filter(f => {
       const n = norm(f);
       return (
-        (n.endsWith('.tsx') || n.endsWith('.jsx')) &&
+        (n.endsWith('.tsx') || n.endsWith('.jsx') || n.endsWith('.ts') || n.endsWith('.js') || n.endsWith('.json')) &&
         !n.includes('node_modules') &&
         !n.endsWith('.d.ts') &&
         (
@@ -2993,9 +3114,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     addLog(`FAQ.tsx included in scan set? ${inScan}`, 'info');
     
     if (sourceTsxFiles.length === 0) {
-      addLog(`No TSX/JSX files found in ZIP. Will fallback to scanning JS/HTML build artifacts...`, 'warning');
+      addLog(`No source FAQ files found in ZIP. Will fallback to scanning JS/HTML build artifacts...`, 'warning');
     } else {
-      addLog(`Scanning ${sourceTsxFiles.length} TSX/JSX files for FAQ/Accordion content...`, 'info');
+      addLog(`Scanning ${sourceTsxFiles.length} source files for FAQ/Accordion content...`, 'info');
     }
     
     // CRITICAL: Prioritize FAQ.tsx files first - process them before city pages
@@ -3064,11 +3185,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             }
             
             // Pattern 3: Inline FAQ arrays used in city pages: { q: "...", a: "..." }
-            const inlineFaqRegex = /\{\s*q:\s*["']([^"']+)["']\s*,\s*a:\s*["']([^"']+)["']\s*\}/g;
+            // Handles escaped quotes/apostrophes and template literal strings.
+            const inlineFaqRegex = /\{\s*q\s*:\s*(['"`])((?:\\.|(?!\1)[\s\S])*?)\1\s*,\s*a\s*:\s*(['"`])((?:\\.|(?!\3)[\s\S])*?)\3\s*\}/g;
             
             while ((match = inlineFaqRegex.exec(content)) !== null) {
-                const question = match[1].trim();
-                const answer = match[2].trim();
+                const question = normalizeExtractedJsString(match[2]).trim();
+                const answer = normalizeExtractedJsString(match[4]).trim();
                 
                 if (question && answer && question.length > 5 && answer.length > 10) {
                     if (!faqData.some(item => item.q.toLowerCase() === question.toLowerCase())) {
@@ -3099,18 +3221,18 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             
             // Pattern 5: Common alternative key names (question/answer, title/description, title/content)
             const altKeyPatterns = [
-                /\{\s*question:\s*["'`]([^"'`]+)["'`]\s*,\s*answer:\s*["'`]([^"'`]+)["'`]\s*\}/g,
-                /\{\s*title:\s*["'`]([^"'`]+)["'`]\s*,\s*(?:description|content|answer):\s*["'`]([^"'`]+)["'`]\s*\}/g,
-                /\{\s*answer:\s*["'`]([^"'`]+)["'`]\s*,\s*question:\s*["'`]([^"'`]+)["'`]\s*\}/g,
+                /\{\s*question\s*:\s*(['"`])((?:\\.|(?!\1)[\s\S])*?)\1\s*,\s*answer\s*:\s*(['"`])((?:\\.|(?!\3)[\s\S])*?)\3\s*\}/g,
+                /\{\s*title\s*:\s*(['"`])((?:\\.|(?!\1)[\s\S])*?)\1\s*,\s*(?:description|content|answer)\s*:\s*(['"`])((?:\\.|(?!\3)[\s\S])*?)\3\s*\}/g,
+                /\{\s*answer\s*:\s*(['"`])((?:\\.|(?!\1)[\s\S])*?)\1\s*,\s*question\s*:\s*(['"`])((?:\\.|(?!\3)[\s\S])*?)\3\s*\}/g,
             ];
             
             for (const altRegex of altKeyPatterns) {
                 let altMatch;
                 while ((altMatch = altRegex.exec(content)) !== null) {
                     // For the reversed pattern (answer first), swap q/a
-                    const isReversed = altRegex.source.startsWith('\\{\\s*answer:');
-                    const question = (isReversed ? altMatch[2] : altMatch[1]).trim();
-                    const answer = (isReversed ? altMatch[1] : altMatch[2]).trim();
+                    const isReversed = altRegex.source.startsWith('\\{\\s*answer\\s*:');
+                    const question = normalizeExtractedJsString(isReversed ? altMatch[4] : altMatch[2]).trim();
+                    const answer = normalizeExtractedJsString(isReversed ? altMatch[2] : altMatch[4]).trim();
                     
                     if (question && answer && question.length > 5 && answer.length > 10) {
                         if (!faqData.some(item => item.q.toLowerCase() === question.toLowerCase())) {

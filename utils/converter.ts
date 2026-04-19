@@ -208,8 +208,19 @@ function findFaqAnswerMarkup(questionText: string, ctx: ConversionContext): stri
 }
 
 function extractQuestionTextFromElement(el: HTMLElement): string {
+  const trigger = (el.matches('button, summary, a[aria-expanded], a[href="#"], [role="button"]')
+    ? el
+    : el.querySelector('button, summary, a[aria-expanded], a[href="#"], [role="button"]')) as HTMLElement | null;
+
+  if (trigger) {
+    const triggerClone = trigger.cloneNode(true) as HTMLElement;
+    triggerClone.querySelectorAll('svg, [aria-hidden="true"]').forEach((node) => node.remove());
+    const triggerText = normalizeLooseText((triggerClone.textContent || '').replace(/\s+/g, ' ').trim());
+    if (triggerText) return triggerText;
+  }
+
   const clone = el.cloneNode(true) as HTMLElement;
-  clone.querySelectorAll('svg, button, [aria-hidden="true"]').forEach((node) => node.remove());
+  clone.querySelectorAll('svg, [aria-hidden="true"], [role="region"], [data-radix-accordion-content], .tf-faq-answer').forEach((node) => node.remove());
   return normalizeLooseText((clone.textContent || '').replace(/\s+/g, ' ').trim());
 }
 
@@ -1209,13 +1220,14 @@ function createFormSelect(el: HTMLSelectElement, ctx: ConversionContext): string
 
 function createContainer(el: HTMLElement, ctx: ConversionContext, supportInteractivity: boolean = false): string {
     const elClassName = getClassName(el);
+    const isWithinFormContext = el.closest('form') !== null;
     
     // ─── HEURISTIC: Radix/Headless UI Accordion → core/details ────────
     // Detect accordion containers with data-orientation="vertical" and
     // children that have data-state + role="region" patterns
     const isAccordionContainer = el.getAttribute('data-orientation') === 'vertical' && 
                                   el.querySelector('[data-state][role="region"]');
-    if (isAccordionContainer) {
+    if (!isWithinFormContext && isAccordionContainer) {
         const detailsBlocks: string[] = [];
         const items = Array.from(el.children).filter(c => c instanceof HTMLElement) as HTMLElement[];
         
@@ -1385,7 +1397,7 @@ function createContainer(el: HTMLElement, ctx: ConversionContext, supportInterac
         && !el.hasAttribute('data-orientation')
         && !el.querySelector('[data-orientation="vertical"]');
     
-    if (isIndividualAccordionItem) {
+    if (!isWithinFormContext && isIndividualAccordionItem) {
         // Extract question text from trigger (skip SVG chevron icons)
         let questionText = '';
         for (const node of Array.from(elTrigger.childNodes)) {
@@ -1481,7 +1493,7 @@ function createContainer(el: HTMLElement, ctx: ConversionContext, supportInterac
         && !singleCandidate.querySelector('[data-orientation="vertical"]')
         && (singleCandidate.querySelectorAll('button[data-state]:not([role="combobox"])').length <= 2);
     
-    if ((buttonFaqItems.length >= 2 && buttonFaqItems.length >= directKids.length * 0.6) || isSingleQuestion) {
+    if (!isWithinFormContext && ((buttonFaqItems.length >= 2 && buttonFaqItems.length >= directKids.length * 0.6) || isSingleQuestion)) {
         const detailsBlocks: string[] = [];
         
         for (const item of buttonFaqItems) {

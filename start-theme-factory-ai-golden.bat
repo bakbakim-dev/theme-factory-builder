@@ -1,44 +1,89 @@
 @echo off
 setlocal
 
-set BUILDER_PORT=7860
-set BUILDER_DIR=C:\Users\Marketplace\Documents\antigravity\whipify 3.0\theme-factory-server
+set "APP_DIR=%~dp0"
+set "BUILDER_DIR=C:\Users\Marketplace\Documents\antigravity\whipify 3.0\theme-factory-server"
+set "NODE_EXE=C:\Program Files\nodejs\node.exe"
+set "NPM_CMD=C:\Program Files\nodejs\npm.cmd"
+set "BUILDER_PORT=7860"
+set "BUILDER_URL=http://localhost:%BUILDER_PORT%/health"
+set "UI_PORT=%~1"
+if "%UI_PORT%"=="" set "UI_PORT=5174"
+set "UI_URL=http://localhost:%UI_PORT%"
 
-set PORT=%~1
-if "%PORT%"=="" set PORT=5174
+cd /d "%APP_DIR%"
 
-cd /d "%~dp0"
+echo [Theme Factory] Starting services...
+echo [Theme Factory] Builder: %BUILDER_URL%
+echo [Theme Factory] UI: %UI_URL%
 
-REM --- Ensure builder server is running ---
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ok = (Test-NetConnection -ComputerName localhost -Port %BUILDER_PORT%).TcpTestSucceeded; exit ([int](-not $ok))" >nul 2>nul
-if errorlevel 1 (
-  if not exist "%BUILDER_DIR%\\index.js" (
-    echo [Theme Factory] Builder server not found: "%BUILDER_DIR%"
-    echo [Theme Factory] Edit BUILDER_DIR in this .bat to your server path.
-    pause
-    exit /b 1
-  )
-  echo [Theme Factory] Starting builder server on http://localhost:%BUILDER_PORT% ...
-  start "Theme Factory Builder" /min cmd /c "cd /d \"%BUILDER_DIR%\" && npm.cmd start"
+if not exist "%BUILDER_DIR%\index.js" (
+  echo [Theme Factory] Builder server not found: "%BUILDER_DIR%"
+  pause
+  exit /b 1
+)
+if not exist "%NODE_EXE%" (
+  echo [Theme Factory] Could not find node.exe at "%NODE_EXE%"
+  pause
+  exit /b 1
+)
+if not exist "%NPM_CMD%" (
+  echo [Theme Factory] Could not find npm.cmd at "%NPM_CMD%"
+  pause
+  exit /b 1
 )
 
-REM Wait up to ~30s for /health to respond
-set /a _tries=0
-:wait_builder
-set /a _tries+=1
+REM --- Builder ---
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "try { $r = Invoke-RestMethod -Uri 'http://localhost:%BUILDER_PORT%/health' -TimeoutSec 3; if ($r.status -eq 'ok') { exit 0 } } catch { } ; exit 1" >nul 2>nul
+  "try { $r = Invoke-RestMethod -Uri '%BUILDER_URL%' -TimeoutSec 2; if ($r.status -eq 'ok') { exit 0 } } catch { exit 1 }"
 if errorlevel 1 (
-  if %_tries% GEQ 10 (
-    echo [Theme Factory] Builder server did not come up. Check the Builder window/logs.
+  echo [Theme Factory] Launching builder...
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$c = Get-NetTCPConnection -LocalPort %BUILDER_PORT% -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($c -and $c.OwningProcess) { Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue }; [Environment]::SetEnvironmentVariable('PORT',$null,'Process'); Start-Process -FilePath '%NODE_EXE%' -ArgumentList 'index.js' -WorkingDirectory '%BUILDER_DIR%' -WindowStyle Hidden"
+)
+
+set /a BUILDER_TRIES=0
+:wait_builder
+set /a BUILDER_TRIES+=1
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "try { $r = Invoke-RestMethod -Uri '%BUILDER_URL%' -TimeoutSec 2; if ($r.status -eq 'ok') { exit 0 } else { exit 1 } } catch { exit 1 }"
+if errorlevel 1 (
+  if %BUILDER_TRIES% GEQ 20 (
+    echo [Theme Factory] Builder failed to start on localhost:%BUILDER_PORT%
     pause
     exit /b 1
   )
-  timeout /t 3 /nobreak >nul
+  timeout /t 1 /nobreak >nul
   goto wait_builder
 )
-echo [Theme Factory] Builder server OK.
 
-echo [Theme Factory] Starting UI on http://localhost:%PORT% ...
-call npm.cmd run dev -- --port %PORT%
+echo [Theme Factory] Builder ready.
+
+REM --- UI ---
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "try { $resp = Invoke-WebRequest -Uri '%UI_URL%' -TimeoutSec 2 -UseBasicParsing; if ($resp.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }"
+if errorlevel 1 (
+  echo [Theme Factory] Launching UI...
+  powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$c = Get-NetTCPConnection -LocalPort %UI_PORT% -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($c -and $c.OwningProcess) { Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue }; [Environment]::SetEnvironmentVariable('PORT',$null,'Process'); Start-Process -FilePath '%NPM_CMD%' -ArgumentList 'run','dev','--','--port','%UI_PORT%','--host','127.0.0.1' -WorkingDirectory '%APP_DIR%' -WindowStyle Hidden"
+)
+
+set /a UI_TRIES=0
+:wait_ui
+set /a UI_TRIES+=1
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "try { $resp = Invoke-WebRequest -Uri '%UI_URL%' -TimeoutSec 2 -UseBasicParsing; if ($resp.StatusCode -eq 200) { exit 0 } else { exit 1 } } catch { exit 1 }"
+if errorlevel 1 (
+  if %UI_TRIES% GEQ 25 (
+    echo [Theme Factory] UI failed to start on localhost:%UI_PORT%
+    pause
+    exit /b 1
+  )
+  timeout /t 1 /nobreak >nul
+  goto wait_ui
+)
+
+echo [Theme Factory] UI ready.
+start "" "%UI_URL%"
+echo [Theme Factory] All services started.
+exit /b 0
