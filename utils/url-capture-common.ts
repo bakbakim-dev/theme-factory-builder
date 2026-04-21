@@ -10,6 +10,7 @@ const normalizeRoutePath = (value: string): string => {
 
 const FILE_LIKE_EXTENSIONS = new Set([
     'avif',
+    'atom',
     'css',
     'eot',
     'gif',
@@ -24,12 +25,15 @@ const FILE_LIKE_EXTENSIONS = new Set([
     'mjs',
     'mp3',
     'mp4',
+    'gz',
     'otf',
     'pdf',
     'png',
+    'rss',
     'svg',
     'txt',
     'ttf',
+    'tar',
     'wav',
     'webm',
     'webmanifest',
@@ -76,10 +80,12 @@ const toCaptureUrl = (value: string): URL | null => {
     const trimmed = (value || '').trim();
     if (!trimmed) return null;
 
+    if (trimmed.startsWith('//')) return safeParseUrl(`https:${trimmed}`);
+
+    if (/^[^\s/?#:]+:\d+(?:[/?#].*)?$/i.test(trimmed)) return safeParseUrl(`https://${trimmed}`);
+
     const parsed = safeParseUrl(trimmed);
     if (parsed) return /^https?:$/i.test(parsed.protocol) ? parsed : null;
-
-    if (trimmed.startsWith('//')) return safeParseUrl(`https:${trimmed}`);
 
     if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return null;
 

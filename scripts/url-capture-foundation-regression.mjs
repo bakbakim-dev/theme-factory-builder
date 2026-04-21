@@ -15,6 +15,8 @@ assert.equal(defaults.bundleInspection, true);
 
 assert.equal(normalizeCaptureUrl('example.com'), 'https://example.com/');
 assert.equal(normalizeCaptureUrl('mikaily129.sg-host.com/edmonton'), 'https://mikaily129.sg-host.com/edmonton/');
+assert.equal(normalizeCaptureUrl('localhost:3000'), 'https://localhost:3000/');
+assert.equal(normalizeCaptureUrl('example.com:8443/path'), 'https://example.com:8443/path/');
 assert.equal(normalizeCaptureUrl('https://'), '');
 assert.equal(normalizeCaptureUrl('https://example.com/sitemap.xml'), 'https://example.com/sitemap.xml');
 assert.equal(normalizeCaptureUrl('https://example.com/docs/file.json?download=1'), 'https://example.com/docs/file.json?download=1');
@@ -60,6 +62,8 @@ assert.equal(toSyntheticArtifactPath('/foo#hash'), 'foo/index.html');
 assert.equal(toSyntheticArtifactPath('/app.js'), 'app.js');
 assert.equal(toSyntheticArtifactPath('../admin'), 'admin/index.html');
 assert.equal(toSyntheticArtifactPath('/pricing.v2'), 'pricing.v2/index.html');
+assert.equal(toSyntheticArtifactPath('/feed.atom'), 'feed.atom');
+assert.equal(toSyntheticArtifactPath('/archive.tar.gz'), 'archive.tar.gz');
 assert.equal(toSyntheticArtifactPath('/edmonton/pricing/'), 'edmonton/pricing/index.html');
 
 console.log('[PASS] URL capture defaults and normalization');
