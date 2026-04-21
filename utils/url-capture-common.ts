@@ -34,6 +34,7 @@ const FILE_LIKE_EXTENSIONS = new Set([
     'txt',
     'ttf',
     'tar',
+    'wasm',
     'wav',
     'webm',
     'webmanifest',
@@ -42,6 +43,7 @@ const FILE_LIKE_EXTENSIONS = new Set([
     'woff2',
     'xml',
     'zip',
+    'csv',
 ]);
 
 const hasFileLikeExtension = (pathname: string): boolean => {
@@ -80,7 +82,11 @@ const toCaptureUrl = (value: string): URL | null => {
     const trimmed = (value || '').trim();
     if (!trimmed) return null;
 
-    if (trimmed.startsWith('//')) return safeParseUrl(`https:${trimmed}`);
+    if (trimmed.startsWith('//')) {
+        if (/^\/{2,}\??(?:[?#].*)?$/i.test(trimmed) || /^\/{2,}\?.*$/i.test(trimmed)) return null;
+        const protocolRelative = safeParseUrl(`https:${trimmed}`);
+        return protocolRelative && protocolRelative.hostname ? protocolRelative : null;
+    }
 
     if (/^[^\s/?#:]+:\d+(?:[/?#].*)?$/i.test(trimmed)) return safeParseUrl(`https://${trimmed}`);
 

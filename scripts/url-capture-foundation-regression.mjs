@@ -24,6 +24,9 @@ assert.equal(normalizeCaptureUrl('javascript:alert(1)'), '');
 assert.equal(normalizeCaptureUrl('data:text/plain,hello'), '');
 assert.equal(normalizeCaptureUrl('mailto:test@example.com'), '');
 assert.equal(normalizeCaptureUrl('ftp://example.com/file.txt'), '');
+assert.equal(normalizeCaptureUrl('//'), '');
+assert.equal(normalizeCaptureUrl('//?x=1'), '');
+assert.equal(normalizeCaptureUrl('///'), '');
 assert.deepEqual(
   normalizeRouteSeedList(' /pricing\n/contact\npricing '),
   ['/pricing/', '/contact/'],
@@ -64,6 +67,10 @@ assert.equal(toSyntheticArtifactPath('../admin'), 'admin/index.html');
 assert.equal(toSyntheticArtifactPath('/pricing.v2'), 'pricing.v2/index.html');
 assert.equal(toSyntheticArtifactPath('/feed.atom'), 'feed.atom');
 assert.equal(toSyntheticArtifactPath('/archive.tar.gz'), 'archive.tar.gz');
+assert.equal(normalizeCaptureUrl('https://example.com/module.wasm'), 'https://example.com/module.wasm');
+assert.equal(toSyntheticArtifactPath('/module.wasm'), 'module.wasm');
+assert.equal(normalizeCaptureUrl('https://example.com/data.csv'), 'https://example.com/data.csv');
+assert.equal(toSyntheticArtifactPath('/data.csv'), 'data.csv');
 assert.equal(toSyntheticArtifactPath('/edmonton/pricing/'), 'edmonton/pricing/index.html');
 
 console.log('[PASS] URL capture defaults and normalization');
