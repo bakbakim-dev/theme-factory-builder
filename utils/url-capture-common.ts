@@ -8,9 +8,43 @@ const normalizeRoutePath = (value: string): string => {
     return `/${stripped}/`;
 };
 
+const FILE_LIKE_EXTENSIONS = new Set([
+    'avif',
+    'css',
+    'eot',
+    'gif',
+    'htm',
+    'html',
+    'ico',
+    'jpeg',
+    'jpg',
+    'js',
+    'json',
+    'map',
+    'mjs',
+    'mp3',
+    'mp4',
+    'otf',
+    'pdf',
+    'png',
+    'svg',
+    'txt',
+    'ttf',
+    'wav',
+    'webm',
+    'webmanifest',
+    'webp',
+    'woff',
+    'woff2',
+    'xml',
+    'zip',
+]);
+
 const hasFileLikeExtension = (pathname: string): boolean => {
     const lastSegment = pathname.split('/').filter(Boolean).pop() || '';
-    return /\.[a-z0-9]+$/i.test(lastSegment);
+    const parts = lastSegment.toLowerCase().split('.');
+    const ext = parts.length > 1 ? parts.pop() || '' : '';
+    return FILE_LIKE_EXTENSIONS.has(ext);
 };
 
 const stripQueryAndHash = (value: string): string => value.replace(/[?#].*$/, '');
@@ -45,6 +79,8 @@ const toCaptureUrl = (value: string): URL | null => {
     const parsed = safeParseUrl(trimmed);
     if (parsed) return /^https?:$/i.test(parsed.protocol) ? parsed : null;
 
+    if (trimmed.startsWith('//')) return safeParseUrl(`https:${trimmed}`);
+
     if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return null;
 
     return safeParseUrl(`https://${trimmed}`);
@@ -65,7 +101,11 @@ const normalizeSeedPath = (value: string): string => {
     const trimmed = (value || '').trim();
     if (!trimmed) return '';
 
-    const parsed = /^https?:\/\//i.test(trimmed) ? safeParseUrl(trimmed) : null;
+    const parsed = trimmed.startsWith('//')
+        ? safeParseUrl(`https:${trimmed}`)
+        : /^https?:\/\//i.test(trimmed)
+            ? safeParseUrl(trimmed)
+            : null;
     if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !parsed) return '';
 
     const routePath = parsed ? parsed.pathname : trimmed;

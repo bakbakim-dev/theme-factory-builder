@@ -46,10 +46,20 @@ assert.deepEqual(
   normalizeRouteSeedList('../admin'),
   ['/admin/'],
 );
+assert.deepEqual(
+  normalizeRouteSeedList('/pricing.v2\n/users/jane.doe'),
+  ['/pricing.v2/', '/users/jane.doe/'],
+);
+assert.equal(normalizeCaptureUrl('//example.com/path'), 'https://example.com/path/');
+assert.deepEqual(
+  normalizeRouteSeedList('//example.com/path'),
+  ['/path/'],
+);
 assert.equal(toSyntheticArtifactPath('/foo/bar?x=1'), 'foo/bar/index.html');
 assert.equal(toSyntheticArtifactPath('/foo#hash'), 'foo/index.html');
 assert.equal(toSyntheticArtifactPath('/app.js'), 'app.js');
 assert.equal(toSyntheticArtifactPath('../admin'), 'admin/index.html');
+assert.equal(toSyntheticArtifactPath('/pricing.v2'), 'pricing.v2/index.html');
 assert.equal(toSyntheticArtifactPath('/edmonton/pricing/'), 'edmonton/pricing/index.html');
 
 console.log('[PASS] URL capture defaults and normalization');
