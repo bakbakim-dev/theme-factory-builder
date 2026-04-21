@@ -42,9 +42,14 @@ assert.deepEqual(
   normalizeRouteSeedList('mailto:test@example.com\njavascript:alert(1)'),
   [],
 );
+assert.deepEqual(
+  normalizeRouteSeedList('../admin'),
+  ['/admin/'],
+);
 assert.equal(toSyntheticArtifactPath('/foo/bar?x=1'), 'foo/bar/index.html');
 assert.equal(toSyntheticArtifactPath('/foo#hash'), 'foo/index.html');
 assert.equal(toSyntheticArtifactPath('/app.js'), 'app.js');
+assert.equal(toSyntheticArtifactPath('../admin'), 'admin/index.html');
 assert.equal(toSyntheticArtifactPath('/edmonton/pricing/'), 'edmonton/pricing/index.html');
 
 console.log('[PASS] URL capture defaults and normalization');

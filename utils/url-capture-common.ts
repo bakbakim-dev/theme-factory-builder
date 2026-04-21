@@ -15,6 +15,21 @@ const hasFileLikeExtension = (pathname: string): boolean => {
 
 const stripQueryAndHash = (value: string): string => value.replace(/[?#].*$/, '');
 
+const collapsePathSegments = (value: string): string[] => {
+    const segments: string[] = [];
+
+    for (const part of value.split('/')) {
+        if (!part || part === '.') continue;
+        if (part === '..') {
+            if (segments.length > 0) segments.pop();
+            continue;
+        }
+        segments.push(part);
+    }
+
+    return segments;
+};
+
 const safeParseUrl = (value: string): URL | null => {
     try {
         return new URL(value);
@@ -38,8 +53,12 @@ const toCaptureUrl = (value: string): URL | null => {
 const normalizePathShape = (pathname: string): string => {
     const cleanPath = stripQueryAndHash((pathname || '').trim());
     if (!cleanPath || cleanPath === '/') return '/';
-    if (hasFileLikeExtension(cleanPath)) return `/${cleanPath.replace(/^\/+/, '').replace(/\/+$/, '')}`;
-    return `/${cleanPath.replace(/^\/+|\/+$/g, '')}/`;
+    const hasTrailingSlash = cleanPath.endsWith('/');
+    const isFileLike = hasFileLikeExtension(cleanPath);
+    const segments = collapsePathSegments(cleanPath);
+    if (segments.length === 0) return '/';
+    if (isFileLike && !hasTrailingSlash) return `/${segments.join('/')}`;
+    return `/${segments.join('/')}/`;
 };
 
 const normalizeSeedPath = (value: string): string => {
