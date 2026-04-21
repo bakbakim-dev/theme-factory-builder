@@ -18,6 +18,10 @@ assert.equal(normalizeCaptureUrl('mikaily129.sg-host.com/edmonton'), 'https://mi
 assert.equal(normalizeCaptureUrl('https://'), '');
 assert.equal(normalizeCaptureUrl('https://example.com/sitemap.xml'), 'https://example.com/sitemap.xml');
 assert.equal(normalizeCaptureUrl('https://example.com/docs/file.json?download=1'), 'https://example.com/docs/file.json?download=1');
+assert.equal(normalizeCaptureUrl('javascript:alert(1)'), '');
+assert.equal(normalizeCaptureUrl('data:text/plain,hello'), '');
+assert.equal(normalizeCaptureUrl('mailto:test@example.com'), '');
+assert.equal(normalizeCaptureUrl('ftp://example.com/file.txt'), '');
 assert.deepEqual(
   normalizeRouteSeedList(' /pricing\n/contact\npricing '),
   ['/pricing/', '/contact/'],
@@ -27,9 +31,15 @@ assert.deepEqual(
   ['/pricing/', '/contact/'],
 );
 assert.deepEqual(
+  normalizeRouteSeedList('foo/bar?x=1\nfoo#hash'),
+  ['/foo/bar/', '/foo/'],
+);
+assert.deepEqual(
   normalizeRouteSeedList('https://example.com/app.js'),
   ['/app.js'],
 );
+assert.equal(toSyntheticArtifactPath('/foo/bar?x=1'), 'foo/bar/index.html');
+assert.equal(toSyntheticArtifactPath('/foo#hash'), 'foo/index.html');
 assert.equal(toSyntheticArtifactPath('/app.js'), 'app.js');
 assert.equal(toSyntheticArtifactPath('/edmonton/pricing/'), 'edmonton/pricing/index.html');
 

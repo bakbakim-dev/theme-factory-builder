@@ -13,6 +13,8 @@ const hasFileLikeExtension = (pathname: string): boolean => {
     return /\.[a-z0-9]+$/i.test(lastSegment);
 };
 
+const stripQueryAndHash = (value: string): string => value.replace(/[?#].*$/, '');
+
 const safeParseUrl = (value: string): URL | null => {
     try {
         return new URL(value);
@@ -26,17 +28,18 @@ const toCaptureUrl = (value: string): URL | null => {
     if (!trimmed) return null;
 
     const parsed = safeParseUrl(trimmed);
-    if (parsed) return parsed;
+    if (parsed) return /^https?:$/i.test(parsed.protocol) ? parsed : null;
 
-    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return null;
+    if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed)) return null;
 
     return safeParseUrl(`https://${trimmed}`);
 };
 
 const normalizePathShape = (pathname: string): string => {
-    if (!pathname || pathname === '/') return '/';
-    if (hasFileLikeExtension(pathname)) return `/${pathname.replace(/^\/+/, '').replace(/\/+$/, '')}`;
-    return `/${pathname.replace(/^\/+|\/+$/g, '')}/`;
+    const cleanPath = stripQueryAndHash((pathname || '').trim());
+    if (!cleanPath || cleanPath === '/') return '/';
+    if (hasFileLikeExtension(cleanPath)) return `/${cleanPath.replace(/^\/+/, '').replace(/\/+$/, '')}`;
+    return `/${cleanPath.replace(/^\/+|\/+$/g, '')}/`;
 };
 
 const normalizeSeedPath = (value: string): string => {
@@ -44,7 +47,7 @@ const normalizeSeedPath = (value: string): string => {
     if (!trimmed) return '';
 
     const parsed = /^https?:\/\//i.test(trimmed) ? safeParseUrl(trimmed) : null;
-    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) && !parsed) return '';
+    if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !parsed) return '';
 
     const routePath = parsed ? parsed.pathname : trimmed;
     return normalizePathShape(routePath);
