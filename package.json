@@ -7,7 +7,13 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "audit:block-contracts": "node scripts/audit-block-contracts.mjs"
+    "audit:block-contracts": "node scripts/audit-block-contracts.mjs",
+    "test:dashboard-ui": "npx playwright test scripts/dashboard-ui-smoke.spec.mjs --reporter=line",
+    "test:static-dashboard-ui": "npx playwright test scripts/static-dashboard-ui-flow.spec.mjs --reporter=line",
+    "test:static-output": "node scripts/static-output-regression.mjs",
+    "test:static-interactions": "node scripts/static-interactions-runtime.mjs",
+    "test:static-smoke": "node scripts/static-output-smoke.mjs",
+    "test:static-dashboard-smoke": "node scripts/static-dashboard-smoke.mjs"
   },
   "dependencies": {
     "jszip": "3.10.1",
@@ -17,6 +23,7 @@
     "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",

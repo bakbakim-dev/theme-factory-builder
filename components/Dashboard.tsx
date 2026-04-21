@@ -6,8 +6,25 @@ import { LogEntry, RouteInfo, ConversionRecord, ConversionStats } from '../types
 import { STEPS, PLATFORMS } from '../constants';
 import { convertToGutenbergBlocks, createPlaceholder, extractElementHtml, AuditLog, ConversionResult, ThemeTokenSuggestion } from '../utils/converter';
 import { PLUGIN_FILES } from '../utils/plugintemplates';
+import { buildStaticSiteFromArtifactZip } from '../utils/static-artifact';
+import { createStaticSiteOutput, StaticSiteSettings } from '../utils/static-output';
+import type { StaticBuildReport } from '../utils/static-types';
 
 interface DashboardProps { onConversionComplete: (record: ConversionRecord, zipBlob: Blob) => void; }
+type ConversionMode = 'gutenberg-native' | 'react-spa' | 'static-site';
+
+const DEFAULT_STATIC_SITE_SETTINGS: StaticSiteSettings = {
+    baseUrl: 'https://',
+    formsProvider: 'web3forms',
+    formsEndpoint: '',
+    web3FormsAccessKey: '',
+    latitude: '',
+    longitude: '',
+    serviceAreas: '',
+    enableAiCrawlerAllowances: true,
+    enableLlmsTxt: true,
+    enableIndexNow: true,
+};
 
 const sanitizeForPhp = (str: string): string => str.replace(/['"\\]/g, '').replace(/[^a-zA-Z0-9_\-./]/g, '_');
 const decodeLooseUnicodeEscapes = (str: string): string => (str || '').replace(/u([0-9a-fA-F]{4})/g, (match, hex) => {
@@ -33,6 +50,25 @@ const serializeWpBlock = (blockName: string, attributes: Record<string, any> | u
     return `<!-- wp:${toWpCommentBlockName(blockName)}${normalizedAttributes} -->\n${innerContent}\n<!-- /wp:${toWpCommentBlockName(blockName)} -->`;
 };
 const REMOTE_BUILD_REQUEST_TIMEOUT_MS = 60 * 60 * 1000;
+const OUTPUT_MODES: Array<{ id: ConversionMode; title: string; description: string; badge?: string }> = [
+    {
+        id: 'gutenberg-native',
+        title: 'WordPress / Platinum',
+        description: 'Editable WordPress theme export with the current Platinum workflow.',
+        badge: 'Editor Workflow',
+    },
+    {
+        id: 'static-site',
+        title: 'Static Site',
+        description: 'Pure static export for speed, local SEO, and AI discoverability.',
+        badge: 'SEO First',
+    },
+    {
+        id: 'react-spa',
+        title: 'React SPA',
+        description: 'Legacy SPA packaging path.',
+    },
+];
 
 const InfoTooltip: React.FC<{ title: string, content: React.ReactNode, link?: string }> = ({ title, content, link }) => {
     const [isOpen, setIsOpen] = useState(false);
@@ -74,8 +110,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     const [pluginDownloadUrl, setPluginDownloadUrl] = useState<string | null>(null);
     const [thumbnails, setThumbnails] = useState<string[]>([]);
     const [selectedPlatform, setSelectedPlatform] = useState('lovable');
-    const [conversionMode, setConversionMode] = useState<'gutenberg-native' | 'react-spa'>('gutenberg-native');
+    const [conversionMode, setConversionMode] = useState<ConversionMode>('gutenberg-native');
     const [conversionStats, setConversionStats] = useState<ConversionStats | null>(null);
+    const [staticExportReport, setStaticExportReport] = useState<StaticBuildReport | null>(null);
     const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
     const [sourceFile, setSourceFile] = useState<File | null>(null);
     const [detectedRoutes, setDetectedRoutes] = useState<RouteInfo[]>([]);
@@ -126,6 +163,283 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         enableSemanticLinks: false
     });
     const [showSeoConfig, setShowSeoConfig] = useState(false);
+    const [showStaticSeoConfig, setShowStaticSeoConfig] = useState(false);
+    const [staticSiteSettings, setStaticSiteSettings] = useState<StaticSiteSettings>(DEFAULT_STATIC_SITE_SETTINGS);
+
+    const updateStaticSiteSetting = <K extends keyof StaticSiteSettings>(key: K, value: StaticSiteSettings[K]) => {
+        setStaticSiteSettings(prev => ({ ...prev, [key]: value }));
+    };
+
+    const renderOutputModeSelector = () => (
+        <div className="space-y-3">
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-300">
+                <Sparkles className="w-4 h-4 text-cyan-400" />
+                Output Mode
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {OUTPUT_MODES.map((modeOption) => {
+                    const active = conversionMode === modeOption.id;
+                    return (
+                        <button
+                            key={modeOption.id}
+                            type="button"
+                            onClick={() => setConversionMode(modeOption.id)}
+                            className={`text-left rounded-xl border p-4 transition-all ${active
+                                ? 'border-blue-500 bg-blue-600/10 text-white shadow-lg shadow-blue-950/30'
+                                : 'border-slate-800 bg-slate-900/50 text-slate-400 hover:border-slate-700'
+                                }`}
+                        >
+                            <div className="flex items-start justify-between gap-3">
+                                <div>
+                                    <div className="font-semibold">{modeOption.title}</div>
+                                    <div className="text-xs mt-1 opacity-80 leading-relaxed">{modeOption.description}</div>
+                                </div>
+                                {modeOption.badge && (
+                                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${active ? 'bg-blue-500/20 text-blue-100' : 'bg-slate-800 text-slate-400'}`}>
+                                        {modeOption.badge}
+                                    </span>
+                                )}
+                            </div>
+                        </button>
+                    );
+                })}
+            </div>
+        </div>
+    );
+
+    const renderStaticSignalsPanel = () => {
+        if (conversionMode !== 'static-site') return null;
+        return (
+            <div className="bg-slate-900/50 rounded-lg border border-slate-800 p-4 space-y-4">
+                <button
+                    type="button"
+                    onClick={() => setShowStaticSeoConfig(!showStaticSeoConfig)}
+                    className="w-full flex items-center justify-between text-left group"
+                >
+                    <div>
+                        <h3 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                            <Sparkles className="w-4 h-4 text-cyan-400" />
+                            Local SEO & AI Signals
+                            <span className="text-xs font-normal text-slate-500 bg-slate-800 px-2 py-0.5 rounded-full">Static Mode</span>
+                        </h3>
+                        <p className="text-xs text-slate-500 mt-1 ml-6">
+                            Base URL, static forms, geo coordinates, service areas, crawler access, and AI-facing files.
+                        </p>
+                    </div>
+                    <svg
+                        className={`w-4 h-4 text-slate-500 transition-transform ${showStaticSeoConfig ? 'rotate-180' : ''}`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                    >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                </button>
+                {showStaticSeoConfig && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-800">
+                        <div className="md:col-span-2 rounded-lg border border-slate-800 bg-slate-950/60 p-4 space-y-3">
+                            <div>
+                                <h4 className="text-sm font-semibold text-slate-200">Core Local Entity Details</h4>
+                                <p className="text-[11px] text-slate-500 mt-1">These drive LocalBusiness, Service, OpenGraph, llms.txt, and other static SEO outputs even when you upload an already-built artifact.</p>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="space-y-1">
+                                    <label className="text-xs text-slate-500">Website URL</label>
+                                    <input
+                                        type="text"
+                                        value={seoSettings.url}
+                                        onChange={e => setSeoSettings({ ...seoSettings, url: e.target.value })}
+                                        placeholder="https://example.com"
+                                        className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-xs text-slate-500">Company Name</label>
+                                    <input
+                                        type="text"
+                                        value={seoSettings.companyName}
+                                        onChange={e => setSeoSettings({ ...seoSettings, companyName: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-xs text-slate-500">Phone Number</label>
+                                    <input
+                                        type="text"
+                                        value={seoSettings.telephone}
+                                        onChange={e => setSeoSettings({ ...seoSettings, telephone: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-xs text-slate-500">City</label>
+                                    <input
+                                        type="text"
+                                        value={seoSettings.addressLocality}
+                                        onChange={e => setSeoSettings({ ...seoSettings, addressLocality: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-xs text-slate-500">State/Prov</label>
+                                    <input
+                                        type="text"
+                                        value={seoSettings.addressRegion}
+                                        onChange={e => setSeoSettings({ ...seoSettings, addressRegion: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-xs text-slate-500">Country</label>
+                                    <input
+                                        type="text"
+                                        value={seoSettings.addressCountry}
+                                        onChange={e => setSeoSettings({ ...seoSettings, addressCountry: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                                    />
+                                </div>
+                                <div className="space-y-1 md:col-span-2">
+                                    <label className="text-xs text-slate-500">SEO Meta Description</label>
+                                    <input
+                                        type="text"
+                                        value={seoSettings.description}
+                                        onChange={e => setSeoSettings({ ...seoSettings, description: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="space-y-1 md:col-span-2">
+                            <label className="text-xs text-slate-500">Static Site Base URL</label>
+                            <input
+                                type="text"
+                                value={staticSiteSettings.baseUrl}
+                                onChange={e => updateStaticSiteSetting('baseUrl', e.target.value)}
+                                placeholder="https://example.com"
+                                className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                            />
+                            <p className="text-[11px] text-slate-600">Used for canonical tags, hreflang, absolute media URLs, schema, llms.txt, and sitemap output.</p>
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-xs text-slate-500">Static Forms Provider</label>
+                            <select
+                                value={staticSiteSettings.formsProvider}
+                                onChange={e => updateStaticSiteSetting('formsProvider', e.target.value as StaticSiteSettings['formsProvider'])}
+                                className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                            >
+                                <option value="web3forms">Web3Forms</option>
+                                <option value="formspree">Formspree</option>
+                                <option value="custom-endpoint">Custom Endpoint</option>
+                            </select>
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-xs text-slate-500">Web3Forms Access Key</label>
+                            <input
+                                type="text"
+                                value={staticSiteSettings.web3FormsAccessKey}
+                                onChange={e => updateStaticSiteSetting('web3FormsAccessKey', e.target.value)}
+                                placeholder="Your Web3Forms key"
+                                className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                            />
+                        </div>
+
+                        <div className="space-y-1 md:col-span-2">
+                            <label className="text-xs text-slate-500">Form Endpoint Override</label>
+                            <input
+                                type="text"
+                                value={staticSiteSettings.formsEndpoint}
+                                onChange={e => updateStaticSiteSetting('formsEndpoint', e.target.value)}
+                                placeholder="https://api.example.com/form-endpoint"
+                                className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                            />
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-xs text-slate-500">Latitude</label>
+                            <input
+                                type="text"
+                                value={staticSiteSettings.latitude}
+                                onChange={e => updateStaticSiteSetting('latitude', e.target.value)}
+                                placeholder="53.5461"
+                                className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                            />
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-xs text-slate-500">Longitude</label>
+                            <input
+                                type="text"
+                                value={staticSiteSettings.longitude}
+                                onChange={e => updateStaticSiteSetting('longitude', e.target.value)}
+                                placeholder="-113.4938"
+                                className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                            />
+                        </div>
+
+                        <div className="space-y-1 md:col-span-2">
+                            <label className="text-xs text-slate-500">Service Areas</label>
+                            <input
+                                type="text"
+                                value={staticSiteSettings.serviceAreas}
+                                onChange={e => updateStaticSiteSetting('serviceAreas', e.target.value)}
+                                placeholder="Edmonton, St. Albert, Sherwood Park"
+                                className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                            />
+                            <p className="text-[11px] text-slate-600">Comma-separated list used for local schema and llms.txt entity context.</p>
+                        </div>
+
+                        <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <label className="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 cursor-pointer">
+                                <span className="text-sm text-slate-300">Allow AI crawler access</span>
+                                <input
+                                    type="checkbox"
+                                    checked={staticSiteSettings.enableAiCrawlerAllowances}
+                                    onChange={e => updateStaticSiteSetting('enableAiCrawlerAllowances', e.target.checked)}
+                                    className="rounded text-blue-600 bg-slate-900 border-slate-700"
+                                />
+                            </label>
+                            <label className="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 cursor-pointer">
+                                <span className="text-sm text-slate-300">Generate llms.txt</span>
+                                <input
+                                    type="checkbox"
+                                    checked={staticSiteSettings.enableLlmsTxt}
+                                    onChange={e => updateStaticSiteSetting('enableLlmsTxt', e.target.checked)}
+                                    className="rounded text-blue-600 bg-slate-900 border-slate-700"
+                                />
+                            </label>
+                            <label className="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 cursor-pointer">
+                                <span className="text-sm text-slate-300">Generate IndexNow key</span>
+                                <input
+                                    type="checkbox"
+                                    checked={staticSiteSettings.enableIndexNow}
+                                    onChange={e => updateStaticSiteSetting('enableIndexNow', e.target.checked)}
+                                    className="rounded text-blue-600 bg-slate-900 border-slate-700"
+                                />
+                            </label>
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    const sourceDetectedMessage = conversionMode === 'static-site'
+        ? 'Source code detected. Select pages to include in the static export.'
+        : 'Source code detected. Select pages to include in the WordPress theme.';
+
+    const primaryBuildLabel = conversionMode === 'static-site'
+        ? (connectionStatus === 'success' ? 'Remote Build & Export Static Site' : 'Local Simulation Build & Export Static Site')
+        : (connectionStatus === 'success' ? 'Remote Build & Convert' : 'Local Simulation Build');
+
+    const packagingStepLabel = conversionMode === 'static-site' ? 'Step 4: Packaging Static Site' : 'Step 4: Packaging Theme';
+    const packagingStatusLabel = conversionMode === 'static-site' ? 'Generating static SEO files...' : 'Writing WordPress functions...';
+    const previewHeading = conversionMode === 'static-site' ? 'Preview Your Static Site' : 'Preview Your New Theme';
+    const downloadPrimaryLabel = conversionMode === 'static-site' ? 'Download Static Site' : 'Download Theme';
+    const downloadPrimaryDescription = conversionMode === 'static-site' ? 'Deployable Static ZIP' : 'WordPress Theme ZIP';
+    const primaryDownloadName = conversionMode === 'static-site' ? `${themeSlug}-static-site.zip` : `${themeSlug}-theme.zip`;
 
     // Audit State
     const [missingLinks, setMissingLinks] = useState<string[]>([]);
@@ -137,7 +451,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         rootPath: string;
         platform: string;
         routes: RouteInfo[];
-        mode: 'gutenberg-native' | 'react-spa';
+        mode: ConversionMode;
         logs: AuditLog[];
     } | null>(null);
 
@@ -176,7 +490,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs]);
     useEffect(() => { if (!finalZipBlob) return; const url = window.URL.createObjectURL(finalZipBlob); setDownloadUrl(url); return () => { window.URL.revokeObjectURL(url); }; }, [finalZipBlob]);
     useEffect(() => { if (!pluginZipBlob) return; const url = window.URL.createObjectURL(pluginZipBlob); setPluginDownloadUrl(url); return () => { window.URL.revokeObjectURL(url); }; }, [pluginZipBlob]);
-    useEffect(() => { if (finalZipBlob && step === STEPS.COMPLETE) { const record: ConversionRecord = { id: crypto.randomUUID(), projectName: themeSlug || 'untitled-project', type: PLATFORMS[selectedPlatform.toUpperCase() as keyof typeof PLATFORMS]?.label || selectedPlatform, date: new Date().toISOString(), status: 'Completed', logs: logs, stats: conversionStats }; onConversionComplete(record, finalZipBlob); } }, [finalZipBlob, step]);
+    useEffect(() => {
+        if (finalZipBlob && step === STEPS.COMPLETE) {
+            const record: ConversionRecord = {
+                id: crypto.randomUUID(),
+                projectName: themeSlug || 'untitled-project',
+                type: conversionMode === 'static-site'
+                    ? 'Static Site'
+                    : PLATFORMS[selectedPlatform.toUpperCase() as keyof typeof PLATFORMS]?.label || selectedPlatform,
+                date: new Date().toISOString(),
+                status: 'Completed',
+                logs: logs,
+                stats: conversionStats,
+            };
+            onConversionComplete(record, finalZipBlob);
+        }
+    }, [finalZipBlob, step]);
     useEffect(() => { return () => { abortControllerRef.current?.abort(); if (socket) socket.disconnect(); }; }, [socket]);
     useEffect(() => { if (remoteConfig.url && typeof window !== 'undefined') { localStorage.setItem('buildServerUrl', remoteConfig.url); } }, [remoteConfig.url]);
     
@@ -211,10 +540,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]; if (!file) return;
+        const derivedThemeSlug = file.name.replace('.zip', '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
         setSourceFile(file);
         if (!JSZipLib) { addLog("Engine not ready. Please wait...", 'error'); return; }
-        setStep(STEPS.ANALYZING); setLogs([]); setProgress(5); setConversionStats(null); setFinalZipBlob(null); setPluginZipBlob(null); setThumbnails([]); setRedirectsData(null); setLlmsData(null);
-        setThemeSlug(file.name.replace('.zip', '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase());
+        setStep(STEPS.ANALYZING); setLogs([]); setProgress(5); setConversionStats(null); setStaticExportReport(null); setFinalZipBlob(null); setPluginZipBlob(null); setThumbnails([]); setRedirectsData(null); setLlmsData(null);
+        setThemeSlug(derivedThemeSlug);
         addLog(`Initiating analysis for: ${file.name}`);
         try {
             const zip = new JSZipLib(); const content = await zip.loadAsync(file);
@@ -234,7 +564,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             const hasPackageJson = hasFile('package.json'); const hasSrcDir = validFiles.some(f => f.includes('/src/') || f.startsWith('src/'));
             const isSourceProject = hasPackageJson && (hasSrcDir || hasFile('vite.config.ts'));
             if (isSourceProject && !options.forceBuild) { addLog(`⚠ Source Code Detected. Found ${routes.length} potential routes.`, 'warning'); setStep(STEPS.SOURCE_DETECTED); return; }
-            setStep(STEPS.PROCESSING); await processConversion(content, rootPath, detectedPlatformID, routes, conversionMode);
+            setStep(STEPS.PROCESSING); await processConversion(content, rootPath, detectedPlatformID, routes, conversionMode, false, undefined, derivedThemeSlug);
         } catch (err: unknown) { setStep(STEPS.ERROR); addLog((err as Error).message, 'error'); }
     };
 
@@ -412,10 +742,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     };
 
     const scanForRoutes = async (zipContent: any, rootPath: string): Promise<RouteInfo[]> => {
-        const normalize = (p: string) => p.startsWith(rootPath) ? p.slice(rootPath.length) : p;
+        const normalizedRootPath = rootPath.replace(/\\/g, '/');
+        const normalize = (p: string) => {
+            const normalizedPath = p.replace(/\\/g, '/');
+            return normalizedPath.startsWith(normalizedRootPath) ? normalizedPath.slice(normalizedRootPath.length) : normalizedPath;
+        };
         const files = Object.keys(zipContent.files);
         const routerFile = files.find(f => normalize(f).match(/^(src\/App\.(tsx|jsx|js)|src\/routes\.(tsx|jsx|js)|src\/main\.(tsx|jsx|js))$/i));
         const routes: RouteInfo[] = [{ path: '/', slug: 'home', title: 'Home' }];
+        const addRoute = (path: string) => {
+            const slug = path.replace(/^\/+|\/+$/g, '').replace(/\/+/g, '-').replace(/[^a-z0-9-]/gi, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+            const title = slug.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+            if (!routes.some(r => r.path === path)) {
+                routes.push({ path, slug, title });
+                addLog(`  â€¢ Found Route: ${path} -> ${title}`);
+            }
+        };
 
         if (routerFile) {
             try {
@@ -436,7 +778,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                     }
                 }
                 function addRoute(path: string) {
-                    const slug = path.replace(/^\/+/, '').replace(/\/+/g, '-').replace(/[^a-z0-9-]/gi, '-').toLowerCase();
+                    const slug = path.replace(/^\/+|\/+$/g, '').replace(/\/+/g, '-').replace(/[^a-z0-9-]/gi, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
                     const title = slug.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
                     if (!routes.some(r => r.path === path)) {
                         routes.push({ path, slug, title });
@@ -445,7 +787,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                 }
                 addLog(`Scanner: Discovered ${routes.length} routes in ${normalize(routerFile)}`, 'success');
             } catch { addLog("Scanner: Failed to parse router file.", 'warning'); }
-        } else { addLog("Scanner: No router file found. Defaulting to single page.", 'info'); }
+        } else {
+            const prerenderedHtmlFiles = files
+                .map(normalize)
+                .filter(file => /^prerendered\/(?!thumb-).+\.html$/i.test(file));
+
+            if (prerenderedHtmlFiles.length > 0) {
+                prerenderedHtmlFiles.forEach((file) => {
+                    const slug = file.replace(/^prerendered\//i, '').replace(/\.html$/i, '').trim();
+                    if (!slug || slug.toLowerCase() === 'home') return;
+                    addRoute(`/${slug}/`);
+                });
+                addLog(`Scanner: Discovered ${routes.length} prerendered routes from build artifact`, 'success');
+            } else {
+                addLog("Scanner: No router file found. Defaulting to single page.", 'info');
+            }
+        }
         return routes;
     };
 
@@ -523,7 +880,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             setProgress(30);
             routesToProcess.forEach(route => { if (route.path === '/') return; const cleanPath = route.path.replace(/^\/+/, '').replace(/\/+$/, ''); const depth = cleanPath.split('/').filter(p => p).length; const prefix = depth > 0 ? '../'.repeat(depth) : './'; const routeHtml = indexHtml.replace(/href="\/assets\//g, `href="${prefix}assets/`).replace(/src="\/assets\//g, `src="${prefix}assets/`); distZip.file(`${cleanPath}/index.html`, routeHtml); });
             setProgress(50); distZip.file("assets/style.css", "/* Compiled CSS Placeholder */ body { font-family: sans-serif; }"); distZip.file("assets/app.js", "console.log('Theme Factory: Local Build Mode');");
-            addLog("Local Build Complete. Converting...", 'success'); setStep(STEPS.PROCESSING); await processConversion(distZip, "", "lovable", routesToProcess, conversionMode, false, sourceFaqData);
+            addLog("Local Build Complete. Converting...", 'success'); setStep(STEPS.PROCESSING); await processConversion(distZip, "", "lovable", routesToProcess, conversionMode, false, sourceFaqData, themeSlug || sourceFile?.name.replace('.zip', '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase());
         } catch (err: unknown) { setStep(STEPS.ERROR); addLog(`Local Build Failed: ${(err as Error).message}`, 'error'); }
     };
 
@@ -615,7 +972,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     };
 
     const downloadArtifact = async (url: string, routesToProcess: RouteInfo[], preExtractedFaq?: {q: string, a: string}[]) => { setStep(STEPS.DOWNLOADING_ARTIFACT); addLog("Downloading build artifact..."); const res = await fetch(url, { headers: { 'ngrok-skip-browser-warning': 'true' } }); if (!res.ok) throw new Error("Failed to download artifact."); const blob = await res.blob(); await handleBuildArtifact(blob, routesToProcess, preExtractedFaq); };
-    const handleBuildArtifact = async (blob: Blob, routesToProcess: RouteInfo[], preExtractedFaq?: {q: string, a: string}[]) => { if (!JSZipLib) throw new Error("JSZip utility missing."); setStep(STEPS.PROCESSING); addLog("Artifact received. Processing...", 'info'); const distZip = new JSZipLib(); const distContent = await distZip.loadAsync(blob); await processConversion(distContent, "", selectedPlatform, routesToProcess, conversionMode, false, preExtractedFaq); };
+    const handleBuildArtifact = async (blob: Blob, routesToProcess: RouteInfo[], preExtractedFaq?: {q: string, a: string}[]) => { if (!JSZipLib) throw new Error("JSZip utility missing."); setStep(STEPS.PROCESSING); addLog("Artifact received. Processing...", 'info'); const distZip = new JSZipLib(); const distContent = await distZip.loadAsync(blob); await processConversion(distContent, "", selectedPlatform, routesToProcess, conversionMode, false, preExtractedFaq, themeSlug || sourceFile?.name.replace('.zip', '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase()); };
 
     const generateCompanionPlugin = async (zipInstance: any): Promise<Blob> => {
         const folder = zipInstance.folder('theme-factory-blocks');
@@ -689,13 +1046,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             });
     };
 
-    const processConversion = async (zipContent: any, _rootPath: string, _platform: string, routes: RouteInfo[], mode: 'gutenberg-native' | 'react-spa', auditBypassed = false, preExtractedFaqData?: {q: string, a: string}[]) => {
+    const processConversion = async (zipContent: any, _rootPath: string, _platform: string, routes: RouteInfo[], mode: ConversionMode, auditBypassed = false, preExtractedFaqData?: {q: string, a: string}[], themeSlugOverride?: string) => {
         if (!JSZipLib) return;
 
-        const themeFnPrefix = (themeSlug || 'ai-theme').replace(/[^a-z0-9]/gi, '_');
-        const themeName = (themeSlug || 'AI Theme').split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+        const resolvedThemeSlug = themeSlugOverride || themeSlug || 'ai-theme';
+        const archiveRootName = mode === 'static-site' ? `${resolvedThemeSlug}-static-site` : resolvedThemeSlug;
+        const themeFnPrefix = resolvedThemeSlug.replace(/[^a-z0-9]/gi, '_');
+        const themeName = resolvedThemeSlug.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 
-        const routesToProcess = routes.filter(r => selectedRoutes.has(r.path));
+        const routesToProcess = selectedRoutes.size > 0
+            ? routes.filter(r => selectedRoutes.has(r.path))
+            : routes;
 
         // Array to hold all audit logs across all pages (Lifted from line 2897)
         const allAuditLogs: AuditLog[] = [];
@@ -713,7 +1074,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         }
 
         addLog(`Converting ${routesToProcess.length} pages...`, 'info'); setProgress(5);
-        const newZip = new JSZipLib(); const folder = newZip.folder(themeSlug || 'ai-theme'); if (!folder) throw new Error("Could not create folder in zip");
+        const newZip = new JSZipLib(); const folder = newZip.folder(archiveRootName); if (!folder) throw new Error("Could not create folder in zip");
 
         const filesToProcess = allFiles.filter(name => effectiveRoot ? name.startsWith(effectiveRoot) : true);
 
@@ -750,6 +1111,65 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                 return decode(await file.async("uint8array"));
             } catch { return null; }
         };
+
+        if (mode === 'static-site') {
+            addLog(`Generating static export for ${routesToProcess.length} routes...`, 'info');
+            setProgress(15);
+
+            const staticOutput = await buildStaticSiteFromArtifactZip({
+                zipContent,
+                routes: routesToProcess,
+                siteSlug: resolvedThemeSlug,
+                seoSettings: {
+                    companyName: seoSettings.companyName,
+                    url: seoSettings.url,
+                    description: seoSettings.description,
+                    telephone: seoSettings.telephone,
+                    addressLocality: seoSettings.addressLocality,
+                    addressRegion: seoSettings.addressRegion,
+                    addressCountry: seoSettings.addressCountry,
+                    priceRange: seoSettings.priceRange,
+                    ogImage: seoSettings.ogImage,
+                    socialFacebook: seoSettings.socialFacebook,
+                    socialInstagram: seoSettings.socialInstagram,
+                    socialTwitter: seoSettings.socialTwitter,
+                    socialLinkedIn: seoSettings.socialLinkedIn,
+                    primaryLocale: seoSettings.primaryLocale,
+                    alternateLocales: seoSettings.alternateLocales,
+                },
+                staticSiteSettings,
+            });
+
+            Object.entries(staticOutput.assetFiles).forEach(([filePath, data]) => {
+                folder.file(filePath, data);
+            });
+            Object.entries(staticOutput.files).forEach(([filePath, content]) => {
+                folder.file(filePath, content);
+            });
+
+            staticOutput.report.warnings.forEach((warning) => {
+                addLog(`Static export warning [${warning.code}]: ${warning.message}`, 'warning');
+            });
+            if (staticOutput.report.warnings.length === 0) {
+                addLog('Static export checks passed: forms, entity data, geo signals, and AI files look ready.', 'success');
+            }
+
+            setStaticExportReport(staticOutput.report);
+            setPluginZipBlob(null);
+            setRedirectsData(staticOutput.files['_redirects'] || null);
+            setLlmsData(staticOutput.files['llms.txt'] || null);
+            setConversionStats({
+                php: 0,
+                js: staticOutput.assetCounts.js,
+                css: staticOutput.assetCounts.css,
+                images: staticOutput.assetCounts.assets,
+                routes: routesToProcess.length,
+                patterns: 0,
+            });
+            addLog(`Static site export generated for ${routesToProcess.length} routes.`, 'success');
+            await finishBuild(newZip);
+            return;
+        }
 
         const pickShellHtml = async (): Promise<{ html: string; source: string }> => {
             const homeRoute = routesToProcess.find(r => r.path === '/') || routesToProcess[0];
@@ -5371,6 +5791,10 @@ echo "Theme Factory Data Migration Complete.";`;
                             </div>
                         )}
 
+                        {renderOutputModeSelector()}
+
+                        {renderStaticSignalsPanel()}
+
                             <div className="border-2 border-dashed border-slate-700 rounded-xl p-8 text-center hover:border-blue-500/50 hover:bg-slate-800/30 transition-colors relative group">
                                 <input
                                     type="file"
@@ -5394,8 +5818,12 @@ echo "Theme Factory Data Migration Complete.";`;
                     {step === STEPS.SOURCE_DETECTED && (
                         <div className="space-y-6">
                             <div className="bg-blue-900/20 border border-blue-800/50 rounded-lg p-4 text-sm text-blue-200">
-                                <p className="flex items-center gap-2"><Code className="w-4 h-4" /> Source code detected. Select pages to include in the WordPress theme.</p>
+                                <p className="flex items-center gap-2"><Code className="w-4 h-4" /> {sourceDetectedMessage}</p>
                             </div>
+
+                            {renderOutputModeSelector()}
+
+                            {renderStaticSignalsPanel()}
 
                             <div className="flex justify-between items-center px-1">
                                 <span className="text-xs text-slate-500">
@@ -5781,7 +6209,7 @@ echo "Theme Factory Data Migration Complete.";`;
                                     className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-lg font-medium flex items-center justify-center gap-2"
                                 >
                                     {connectionStatus === 'success' ? <Server className="w-4 h-4" /> : <Wrench className="w-4 h-4" />}
-                                    {connectionStatus === 'success' ? 'Remote Build & Convert' : 'Local Simulation Build'}
+                                    {primaryBuildLabel}
                                 </button>
                                 <button
                                     onClick={() => { setStep(STEPS.IDLE); setSourceFile(null); }}
@@ -5802,7 +6230,7 @@ echo "Theme Factory Data Migration Complete.";`;
                                             {progress < 25 && "Step 1: Analyzing Design"}
                                             {progress >= 25 && progress < 60 && "Step 2: Building Architecture"}
                                             {progress >= 60 && progress < 90 && "Step 3: Rendering Visual Layouts"}
-                                            {progress >= 90 && "Step 4: Packaging Theme"}
+                                            {progress >= 90 && packagingStepLabel}
                                         </span>
                                     </div>
                                     <div className="text-right">
@@ -5820,7 +6248,7 @@ echo "Theme Factory Data Migration Complete.";`;
                                         {progress >= 25 && progress < 40 && "Installing dependencies..."}
                                         {progress >= 40 && progress < 60 && "Compiling application..."}
                                         {progress >= 60 && progress < 90 && "Capturing dynamic routes using AI..."}
-                                        {progress >= 90 && progress < 100 && "Writing WordPress functions..."}
+                                        {progress >= 90 && progress < 100 && packagingStatusLabel}
                                         {progress >= 100 && "Finishing up..."}
                                     </p>
                                     <p className="text-sm text-slate-500 mt-2">This usually takes about 1-2 minutes. Please don't close this window.</p>
@@ -5872,7 +6300,7 @@ echo "Theme Factory Data Migration Complete.";`;
                         <div className="space-y-6">
                             {thumbnails.length > 0 && (
                                 <div className="mt-8 mb-4">
-                                    <h3 className="text-lg font-medium text-white mb-4">Preview Your New Theme</h3>
+                                    <h3 className="text-lg font-medium text-white mb-4">{previewHeading}</h3>
                                     <div className="flex overflow-x-auto gap-4 pb-4 snap-x">
                                         {thumbnails.map((url, i) => (
                                             <div key={i} className="flex-none w-72 rounded-lg border border-slate-700 overflow-hidden bg-slate-900 group shadow-lg snap-center relative cursor-pointer" onClick={() => setPreviewImage(url)}>
@@ -5935,14 +6363,63 @@ echo "Theme Factory Data Migration Complete.";`;
                                 </div>
                             )}
 
+                            {conversionMode === 'static-site' && staticExportReport && (
+                                <div className={`rounded-xl p-5 mb-2 border ${staticExportReport.warnings.length === 0 ? 'bg-cyan-950/20 border-cyan-800/40' : 'bg-amber-950/20 border-amber-800/40'}`}>
+                                    <h3 className={`text-sm font-bold flex items-center gap-2 mb-3 ${staticExportReport.warnings.length === 0 ? 'text-cyan-300' : 'text-amber-300'}`}>
+                                        <Sparkles className="w-5 h-5" />
+                                        Static Export Health
+                                    </h3>
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                                        <div className="bg-slate-900/50 rounded-lg p-3 text-center">
+                                            <div className="text-lg font-bold text-white">{staticExportReport.routeCount}</div>
+                                            <div className="text-[11px] text-slate-400">Routes Exported</div>
+                                        </div>
+                                        <div className="bg-slate-900/50 rounded-lg p-3 text-center">
+                                            <div className={`text-lg font-bold ${staticExportReport.checks.formsReady ? 'text-emerald-400' : 'text-amber-400'}`}>{staticExportReport.checks.formsReady ? 'Ready' : 'Check'}</div>
+                                            <div className="text-[11px] text-slate-400">Static Forms</div>
+                                        </div>
+                                        <div className="bg-slate-900/50 rounded-lg p-3 text-center">
+                                            <div className={`text-lg font-bold ${staticExportReport.checks.hasSufficientBusinessEntity ? 'text-emerald-400' : 'text-amber-400'}`}>{staticExportReport.checks.hasSufficientBusinessEntity ? 'Strong' : 'Weak'}</div>
+                                            <div className="text-[11px] text-slate-400">Entity Signals</div>
+                                        </div>
+                                        <div className="bg-slate-900/50 rounded-lg p-3 text-center">
+                                            <div className={`text-lg font-bold ${staticExportReport.warnings.length === 0 ? 'text-emerald-400' : 'text-amber-400'}`}>{staticExportReport.warnings.length}</div>
+                                            <div className="text-[11px] text-slate-400">Warnings</div>
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-slate-300">
+                                        <div className="bg-slate-900/40 rounded-lg p-3 space-y-1">
+                                            <p>Geo coordinates: <span className={staticExportReport.checks.hasGeoCoordinates ? 'text-emerald-400 font-semibold' : 'text-amber-400 font-semibold'}>{staticExportReport.checks.hasGeoCoordinates ? 'Configured' : 'Missing'}</span></p>
+                                            <p>Service areas: <span className={staticExportReport.checks.hasServiceAreas ? 'text-emerald-400 font-semibold' : 'text-amber-400 font-semibold'}>{staticExportReport.checks.hasServiceAreas ? 'Configured' : 'Missing'}</span></p>
+                                            <p>AI crawler allowances: <span className={staticExportReport.checks.aiCrawlerAllowancesEnabled ? 'text-emerald-400 font-semibold' : 'text-slate-400 font-semibold'}>{staticExportReport.checks.aiCrawlerAllowancesEnabled ? 'Enabled' : 'Disabled'}</span></p>
+                                        </div>
+                                        <div className="bg-slate-900/40 rounded-lg p-3 space-y-1">
+                                            <p>llms.txt: <span className={staticExportReport.checks.llmsEnabled ? 'text-emerald-400 font-semibold' : 'text-slate-400 font-semibold'}>{staticExportReport.checks.llmsEnabled ? 'Enabled' : 'Disabled'}</span></p>
+                                            <p>IndexNow key: <span className={staticExportReport.checks.indexNowEnabled ? 'text-emerald-400 font-semibold' : 'text-slate-400 font-semibold'}>{staticExportReport.checks.indexNowEnabled ? 'Enabled' : 'Disabled'}</span></p>
+                                            <p>Base URL: <span className="text-cyan-300 font-semibold break-all">{staticExportReport.baseUrl}</span></p>
+                                        </div>
+                                    </div>
+                                    {staticExportReport.warnings.length > 0 && (
+                                        <div className="mt-4 space-y-2">
+                                            {staticExportReport.warnings.map((warning, index) => (
+                                                <div key={`${warning.code}-${index}`} className="bg-slate-950/70 border border-amber-900/40 rounded-lg p-3 text-xs text-slate-300">
+                                                    <div className="font-semibold text-amber-300">{warning.code}</div>
+                                                    <div className="mt-1">{warning.message}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                 {downloadUrl && (
-                                    <a href={downloadUrl} download={`${themeSlug}-theme.zip`} className="bg-green-600 hover:bg-green-500 text-white p-4 rounded-xl flex items-center justify-between group">
+                                    <a href={downloadUrl} download={primaryDownloadName} className="bg-green-600 hover:bg-green-500 text-white p-4 rounded-xl flex items-center justify-between group">
                                         <div className="flex items-center gap-3">
                                             <div className="p-2 bg-green-700 rounded-lg"><Package className="w-6 h-6" /></div>
                                             <div className="text-left">
-                                                <div className="font-bold">Download Theme</div>
-                                                <div className="text-xs opacity-75">WordPress Theme ZIP</div>
+                                                <div className="font-bold">{downloadPrimaryLabel}</div>
+                                                <div className="text-xs opacity-75">{downloadPrimaryDescription}</div>
                                             </div>
                                         </div>
                                         <Download className="w-5 h-5 group-hover:translate-y-1 transition-transform" />

@@ -1,0 +1,95 @@
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import { promises as fs } from 'node:fs';
+import JSZip from 'jszip';
+import { buildStaticSiteFromArtifactZip } from '../utils/static-artifact.ts';
+
+const repoRoot = path.resolve(import.meta.dirname, '..');
+const artifactRoot = path.join(repoRoot, 'logs', 'artifact-inspect');
+
+const slugToTitle = (slug) => slug
+  .replace(/[-_]+/g, ' ')
+  .replace(/\s+/g, ' ')
+  .trim()
+  .replace(/\b\w/g, (char) => char.toUpperCase());
+
+const addDirectoryToZip = async (zip, rootDir, currentDir = rootDir) => {
+  const entries = await fs.readdir(currentDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(currentDir, entry.name);
+    const relativePath = path.relative(rootDir, fullPath).replace(/\\/g, '/');
+    if (entry.isDirectory()) {
+      await addDirectoryToZip(zip, rootDir, fullPath);
+    } else {
+      const content = await fs.readFile(fullPath);
+      zip.file(relativePath, content);
+    }
+  }
+};
+
+const prerenderedRoot = path.join(artifactRoot, 'prerendered');
+const prerenderedEntries = await fs.readdir(prerenderedRoot, { withFileTypes: true });
+const routes = prerenderedEntries
+  .filter((entry) => entry.isFile() && entry.name.endsWith('.html'))
+  .map((entry) => {
+    const slug = entry.name.replace(/\.html$/i, '');
+    return {
+      path: slug === 'home' ? '/' : `/${slug}/`,
+      slug,
+      title: slug === 'home' ? 'Home' : slugToTitle(slug),
+    };
+  })
+  .sort((a, b) => a.path.localeCompare(b.path));
+
+const artifactZip = new JSZip();
+await addDirectoryToZip(artifactZip, artifactRoot);
+const zipBlob = await artifactZip.generateAsync({ type: 'nodebuffer' });
+const loadedZip = await new JSZip().loadAsync(zipBlob);
+
+const result = await buildStaticSiteFromArtifactZip({
+  zipContent: loadedZip,
+  routes,
+  siteSlug: 'duty-cleaners-static',
+  seoSettings: {
+    companyName: 'Duty Cleaners',
+    url: 'https://dutycleaners.example',
+    description: 'Professional house cleaning services in Edmonton and Calgary.',
+    telephone: '780-913-6565',
+    addressLocality: 'Edmonton',
+    addressRegion: 'AB',
+    addressCountry: 'CA',
+    priceRange: '$$',
+    ogImage: 'https://lovable.dev/opengraph-image-p98pqg.png',
+    socialFacebook: 'https://www.facebook.com/dutycleaners/',
+    socialInstagram: 'https://www.instagram.com/dutycleaners/',
+    socialTwitter: 'https://x.com/Dutycleaners',
+    socialLinkedIn: 'https://www.linkedin.com/company/duty-cleaners/',
+    primaryLocale: 'en-CA',
+    alternateLocales: '',
+  },
+  staticSiteSettings: {
+    baseUrl: 'https://dutycleaners.example',
+    formsProvider: 'web3forms',
+    formsEndpoint: '',
+    web3FormsAccessKey: 'dashboard-smoke-key',
+    latitude: '53.5461',
+    longitude: '-113.4938',
+    serviceAreas: 'Edmonton, Calgary, St. Albert, Sherwood Park',
+    enableAiCrawlerAllowances: true,
+    enableLlmsTxt: true,
+    enableIndexNow: true,
+  },
+});
+
+assert.equal(result.report.routeCount, routes.length);
+assert.ok(result.assetFiles['assets/index-IA58qcH_.js']);
+assert.ok(result.assetFiles['assets/index-R-8iGppv.css']);
+assert.ok(result.files['index.html']);
+assert.ok(result.files['contact/index.html']);
+assert.ok(result.files['edmonton/index.html']);
+assert.match(result.files['contact/index.html'], /dashboard-smoke-key/);
+assert.match(result.files['edmonton/index.html'], /https:\/\/dutycleaners\.example\/edmonton\//);
+assert.equal(result.report.warnings.length, 0);
+
+console.log('Static dashboard smoke');
+console.log(`[PASS] Dashboard-path static export generated for ${routes.length} routes with copied assets`);

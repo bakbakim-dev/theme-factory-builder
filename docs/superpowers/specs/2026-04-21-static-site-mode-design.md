@@ -93,6 +93,7 @@ Proposed output structure:
 ```text
 site-slug-static/
   index.html
+  404.html
   about/index.html
   edmonton/index.html
   edmonton-pricing/index.html
@@ -112,6 +113,14 @@ site-slug-static/
   seo-audit-report.json
   static-export-report.json
 ```
+
+### Deployment Safety Nets
+
+The first implementation must also include:
+
+- a compiled root `404.html` for CDN/router fallbacks
+- strict absolute-URL normalization for SEO media and schema image/logo fields using the configured Static Site Base URL
+- a dedicated dashboard panel named `Local SEO & AI Signals` to group Static Mode-only inputs such as Base URL, form keys/endpoints, coordinates, service areas, and AI/indexing toggles
 
 ### Routing Convention
 
