@@ -38,6 +38,10 @@ assert.deepEqual(
   normalizeRouteSeedList('https://example.com/app.js'),
   ['/app.js'],
 );
+assert.deepEqual(
+  normalizeRouteSeedList('mailto:test@example.com\njavascript:alert(1)'),
+  [],
+);
 assert.equal(toSyntheticArtifactPath('/foo/bar?x=1'), 'foo/bar/index.html');
 assert.equal(toSyntheticArtifactPath('/foo#hash'), 'foo/index.html');
 assert.equal(toSyntheticArtifactPath('/app.js'), 'app.js');

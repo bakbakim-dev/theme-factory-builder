@@ -87,6 +87,7 @@ export const normalizeRouteSeedList = (value: string): string[] => {
         .map((item) => item.trim())
         .filter(Boolean)
         .map(normalizeSeedPath)
+        .filter(Boolean)
         .filter((item) => {
             if (seen.has(item)) return false;
             seen.add(item);
