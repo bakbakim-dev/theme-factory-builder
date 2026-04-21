@@ -13,15 +13,41 @@ const hasFileLikeExtension = (pathname: string): boolean => {
     return /\.[a-z0-9]+$/i.test(lastSegment);
 };
 
+const safeParseUrl = (value: string): URL | null => {
+    try {
+        return new URL(value);
+    } catch {
+        return null;
+    }
+};
+
+const toCaptureUrl = (value: string): URL | null => {
+    const trimmed = (value || '').trim();
+    if (!trimmed) return null;
+
+    const parsed = safeParseUrl(trimmed);
+    if (parsed) return parsed;
+
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return null;
+
+    return safeParseUrl(`https://${trimmed}`);
+};
+
+const normalizePathShape = (pathname: string): string => {
+    if (!pathname || pathname === '/') return '/';
+    if (hasFileLikeExtension(pathname)) return `/${pathname.replace(/^\/+/, '').replace(/\/+$/, '')}`;
+    return `/${pathname.replace(/^\/+|\/+$/g, '')}/`;
+};
+
 const normalizeSeedPath = (value: string): string => {
     const trimmed = (value || '').trim();
     if (!trimmed) return '';
 
-    const routePath = /^https?:\/\//i.test(trimmed)
-        ? new URL(trimmed).pathname
-        : trimmed;
+    const parsed = /^https?:\/\//i.test(trimmed) ? safeParseUrl(trimmed) : null;
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) && !parsed) return '';
 
-    return normalizeRoutePath(routePath);
+    const routePath = parsed ? parsed.pathname : trimmed;
+    return normalizePathShape(routePath);
 };
 
 export const createDefaultUrlCaptureSettings = (): UrlCaptureSettings => ({
@@ -39,8 +65,8 @@ export const normalizeCaptureUrl = (value: string): string => {
     const trimmed = (value || '').trim();
     if (!trimmed) return '';
 
-    const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-    const url = new URL(withProtocol);
+    const url = toCaptureUrl(trimmed);
+    if (!url) return '';
 
     url.hash = '';
     if (!url.pathname.endsWith('/') && !hasFileLikeExtension(url.pathname)) {
@@ -66,6 +92,8 @@ export const normalizeRouteSeedList = (value: string): string[] => {
 };
 
 export const toSyntheticArtifactPath = (routePath: string): string => {
-    const normalized = normalizeRoutePath(routePath);
-    return normalized === '/' ? 'index.html' : `${normalized.slice(1)}index.html`;
+    const normalized = normalizePathShape(routePath);
+    if (normalized === '/') return 'index.html';
+    if (hasFileLikeExtension(normalized)) return normalized.slice(1);
+    return `${normalized.slice(1)}index.html`;
 };
