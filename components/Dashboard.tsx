@@ -4,13 +4,16 @@ import { io, Socket } from 'socket.io-client';
 import { useJSZip } from '../hooks/useJSZip';
 import { LogEntry, RouteInfo, ConversionRecord, ConversionStats } from '../types';
 import { STEPS, PLATFORMS } from '../constants';
-import { convertToGutenbergBlocks, createPlaceholder, extractElementHtml, AuditLog, ConversionResult, ThemeTokenSuggestion } from '../utils/converter';
+import { convertToGutenbergBlocks, createPlaceholder, extractElementHtml, AuditLog, ConversionResult, GeneratedFormManifestEntry, ThemeTokenSuggestion } from '../utils/converter';
 import { PLUGIN_FILES } from '../utils/plugintemplates';
+import { WHIPIFY_FORMS_PLUGIN_FILES, WHIPIFY_FORMS_README } from '../utils/whipifyFormsTemplates';
 import { buildStaticSiteFromArtifactZip } from '../utils/static-artifact';
 import { createStaticSiteOutput, StaticSiteSettings } from '../utils/static-output';
 import type { StaticBuildReport } from '../utils/static-types';
 import { createDefaultUrlCaptureSettings } from '../utils/url-capture-common';
 import type { UrlCaptureCertificationResult, UrlCaptureCertificationStatus, UrlCaptureReport, UrlCaptureSettings } from '../utils/url-capture-types';
+import { bindWhipifyQuickEditorChrome, buildWhipifyQuickEditorDefaults, buildWhipifyQuickEditorPhp, extractTelCtaCandidate, mergeWhipifyQuickEditorSlotSupport } from '../utils/whipifyQuickEditor';
+import { buildWhipifyFrontendEditorArtifacts, buildWhipifyFrontendEditorSupportMap } from '../utils/whipifyFrontendEditor';
 import { buildWordPressChromeContextPlan, buildWordPressChromeSelectorPhp, buildWordPressTemplateChromeBootstrap, localizeWordPressChromePaths } from '../utils/wordpress-chrome-context';
 
 interface DashboardProps { onConversionComplete: (record: ConversionRecord, zipBlob: Blob) => void; }
@@ -133,8 +136,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     const [finalZipBlob, setFinalZipBlob] = useState<Blob | null>(null);
     const [previewImage, setPreviewImage] = useState<string | null>(null);
     const [pluginZipBlob, setPluginZipBlob] = useState<Blob | null>(null);
+    const [formsPluginZipBlob, setFormsPluginZipBlob] = useState<Blob | null>(null);
     const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
     const [pluginDownloadUrl, setPluginDownloadUrl] = useState<string | null>(null);
+    const [formsPluginDownloadUrl, setFormsPluginDownloadUrl] = useState<string | null>(null);
     const [thumbnails, setThumbnails] = useState<string[]>([]);
     const [selectedPlatform, setSelectedPlatform] = useState('lovable');
     const [conversionMode, setConversionMode] = useState<ConversionMode>('gutenberg-native');
@@ -682,6 +687,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs]);
     useEffect(() => { if (!finalZipBlob) return; const url = window.URL.createObjectURL(finalZipBlob); setDownloadUrl(url); return () => { window.URL.revokeObjectURL(url); }; }, [finalZipBlob]);
     useEffect(() => { if (!pluginZipBlob) return; const url = window.URL.createObjectURL(pluginZipBlob); setPluginDownloadUrl(url); return () => { window.URL.revokeObjectURL(url); }; }, [pluginZipBlob]);
+    useEffect(() => { if (!formsPluginZipBlob) return; const url = window.URL.createObjectURL(formsPluginZipBlob); setFormsPluginDownloadUrl(url); return () => { window.URL.revokeObjectURL(url); }; }, [formsPluginZipBlob]);
     useEffect(() => {
         if (finalZipBlob && step === STEPS.COMPLETE) {
             const record: ConversionRecord = {
@@ -735,7 +741,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         const derivedThemeSlug = file.name.replace('.zip', '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
         setSourceFile(file);
         if (!JSZipLib) { addLog("Engine not ready. Please wait...", 'error'); return; }
-        setStep(STEPS.ANALYZING); setLogs([]); setProgress(5); setConversionStats(null); setStaticExportReport(null); setUrlCaptureReport(null); setUrlCaptureStatus('idle'); setFinalZipBlob(null); setPluginZipBlob(null); setThumbnails([]); setRedirectsData(null); setLlmsData(null);
+        setStep(STEPS.ANALYZING); setLogs([]); setProgress(5); setConversionStats(null); setStaticExportReport(null); setUrlCaptureReport(null); setUrlCaptureStatus('idle'); setFinalZipBlob(null); setPluginZipBlob(null); setFormsPluginZipBlob(null); setThumbnails([]); setRedirectsData(null); setLlmsData(null);
         setThemeSlug(derivedThemeSlug);
         addLog(`Initiating analysis for: ${file.name}`);
         try {
@@ -835,11 +841,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                 if (text && text.length > 2 && text.length < 30 && !text.includes('/')) updates.ctaText1 = text.trim();
             }
             
-            const telHref = allSrcText.match(/>([^<]+)<\/a>[^<]*href=["'](tel:[^"']+)["']/i) || allSrcText.match(/href=["'](tel:[^"']+)["'][^>]*>([^<]+)<\/a>/i);
-            if (telHref) {
-                updates.ctaLink2 = telHref[1].startsWith('tel:') ? telHref[1] : (telHref[2] ? telHref[2] : '');
-                const text = telHref[2] && !telHref[2].startsWith('tel:') ? telHref[2] : telHref[1];
-                if (text && text.length > 2 && text.length < 30 && !text.includes('tel:')) updates.ctaText2 = text.trim();
+            const telCta = extractTelCtaCandidate(allSrcText, updates.telephone || seoSettings.telephone);
+            if (telCta) {
+                updates.ctaLink2 = telCta.link;
+                if (telCta.text.length > 2 && telCta.text.length < 30) updates.ctaText2 = telCta.text.trim();
             }
 
             // Detect Color Palette (Primary button colors)
@@ -1181,6 +1186,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         setUrlCaptureStatus('idle');
         setFinalZipBlob(null);
         setPluginZipBlob(null);
+        setFormsPluginZipBlob(null);
         setRedirectsData(null);
         setLlmsData(null);
         addLog(`Starting certified URL capture for ${trimmedUrl}...`, 'info');
@@ -1269,6 +1275,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
 
         // Use the comprehensive plugin templates
         Object.entries(PLUGIN_FILES).forEach(([path, content]) => {
+            folder.file(path, content);
+        });
+
+        return await zipInstance.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+    };
+
+    const generateWhipifyFormsPlugin = async (zipInstance: any): Promise<Blob> => {
+        const folder = zipInstance.folder('whipify-forms-plugin');
+
+        Object.entries(WHIPIFY_FORMS_PLUGIN_FILES).forEach(([path, content]) => {
             folder.file(path, content);
         });
 
@@ -1378,6 +1394,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         setThumbnails(thumbUrls);
 
         const stats: ConversionStats = { php: 0, js: 0, css: 0, images: 0, routes: routesToProcess.length, patterns: 0 };
+        const generatedFormsManifest: GeneratedFormManifestEntry[] = [];
         let mainHtml = "";
         const foundCssFiles: string[] = [];
         const cssFiles: string[] = []; const jsFiles: string[] = []; const assetFiles: string[] = []; const otherFiles: string[] = [];
@@ -1445,7 +1462,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             }
 
             setStaticExportReport(staticOutput.report);
-            setPluginZipBlob(null);
+        setPluginZipBlob(null);
+        setFormsPluginZipBlob(null);
             setRedirectsData(staticOutput.files['_redirects'] || null);
             setLlmsData(staticOutput.files['llms.txt'] || null);
             setConversionStats({
@@ -1767,20 +1785,35 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         stats.css = cssFiles.length; stats.js = jsFiles.length; stats.images = assetFiles.length;
         addLog(`Copied ${allFilesToCopy.length} files`, 'success'); setProgress(40);
 
+        const quickEditorDefaults = buildWhipifyQuickEditorDefaults(seoSettings);
+        let quickEditorSlotSupport = mergeWhipifyQuickEditorSlotSupport();
+
         Object.entries(chromeVariants).forEach(([context, variant]) => {
             if (variant.headerHtml) {
                 const processedHeaderVariant = rewriteWordPressRouteLinks(
                     replaceAssetPaths(variant.headerHtml, '<?php echo esc_url(get_template_directory_uri()); ?>/'),
                     context,
                 );
-                folder.file(`partials/header-${context}.php`, processedHeaderVariant);
+                if (mode === 'gutenberg-native') {
+                    const boundHeader = bindWhipifyQuickEditorChrome('header', processedHeaderVariant, quickEditorDefaults);
+                    quickEditorSlotSupport = mergeWhipifyQuickEditorSlotSupport(quickEditorSlotSupport, boundHeader.slotSupport);
+                    folder.file(`partials/header-${context}.php`, boundHeader.html);
+                } else {
+                    folder.file(`partials/header-${context}.php`, processedHeaderVariant);
+                }
             }
             if (variant.footerHtml) {
                 const processedFooterVariant = rewriteWordPressRouteLinks(
                     replaceAssetPaths(variant.footerHtml, '<?php echo esc_url(get_template_directory_uri()); ?>/'),
                     context,
                 );
-                folder.file(`partials/footer-${context}.php`, processedFooterVariant);
+                if (mode === 'gutenberg-native') {
+                    const boundFooter = bindWhipifyQuickEditorChrome('footer', processedFooterVariant, quickEditorDefaults);
+                    quickEditorSlotSupport = mergeWhipifyQuickEditorSlotSupport(quickEditorSlotSupport, boundFooter.slotSupport);
+                    folder.file(`partials/footer-${context}.php`, boundFooter.html);
+                } else {
+                    folder.file(`partials/footer-${context}.php`, processedFooterVariant);
+                }
             }
         });
         addLog(`Generated ${chromeContextPlan.contexts.length} localized header/footer variant sets`, 'success');
@@ -4707,11 +4740,37 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
 ?>
 ` : '';
 
+        const quickEditorPhp = mode === 'gutenberg-native'
+            ? buildWhipifyQuickEditorPhp(quickEditorDefaults, quickEditorSlotSupport)
+            : '';
+        const frontendEditorArtifacts = mode === 'gutenberg-native'
+            ? buildWhipifyFrontendEditorArtifacts({
+                defaults: quickEditorDefaults,
+                supportMap: buildWhipifyFrontendEditorSupportMap({
+                    hasHeaderSlots: quickEditorSlotSupport.header,
+                    hasFooterSlots: quickEditorSlotSupport.footer,
+                    hasSocialSlots: quickEditorSlotSupport.social,
+                }),
+                themeSlug,
+            })
+            : null;
+
         if (mode === 'gutenberg-native') {
-            functionsPhpContent += cptCode;
+            functionsPhpContent = functionsPhpContent.replace(/\?>\s*$/, '');
+            functionsPhpContent += `\n${quickEditorPhp}\n`;
+            functionsPhpContent += frontendEditorArtifacts
+                ? `\n${frontendEditorArtifacts.php.replace(/^<\?php\s*/, '').replace(/\?>\s*$/, '')}\n`
+                : '';
+            functionsPhpContent += cptCode
+                ? cptCode.replace(/^<\?php\s*/, '').replace(/\?>\s*$/, '')
+                : '';
         }
 
         folder.file("functions.php", functionsPhpContent); stats.php++;
+        if (mode === 'gutenberg-native' && frontendEditorArtifacts) {
+            folder.file('assets/whipify-frontend-editor.js', frontendEditorArtifacts.js);
+            folder.file('assets/whipify-frontend-editor.css', frontendEditorArtifacts.css);
+        }
 
         // Chrome fingerprint helpers — detect header/footer by content, not tag name
         type ChromeSig = { texts: Set<string>; hrefs: Set<string> };
@@ -5244,11 +5303,14 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                     const conversionResult = convertToGutenbergBlocks(
                         cleanHtml,
                         mode === 'gutenberg-native'
-                            ? { faqData: faqData }
-                            : { patterns: globalPatterns, faqData: faqData }
+                            ? { faqData: faqData, routeInfo: { path: route.path, slug, title: route.title } }
+                            : { patterns: globalPatterns, faqData: faqData, routeInfo: { path: route.path, slug, title: route.title } }
                     );
                     const rawBlocks = conversionResult.html;
                     allAuditLogs.push(...conversionResult.logs);
+                    if (conversionResult.formsManifest.length > 0) {
+                        generatedFormsManifest.push(...conversionResult.formsManifest);
+                    }
                     
                     // Log conversion diagnostics
                     addLog(`  📊 Editability: ${Math.round(conversionResult.editabilityScore * 100)}% | Confidence: ${Math.round(conversionResult.confidenceScore * 100)}%`, 'info');
@@ -6091,6 +6153,16 @@ echo "Theme Factory Data Migration Complete.";`;
         if (total404s > 0) addLog(`  🚨 Graph Audit: Detected ${total404s} broken internal 404 links`, 'error');
         if (totalOrphans > 0) addLog(`  ⚠ Graph Audit: Detected ${totalOrphans} contextual orphan pages`, 'warning');
 
+        if (generatedFormsManifest.length > 0) {
+            folder.file("assets/data/forms.json", JSON.stringify(generatedFormsManifest, null, 2));
+            const formsPluginBlob = await generateWhipifyFormsPlugin(new JSZipLib());
+            setFormsPluginZipBlob(formsPluginBlob);
+            folder.file("plugins/README-forms.txt", WHIPIFY_FORMS_README);
+            folder.file("plugins/whipify-forms-plugin.zip", formsPluginBlob);
+            addLog(`Whipify forms manifest generated (${generatedFormsManifest.length} form${generatedFormsManifest.length === 1 ? '' : 's'})`, 'info');
+            addLog("Whipify Forms Plugin generated (for WordPress form wiring)", 'info');
+        }
+
         if (mode === 'gutenberg-native') {
             const pluginBlob = await generateCompanionPlugin(new JSZipLib());
             setPluginZipBlob(pluginBlob);
@@ -6841,6 +6913,18 @@ echo "Theme Factory Data Migration Complete.";`;
                                             <div className="text-left">
                                                 <div className="font-bold">Companion Plugin</div>
                                                 <div className="text-xs opacity-75">Required for Custom Blocks</div>
+                                            </div>
+                                        </div>
+                                        <Download className="w-5 h-5 group-hover:translate-y-1 transition-transform" />
+                                    </a>
+                                )}
+                                {formsPluginDownloadUrl && (
+                                    <a href={formsPluginDownloadUrl} download="whipify-forms-plugin.zip" className="bg-slate-700 hover:bg-slate-600 text-white p-4 rounded-xl flex items-center justify-between group border border-slate-600">
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-2 bg-slate-800 rounded-lg"><Settings className="w-6 h-6 text-emerald-400" /></div>
+                                            <div className="text-left">
+                                                <div className="font-bold">Whipify Forms Plugin</div>
+                                                <div className="text-xs opacity-75">Connects generated WordPress forms</div>
                                             </div>
                                         </div>
                                         <Download className="w-5 h-5 group-hover:translate-y-1 transition-transform" />

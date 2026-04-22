@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import {
   buildWhipifyFrontendEditorArtifacts,
   buildWhipifyFrontendEditorSupportMap,
@@ -22,6 +23,7 @@ const artifacts = buildWhipifyFrontendEditorArtifacts({
   supportMap,
   themeSlug: 'duty-cleaners-theme',
 });
+const dashboardSource = await fs.readFile(new URL('../components/Dashboard.tsx', import.meta.url), 'utf8');
 
 assert.match(artifacts.php, /wp_ajax_tf_frontend_editor_save_block/);
 assert.match(artifacts.php, /wp_ajax_tf_frontend_editor_save_chrome/);
@@ -50,5 +52,10 @@ assert.match(artifacts.js, /wp-admin-bar-whipify-frontend-editor-toggle/);
 assert.match(artifacts.js, /Edit in Gutenberg/);
 assert.match(artifacts.js, /data-whipify-editable/);
 assert.match(artifacts.css, /\.whipify-frontend-editor-panel/);
+assert.match(dashboardSource, /buildWhipifyFrontendEditorArtifacts/);
+assert.match(dashboardSource, /buildWhipifyFrontendEditorSupportMap/);
+assert.match(dashboardSource, /assets\/whipify-frontend-editor\.js/);
+assert.match(dashboardSource, /assets\/whipify-frontend-editor\.css/);
+assert.match(dashboardSource, /frontendEditorArtifacts\.php/);
 
 console.log('whipify frontend editor regression passed');

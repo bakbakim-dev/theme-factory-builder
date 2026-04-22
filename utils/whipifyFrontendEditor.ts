@@ -357,6 +357,34 @@ if ( ! function_exists( 'tf_frontend_editor_admin_bar_menu' ) ) {
 }
 
 add_action( 'admin_bar_menu', 'tf_frontend_editor_admin_bar_menu', 100 );
+if ( ! function_exists( 'tf_frontend_editor_enqueue_assets' ) ) {
+    function tf_frontend_editor_enqueue_assets() {
+        if ( ! tf_frontend_editor_is_enabled() ) {
+            return;
+        }
+
+        $script_handle = ${phpString(`${themeSlug}-frontend-editor`)};
+        $style_handle = ${phpString(`${themeSlug}-frontend-editor-style`)};
+        $script_rel = 'assets/whipify-frontend-editor.js';
+        $style_rel = 'assets/whipify-frontend-editor.css';
+        $script_path = get_theme_file_path( $script_rel );
+        $style_path = get_theme_file_path( $style_rel );
+        $script_uri = get_theme_file_uri( $script_rel );
+        $style_uri = get_theme_file_uri( $style_rel );
+        $script_ver = file_exists( $script_path ) ? (string) filemtime( $script_path ) : '1.0.0';
+        $style_ver = file_exists( $style_path ) ? (string) filemtime( $style_path ) : '1.0.0';
+
+        wp_enqueue_style( $style_handle, $style_uri, array(), $style_ver );
+        wp_enqueue_script( $script_handle, $script_uri, array(), $script_ver, true );
+        wp_add_inline_script(
+            $script_handle,
+            'window.whipifyFrontendEditorConfig = ' . wp_json_encode( tf_frontend_editor_bootstrap_config() ) . ';',
+            'before'
+        );
+    }
+}
+
+add_action( 'wp_enqueue_scripts', 'tf_frontend_editor_enqueue_assets', 100 );
 add_filter( 'render_block', 'tf_frontend_editor_render_block', 10, 2 );
 add_action( 'wp_ajax_tf_frontend_editor_save_chrome', 'tf_frontend_editor_save_chrome' );
 add_action( 'wp_ajax_tf_frontend_editor_save_block', 'tf_frontend_editor_save_block' );`;
@@ -369,6 +397,7 @@ const renderJs = (defaults: WhipifyQuickEditorDefaults, supportMap: WhipifyFront
   editScopes: ['global-chrome', 'page-block'],
   defaults: ${JSON.stringify(defaults)},
   supportMap: ${JSON.stringify(supportMap)},
+  ...(window.whipifyFrontendEditorConfig || {}),
 };
 
 const panelClassName = 'whipify-frontend-editor-panel';
