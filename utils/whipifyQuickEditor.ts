@@ -37,11 +37,6 @@ interface WhipifyQuickEditorChromeBinding {
   slotSupport: WhipifyQuickEditorSlotSupport;
 }
 
-export interface TelCtaCandidate {
-  link: string;
-  text: string;
-}
-
 const QUICK_EDITOR_FIELD_DEFINITIONS: Record<QuickEditorPart, QuickEditorFieldDefinition[]> = {
   header: [
     { key: 'primary_cta_text', label: 'Primary CTA Text', kind: 'text' },
@@ -75,8 +70,6 @@ const QUICK_EDITOR_URL_FIELDS = new Set<keyof WhipifyQuickEditorDefaults>([
   'linkedin',
   'x',
 ]);
-const QUICK_EDITOR_MIN_TEXT_LITERAL_LENGTH = 2;
-const WORD_CHARACTER_PATTERN = /[\p{L}\p{N}_-]/u;
 
 const escapePhpSingleQuoted = (value: string): string => value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
@@ -92,93 +85,17 @@ const readString = (source: Record<string, unknown>, keys: string[]): string => 
   return '';
 };
 
-const joinNonEmpty = (...parts: string[]): string => parts.filter(Boolean).join(', ');
-
 const getFieldDefinition = (part: QuickEditorPart, key: keyof WhipifyQuickEditorDefaults): QuickEditorFieldDefinition | undefined =>
   QUICK_EDITOR_FIELD_DEFINITIONS[part].find((definition) => definition.key === key);
 
-const buildPhpTextEcho = (key: keyof WhipifyQuickEditorDefaults, fallback: string): string => {
+const buildPhpEcho = (key: keyof WhipifyQuickEditorDefaults, fallback: string): string => {
   const accessor = `tf_quick_editor_get( '${String(key)}', '${escapePhpSingleQuoted(fallback)}' )`;
   return QUICK_EDITOR_URL_FIELDS.has(key)
     ? `<?php echo esc_url( ${accessor} ); ?>`
     : `<?php echo esc_html( ${accessor} ); ?>`;
 };
 
-const buildPhpHrefEcho = (key: keyof WhipifyQuickEditorDefaults, fallback: string): string => {
-  if (key === 'phone') {
-    return `<?php echo esc_attr( tf_quick_editor_tel_href( 'phone', '${escapePhpSingleQuoted(fallback)}' ) ); ?>`;
-  }
-  return `<?php echo esc_url( tf_quick_editor_get( '${String(key)}', '${escapePhpSingleQuoted(fallback)}' ) ); ?>`;
-};
-
 const splitHtmlSegments = (html: string): string[] => (html || '').split(/(<[^>]+>)/g);
-
-const isWordCharacter = (value: string | undefined): boolean => Boolean(value) && WORD_CHARACTER_PATTERN.test(value || '');
-
-const hasSafeTextBoundaries = (segment: string, startIndex: number, literal: string): boolean => {
-  const previousCharacter = startIndex > 0 ? segment[startIndex - 1] : '';
-  const nextCharacter = startIndex + literal.length < segment.length ? segment[startIndex + literal.length] : '';
-  return !isWordCharacter(previousCharacter) && !isWordCharacter(nextCharacter);
-};
-
-const normalizeComparablePhone = (value: string): string => (value || '').replace(/(?!^)\+|[^0-9+]/g, '');
-
-const normalizePhoneComparisonKey = (value: string): string => {
-  let normalizedValue = normalizeComparablePhone(value).replace(/^\+/, '');
-  if (!normalizedValue) return '';
-  if (normalizedValue.startsWith('1') && normalizedValue.length > 10) {
-    normalizedValue = normalizedValue.slice(1);
-  }
-  if (normalizedValue.length > 10) {
-    normalizedValue = normalizedValue.slice(0, 10);
-  }
-  return normalizedValue;
-};
-
-const stripHtmlTags = (value: string): string => (value || '').replace(/<[^>]*>/g, '');
-
-const extractTelAnchors = (html: string): Array<{ href: string; text: string }> => Array.from(
-  html.matchAll(/<a\b[^>]*href=["'](tel:[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi),
-).map((match) => ({
-  href: (match[1] || '').trim(),
-  text: stripHtmlTags(match[2] || '').trim(),
-}));
-
-const looksLikePhoneLabel = (value: string): boolean => {
-  const normalizedValue = normalizePhoneComparisonKey(value);
-  if (normalizedValue.length < 7) return false;
-  const relaxedValue = (value || '')
-    .toLowerCase()
-    .replace(/\b(?:ext|extension|poste|poste\.)\.?\s*\d*/g, '')
-    .replace(/\bx\.?\s*\d*/g, '');
-  return !/[a-z]/i.test(relaxedValue);
-};
-
-const arePhoneKeysEquivalent = (left: string, right: string): boolean => {
-  const normalizedLeft = normalizePhoneComparisonKey(left);
-  const normalizedRight = normalizePhoneComparisonKey(right);
-
-  if (!normalizedLeft || !normalizedRight) return false;
-  if (normalizedLeft === normalizedRight) return true;
-
-  const shorterLength = Math.min(normalizedLeft.length, normalizedRight.length);
-  if (shorterLength < 7) return false;
-
-  return normalizedLeft.startsWith(normalizedRight) || normalizedRight.startsWith(normalizedLeft);
-};
-
-const rewritePhoneInnerHtml = (innerHtml: string, phoneFallback: string): string => splitHtmlSegments(innerHtml)
-  .map((segment) => {
-    if (segment.startsWith('<')) return segment;
-    const trimmedSegment = segment.trim();
-    if (!trimmedSegment) return segment;
-    if (!looksLikePhoneLabel(trimmedSegment)) return segment;
-    if (!arePhoneKeysEquivalent(trimmedSegment, phoneFallback)) return segment;
-    const leadingWhitespace = segment.match(/^\s*/)?.[0] || '';
-    const trailingWhitespace = segment.match(/\s*$/)?.[0] || '';
-    return `${leadingWhitespace}${buildPhpTextEcho('phone', phoneFallback)}${trailingWhitespace}`;
-  })
-  .join('');
 
 const buildUnambiguousDefinitionMap = (
   definitions: QuickEditorFieldDefinition[],
@@ -192,7 +109,6 @@ const buildUnambiguousDefinitionMap = (
     if (definition.kind !== kind) continue;
     const fallback = defaults[definition.key] || '';
     if (!fallback) continue;
-    if (kind === 'text' && fallback.length < QUICK_EDITOR_MIN_TEXT_LITERAL_LENGTH) continue;
     if (ambiguous.has(fallback)) continue;
     if (mapped.has(fallback)) {
       mapped.delete(fallback);
@@ -213,36 +129,17 @@ const rewriteTextNodes = (
   const literals = Array.from(definitionsByLiteral.keys()).sort((left, right) => right.length - left.length || left.localeCompare(right));
   if (!literals.length) return html;
 
+  const pattern = new RegExp(literals.map(escapeRegExp).join('|'), 'g');
   return splitHtmlSegments(html)
     .map((segment) => {
       if (segment.startsWith('<')) return segment;
-      let rewrittenSegment = '';
-      let cursor = 0;
-
-      while (cursor < segment.length) {
-        let matchedLiteral = '';
-        let matchedDefinition: QuickEditorFieldDefinition | undefined;
-
-        for (const literal of literals) {
-          if (!segment.startsWith(literal, cursor)) continue;
-          if (!hasSafeTextBoundaries(segment, cursor, literal)) continue;
-          matchedLiteral = literal;
-          matchedDefinition = definitionsByLiteral.get(literal);
-          break;
-        }
-
-        if (!matchedLiteral || !matchedDefinition) {
-          rewrittenSegment += segment[cursor];
-          cursor += 1;
-          continue;
-        }
-
-        usedKeys.add(matchedDefinition.key);
-        rewrittenSegment += buildPhpTextEcho(matchedDefinition.key, matchedLiteral);
-        cursor += matchedLiteral.length;
-      }
-
-      return rewrittenSegment;
+      return segment.replace(pattern, (matched) => {
+        const definitions = definitionsByLiteral.get(matched);
+        if (!definitions) return matched;
+        const definition = definitions;
+        usedKeys.add(definition.key);
+        return buildPhpEcho(definition.key, matched);
+      });
     })
     .join('');
 };
@@ -259,39 +156,10 @@ const rewriteHrefAttributes = (
       if (!definitions) return match;
       const definition = definitions;
       usedKeys.add(definition.key);
-      return `${prefix}${quote}${buildPhpHrefEcho(definition.key, value)}${quote}`;
+      return `${prefix}${quote}${buildPhpEcho(definition.key, value)}${quote}`;
     });
   })
   .join('');
-
-const rewritePhoneAnchorHrefs = (
-  html: string,
-  phoneFallback: string,
-  usedKeys: Set<keyof WhipifyQuickEditorDefaults>,
-): string => {
-  const normalizedPhoneLiteral = normalizePhoneComparisonKey(phoneFallback);
-
-  if (!normalizedPhoneLiteral) {
-    return html;
-  }
-
-  return html.replace(/<a\b([^>]*)href=(["'])(.*?)\2([^>]*)>([\s\S]*?)<\/a>/gi, (match, beforeHref, quote, hrefValue, afterHref, innerHtml) => {
-    const normalizedHrefValue = /^tel:/i.test(hrefValue)
-      ? normalizePhoneComparisonKey(hrefValue.replace(/^tel:/i, ''))
-      : '';
-    if (!normalizedHrefValue || normalizedHrefValue !== normalizedPhoneLiteral) return match;
-    const innerText = stripHtmlTags(innerHtml);
-    if (!looksLikePhoneLabel(innerText)) return match;
-    if (!arePhoneKeysEquivalent(innerText, phoneFallback)) return match;
-    usedKeys.add('phone');
-    return `<a${beforeHref}href=${quote}${buildPhpHrefEcho('phone', hrefValue)}${quote}${afterHref}>${rewritePhoneInnerHtml(innerHtml, phoneFallback)}</a>`;
-  });
-};
-
-const buildHrefDefinitionMap = (
-  definitions: QuickEditorFieldDefinition[],
-  defaults: WhipifyQuickEditorDefaults,
-): Map<string, QuickEditorFieldDefinition> => buildUnambiguousDefinitionMap(definitions, defaults, 'url');
 
 const renderPhpArray = (entries: Array<[string, string]>): string =>
   entries.length
@@ -330,24 +198,21 @@ const normalizePart = (part: string): QuickEditorPart => {
 };
 
 export const buildWhipifyQuickEditorDefaults = (seoSettings: Record<string, unknown> = {}): WhipifyQuickEditorDefaults => ({
-  primary_cta_text: readString(seoSettings, ['ctaText1', 'primaryCtaText', 'primary_cta_text']),
-  primary_cta_url: readString(seoSettings, ['ctaLink1', 'primaryCtaUrl', 'primary_cta_url']),
-  secondary_cta_text: readString(seoSettings, ['ctaText2', 'secondaryCtaText', 'secondary_cta_text']),
-  secondary_cta_url: readString(seoSettings, ['ctaLink2', 'secondaryCtaUrl', 'secondary_cta_url']),
+  primary_cta_text: readString(seoSettings, ['primaryCtaText', 'primary_cta_text']),
+  primary_cta_url: readString(seoSettings, ['primaryCtaUrl', 'primary_cta_url', 'url']),
+  secondary_cta_text: readString(seoSettings, ['secondaryCtaText', 'secondary_cta_text']),
+  secondary_cta_url: readString(seoSettings, ['secondaryCtaUrl', 'secondary_cta_url']),
   phone: readString(seoSettings, ['phone', 'telephone']),
   announcement_text: readString(seoSettings, ['announcementText', 'announcement_text']),
   announcement_url: readString(seoSettings, ['announcementUrl', 'announcement_url']),
   business_name: readString(seoSettings, ['businessName', 'companyName', 'business_name']),
-  address_line_1: readString(seoSettings, ['addressLine1', 'address_line_1']) || joinNonEmpty(
-    readString(seoSettings, ['addressLocality']),
-    readString(seoSettings, ['addressRegion']),
-  ),
-  address_line_2: readString(seoSettings, ['addressLine2', 'address_line_2', 'addressCountry']),
-  contact_line: readString(seoSettings, ['contactLine', 'contact_line', 'telephone', 'phone']),
-  facebook: readString(seoSettings, ['facebook', 'facebookUrl', 'socialFacebook', 'social_facebook']),
-  instagram: readString(seoSettings, ['instagram', 'instagramUrl', 'socialInstagram', 'social_instagram']),
-  linkedin: readString(seoSettings, ['linkedin', 'linkedinUrl', 'socialLinkedIn', 'social_linkedin']),
-  x: readString(seoSettings, ['x', 'xUrl', 'twitter', 'socialTwitter', 'social_x']),
+  address_line_1: readString(seoSettings, ['addressLine1', 'address_line_1']),
+  address_line_2: readString(seoSettings, ['addressLine2', 'address_line_2']),
+  contact_line: readString(seoSettings, ['contactLine', 'contact_line']),
+  facebook: readString(seoSettings, ['facebook', 'socialFacebook', 'social_facebook']),
+  instagram: readString(seoSettings, ['instagram', 'socialInstagram', 'social_instagram']),
+  linkedin: readString(seoSettings, ['linkedin', 'socialLinkedIn', 'social_linkedin']),
+  x: readString(seoSettings, ['x', 'twitter', 'socialTwitter', 'social_x']),
 });
 
 export const extractTelCtaCandidate = (html: string, knownPhone = ''): TelCtaCandidate | null => {
@@ -384,7 +249,6 @@ export const bindWhipifyQuickEditorChrome = (
   defaults: WhipifyQuickEditorDefaults,
 ): WhipifyQuickEditorChromeBinding => {
   const safePart = normalizePart(part);
-  const urlParts: QuickEditorPart[] = safePart === 'social' ? ['social'] : [safePart, 'social'];
   const slotSupport: WhipifyQuickEditorSlotSupport = {
     header: [],
     footer: [],
@@ -392,22 +256,14 @@ export const bindWhipifyQuickEditorChrome = (
   };
   const usedKeys = new Set<keyof WhipifyQuickEditorDefaults>();
   const definitions = QUICK_EDITOR_FIELD_DEFINITIONS[safePart].filter((definition) => defaults[definition.key]);
-  const urlDefinitions = urlParts
-    .flatMap((candidatePart) => QUICK_EDITOR_FIELD_DEFINITIONS[candidatePart])
-    .filter((definition) => definition.kind === 'url' && defaults[definition.key]);
   const textDefinitionsByLiteral = buildUnambiguousDefinitionMap(definitions, defaults, 'text');
-  const urlDefinitionsByLiteral = buildHrefDefinitionMap(urlDefinitions, defaults);
+  const urlDefinitionsByLiteral = buildUnambiguousDefinitionMap(definitions, defaults, 'url');
 
   let rewritten = html || '';
-  rewritten = rewritePhoneAnchorHrefs(rewritten, defaults.phone, usedKeys);
   rewritten = rewriteTextNodes(rewritten, textDefinitionsByLiteral, usedKeys);
   rewritten = rewriteHrefAttributes(rewritten, urlDefinitionsByLiteral, usedKeys);
 
   slotSupport[safePart] = QUICK_EDITOR_FIELD_DEFINITIONS[safePart]
-    .map((definition) => definition.key)
-    .filter((key) => usedKeys.has(key))
-    .map((key) => String(key));
-  slotSupport.social = QUICK_EDITOR_FIELD_DEFINITIONS.social
     .map((definition) => definition.key)
     .filter((key) => usedKeys.has(key))
     .map((key) => String(key));
@@ -438,7 +294,8 @@ export const buildWhipifyQuickEditorPhp = (
     .map((field) => `'${escapePhpSingleQuoted(String(field))}'`)
     .join(', ');
 
-  return `if ( ! function_exists( 'tf_quick_editor_defaults' ) ) {
+  return `<?php
+if ( ! function_exists( 'tf_quick_editor_defaults' ) ) {
     function tf_quick_editor_defaults() {
         return array(
 ${defaultsPhp}
@@ -448,7 +305,7 @@ ${defaultsPhp}
 
 if ( ! function_exists( 'tf_quick_editor_settings' ) ) {
     function tf_quick_editor_settings() {
-        $tf_quick_editor_settings = get_option( WHIPIFY_QUICK_EDITOR_SETTINGS_OPTION, array() );
+        $tf_quick_editor_settings = get_option( 'whipify_quick_editor_settings', array() );
         if ( ! is_array( $tf_quick_editor_settings ) ) {
             $tf_quick_editor_settings = array();
         }
@@ -463,23 +320,6 @@ if ( ! function_exists( 'tf_quick_editor_get' ) ) {
             return $tf_quick_editor_settings[ $key ];
         }
         return $fallback;
-    }
-}
-
-if ( ! function_exists( 'tf_quick_editor_tel_href' ) ) {
-    function tf_quick_editor_tel_href( $key, $fallback = '' ) {
-        $tf_quick_editor_phone = tf_quick_editor_get( $key, '' );
-        if ( '' === trim( (string) $tf_quick_editor_phone ) ) {
-            $tf_quick_editor_phone = (string) $fallback;
-        }
-        if ( 0 === strpos( $tf_quick_editor_phone, 'tel:' ) ) {
-            $tf_quick_editor_phone = substr( $tf_quick_editor_phone, 4 );
-        }
-        $tf_quick_editor_phone = preg_replace( '/(?!^)\+|[^0-9+]/', '', (string) $tf_quick_editor_phone );
-        if ( empty( $tf_quick_editor_phone ) ) {
-            return '';
-        }
-        return 'tel:' . $tf_quick_editor_phone;
     }
 }
 
@@ -544,7 +384,7 @@ if ( ! function_exists( 'tf_quick_editor_handle_save' ) ) {
         check_admin_referer( 'tf_quick_editor_save' );
 
         if ( isset( $_POST['tf_quick_editor_reset'] ) ) {
-            delete_option( WHIPIFY_QUICK_EDITOR_SETTINGS_OPTION );
+            delete_option( 'whipify_quick_editor_settings' );
             wp_safe_redirect( admin_url( 'themes.php?page=whipify-quick-editor&reset=1' ) );
             exit;
         }
@@ -563,12 +403,13 @@ if ( ! function_exists( 'tf_quick_editor_handle_save' ) ) {
             }
         }
 
-        update_option( WHIPIFY_QUICK_EDITOR_SETTINGS_OPTION, $tf_quick_editor_settings );
+        update_option( 'whipify_quick_editor_settings', $tf_quick_editor_settings );
         wp_safe_redirect( admin_url( 'themes.php?page=whipify-quick-editor&updated=1' ) );
         exit;
     }
 }
 
 add_action( 'admin_menu', 'tf_quick_editor_register_menu' );
-add_action( 'admin_post_tf_quick_editor_save', 'tf_quick_editor_handle_save' );`;
+add_action( 'admin_post_tf_quick_editor_save', 'tf_quick_editor_handle_save' );
+?>`;
 };
