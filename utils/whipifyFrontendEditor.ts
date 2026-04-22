@@ -78,7 +78,13 @@ if ( ! function_exists( 'tf_frontend_editor_support_map' ) ) {
 
 if ( ! function_exists( 'tf_frontend_editor_current_user_can_edit' ) ) {
     function tf_frontend_editor_current_user_can_edit() {
-        return is_user_logged_in() && current_user_can( 'manage_options' );
+        return is_user_logged_in() && ( current_user_can( 'edit_pages' ) || current_user_can( 'edit_theme_options' ) );
+    }
+}
+
+if ( ! function_exists( 'tf_frontend_editor_current_user_can_edit_post' ) ) {
+    function tf_frontend_editor_current_user_can_edit_post( $post_id ) {
+        return tf_frontend_editor_current_user_can_edit() && current_user_can( 'edit_post', $post_id );
     }
 }
 
@@ -186,34 +192,41 @@ if ( ! function_exists( 'tf_frontend_editor_update_block_at_path' ) ) {
             return null;
         }
 
-        $index = absint( array_shift( $path ) );
-        if ( ! isset( $blocks[ $index ] ) ) {
-            return null;
-        }
+        $target_index = absint( $path[0] );
+        $current_index = 0;
 
-        $block = $blocks[ $index ];
-        if ( ! empty( $path ) ) {
-            $inner_blocks = isset( $block['innerBlocks'] ) && is_array( $block['innerBlocks'] ) ? $block['innerBlocks'] : array();
-            $updated_inner_blocks = tf_frontend_editor_update_block_at_path( $inner_blocks, $path, $field, $value );
-            if ( null === $updated_inner_blocks ) {
-                return null;
+        $update_block = static function ( &$items ) use ( &$update_block, $target_index, &$current_index, $field, $value, $whitelist ) {
+            foreach ( $items as &$item ) {
+                $current_index++;
+
+                if ( $current_index === $target_index ) {
+                    $block_name = isset( $item['blockName'] ) ? $item['blockName'] : '';
+                    if ( ! isset( $whitelist[ $block_name ] ) || ! in_array( $field, $whitelist[ $block_name ], true ) ) {
+                        return false;
+                    }
+
+                    if ( ! isset( $item['attrs'] ) || ! is_array( $item['attrs'] ) ) {
+                        $item['attrs'] = array();
+                    }
+
+                    $item['attrs'][ $field ] = tf_frontend_editor_sanitize_block_field( $field, $value );
+                    return true;
+                }
+
+                if ( isset( $item['innerBlocks'] ) && is_array( $item['innerBlocks'] ) && ! empty( $item['innerBlocks'] ) ) {
+                    if ( $update_block( $item['innerBlocks'] ) ) {
+                        return true;
+                    }
+                }
             }
 
-            $block['innerBlocks'] = $updated_inner_blocks;
-            $blocks[ $index ] = $block;
-            return $blocks;
-        }
+            return false;
+        };
 
-        $block_name = isset( $block['blockName'] ) ? $block['blockName'] : '';
-        if ( ! isset( $whitelist[ $block_name ] ) || ! in_array( $field, $whitelist[ $block_name ], true ) ) {
+        if ( ! $update_block( $blocks ) ) {
             return null;
         }
 
-        if ( ! isset( $block['attrs'] ) || ! is_array( $block['attrs'] ) ) {
-            $block['attrs'] = array();
-        }
-        $block['attrs'][ $field ] = tf_frontend_editor_sanitize_block_field( $field, $value );
-        $blocks[ $index ] = $block;
         return $blocks;
     }
 }
@@ -228,7 +241,7 @@ if ( ! function_exists( 'tf_frontend_editor_save_chrome' ) ) {
     function tf_frontend_editor_save_chrome() {
         check_ajax_referer( 'tf_frontend_editor_save_chrome', 'nonce' );
 
-        if ( ! tf_frontend_editor_current_user_can_edit() ) {
+        if ( ! is_user_logged_in() || ! current_user_can( 'edit_theme_options' ) ) {
             wp_send_json_error( array( 'message' => 'Permission denied.' ), 403 );
         }
 
@@ -280,6 +293,10 @@ if ( ! function_exists( 'tf_frontend_editor_save_block' ) ) {
 
         if ( ! $post ) {
             wp_send_json_error( array( 'message' => 'Post not found.' ), 404 );
+        }
+
+        if ( ! tf_frontend_editor_current_user_can_edit_post( $post_id ) ) {
+            wp_send_json_error( array( 'message' => 'Permission denied.' ), 403 );
         }
 
         $current_revision_token = tf_frontend_editor_revision_token_for_post( $post );
