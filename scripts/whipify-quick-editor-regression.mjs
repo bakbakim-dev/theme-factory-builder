@@ -48,9 +48,9 @@ const headerChrome = bindWhipifyQuickEditorChrome(
   defaults,
 );
 
-assert.match(headerChrome.html, /tf_quick_editor_get\( 'primary_cta_text'/);
+assert.match(headerChrome.html, /tf_frontend_editor_render_chrome_text\( 'header', 'primary_cta_text'/);
 assert.match(headerChrome.html, /tf_quick_editor_get\( 'primary_cta_url'/);
-assert.match(headerChrome.html, /tf_quick_editor_get\( 'phone'/);
+assert.match(headerChrome.html, /tf_frontend_editor_render_chrome_text\( 'header', 'phone'/);
 assert.deepEqual(headerChrome.slotSupport, {
   header: ['primary_cta_text', 'primary_cta_url', 'phone'],
   footer: [],
@@ -63,9 +63,9 @@ const footerChrome = bindWhipifyQuickEditorChrome(
   defaults,
 );
 
-assert.match(footerChrome.html, /tf_quick_editor_get\( 'business_name'/);
-assert.match(footerChrome.html, /tf_quick_editor_get\( 'address_line_1'/);
-assert.match(footerChrome.html, /tf_quick_editor_get\( 'contact_line'/);
+assert.match(footerChrome.html, /tf_frontend_editor_render_chrome_text\( 'footer', 'business_name'/);
+assert.match(footerChrome.html, /tf_frontend_editor_render_chrome_text\( 'footer', 'address_line_1'/);
+assert.match(footerChrome.html, /tf_frontend_editor_render_chrome_text\( 'footer', 'contact_line'/);
 
 const socialChrome = bindWhipifyQuickEditorChrome(
   'social',

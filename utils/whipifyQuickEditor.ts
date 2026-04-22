@@ -88,11 +88,12 @@ const readString = (source: Record<string, unknown>, keys: string[]): string => 
 const getFieldDefinition = (part: QuickEditorPart, key: keyof WhipifyQuickEditorDefaults): QuickEditorFieldDefinition | undefined =>
   QUICK_EDITOR_FIELD_DEFINITIONS[part].find((definition) => definition.key === key);
 
-const buildPhpEcho = (key: keyof WhipifyQuickEditorDefaults, fallback: string): string => {
+const buildPhpTextEcho = (part: QuickEditorPart, key: keyof WhipifyQuickEditorDefaults, fallback: string): string =>
+  `<?php echo tf_frontend_editor_render_chrome_text( '${part}', '${String(key)}', '${escapePhpSingleQuoted(fallback)}' ); ?>`;
+
+const buildPhpUrlEcho = (key: keyof WhipifyQuickEditorDefaults, fallback: string): string => {
   const accessor = `tf_quick_editor_get( '${String(key)}', '${escapePhpSingleQuoted(fallback)}' )`;
-  return QUICK_EDITOR_URL_FIELDS.has(key)
-    ? `<?php echo esc_url( ${accessor} ); ?>`
-    : `<?php echo esc_html( ${accessor} ); ?>`;
+  return `<?php echo esc_url( ${accessor} ); ?>`;
 };
 
 const splitHtmlSegments = (html: string): string[] => (html || '').split(/(<[^>]+>)/g);
@@ -122,6 +123,7 @@ const buildUnambiguousDefinitionMap = (
 };
 
 const rewriteTextNodes = (
+  part: QuickEditorPart,
   html: string,
   definitionsByLiteral: Map<string, QuickEditorFieldDefinition>,
   usedKeys: Set<keyof WhipifyQuickEditorDefaults>,
@@ -138,7 +140,7 @@ const rewriteTextNodes = (
         if (!definitions) return matched;
         const definition = definitions;
         usedKeys.add(definition.key);
-        return buildPhpEcho(definition.key, matched);
+        return buildPhpTextEcho(part, definition.key, matched);
       });
     })
     .join('');
@@ -156,7 +158,7 @@ const rewriteHrefAttributes = (
       if (!definitions) return match;
       const definition = definitions;
       usedKeys.add(definition.key);
-      return `${prefix}${quote}${buildPhpEcho(definition.key, value)}${quote}`;
+      return `${prefix}${quote}${buildPhpUrlEcho(definition.key, value)}${quote}`;
     });
   })
   .join('');
@@ -260,7 +262,7 @@ export const bindWhipifyQuickEditorChrome = (
   const urlDefinitionsByLiteral = buildUnambiguousDefinitionMap(definitions, defaults, 'url');
 
   let rewritten = html || '';
-  rewritten = rewriteTextNodes(rewritten, textDefinitionsByLiteral, usedKeys);
+  rewritten = rewriteTextNodes(safePart, rewritten, textDefinitionsByLiteral, usedKeys);
   rewritten = rewriteHrefAttributes(rewritten, urlDefinitionsByLiteral, usedKeys);
 
   slotSupport[safePart] = QUICK_EDITOR_FIELD_DEFINITIONS[safePart]

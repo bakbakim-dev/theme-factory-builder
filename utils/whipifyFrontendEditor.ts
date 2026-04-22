@@ -140,6 +140,31 @@ if ( ! function_exists( 'tf_frontend_editor_global_chrome_revision_token' ) ) {
     }
 }
 
+if ( ! function_exists( 'tf_frontend_editor_render_chrome_text' ) ) {
+    function tf_frontend_editor_render_chrome_text( $scope, $field, $fallback = '' ) {
+        $value = function_exists( 'tf_quick_editor_get' )
+            ? tf_quick_editor_get( $field, $fallback )
+            : $fallback;
+
+        if ( ! tf_frontend_editor_is_enabled() ) {
+            return esc_html( $value );
+        }
+
+        $settings = function_exists( 'tf_quick_editor_settings' )
+            ? tf_quick_editor_settings()
+            : array();
+        $revision = tf_frontend_editor_global_chrome_revision_token( $settings );
+
+        return sprintf(
+            '<span data-whipify-editable="true" data-whipify-edit-scope="global-chrome" data-whipify-scope="%1$s" data-whipify-field="%2$s" data-whipify-kind="text" data-whipify-revision="%3$s">%4$s</span>',
+            esc_attr( $scope ),
+            esc_attr( $field ),
+            esc_attr( $revision ),
+            esc_html( $value )
+        );
+    }
+}
+
 if ( ! function_exists( 'tf_frontend_editor_block_path_string' ) ) {
     function tf_frontend_editor_block_path_string( $path ) {
         $path = array_map( 'absint', is_array( $path ) ? $path : array() );
@@ -413,7 +438,15 @@ function createPanel() {
       <strong>Whipify Edit Mode</strong>
       <button type="button" data-whipify-action="edit-in-gutenberg">Edit in Gutenberg</button>
     </header>
-    <section class="whipify-frontend-editor-panel__body"></section>
+    <section class="whipify-frontend-editor-panel__body">
+      <label class="whipify-frontend-editor-panel__label" for="whipify-frontend-editor-input">Value</label>
+      <input id="whipify-frontend-editor-input" class="whipify-frontend-editor-panel__input" type="text" />
+      <p class="whipify-frontend-editor-panel__hint" data-whipify-role="hint">Select an editable field to begin.</p>
+      <div class="whipify-frontend-editor-panel__actions">
+        <button type="button" data-whipify-action="save">Save</button>
+        <button type="button" data-whipify-action="cancel">Cancel</button>
+      </div>
+    </section>
   \`;
   return panel;
 }
@@ -440,11 +473,80 @@ function getEditableTargets() {
 function bindEditableTarget(target) {
   target.addEventListener('mouseenter', () => target.classList.add('is-whipify-hovered'));
   target.addEventListener('mouseleave', () => target.classList.remove('is-whipify-hovered'));
-  target.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
+}
+
+function openTargetEditor(target, panel) {
+  const input = panel.querySelector('#whipify-frontend-editor-input');
+  const hint = panel.querySelector('[data-whipify-role="hint"]');
+  if (!(input instanceof HTMLInputElement) || !(hint instanceof HTMLElement)) return;
+
+  document.querySelectorAll('.' + selectedClassName).forEach((node) => node.classList.remove(selectedClassName));
+  target.classList.add(selectedClassName);
+  input.value = target.textContent || '';
+  panel.dataset.scope = target.getAttribute('data-whipify-scope') || '';
+  panel.dataset.field = target.getAttribute('data-whipify-field') || '';
+  panel.dataset.revision = target.getAttribute('data-whipify-revision') || '';
+  panel.dataset.targetId = target.getAttribute('data-whipify-field') || '';
+  hint.textContent = 'Editing ' + (panel.dataset.field || 'field');
+  setEnabled(true, panel);
+}
+
+function bindPanelActions(panel) {
+  const input = panel.querySelector('#whipify-frontend-editor-input');
+  const hint = panel.querySelector('[data-whipify-role="hint"]');
+  const saveButton = panel.querySelector('[data-whipify-action="save"]');
+  const cancelButton = panel.querySelector('[data-whipify-action="cancel"]');
+  const gutenbergButton = panel.querySelector('[data-whipify-action="edit-in-gutenberg"]');
+  if (!(input instanceof HTMLInputElement) || !(hint instanceof HTMLElement) || !(saveButton instanceof HTMLButtonElement) || !(cancelButton instanceof HTMLButtonElement) || !(gutenbergButton instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const clearSelection = () => {
     document.querySelectorAll('.' + selectedClassName).forEach((node) => node.classList.remove(selectedClassName));
-    target.classList.add(selectedClassName);
+    panel.dataset.scope = '';
+    panel.dataset.field = '';
+    panel.dataset.revision = '';
+    panel.dataset.targetId = '';
+    input.value = '';
+    hint.textContent = 'Select an editable field to begin.';
+  };
+
+  cancelButton.addEventListener('click', () => clearSelection());
+  gutenbergButton.addEventListener('click', () => {
+    const editLink = document.querySelector('#wp-admin-bar-edit a');
+    if (editLink instanceof HTMLAnchorElement) {
+      window.location.href = editLink.href;
+    }
+  });
+
+  saveButton.addEventListener('click', async () => {
+    const selected = document.querySelector('.' + selectedClassName);
+    if (!(selected instanceof HTMLElement)) {
+      hint.textContent = 'Select an editable field to save.';
+      return;
+    }
+
+    const scope = panel.dataset.scope || '';
+    const field = panel.dataset.field || '';
+    const revisionToken = panel.dataset.revision || '';
+    if (selected.getAttribute('data-whipify-edit-scope') !== 'global-chrome' || !scope || !field) {
+      hint.textContent = 'This field is not ready for frontend saving yet.';
+      return;
+    }
+
+    hint.textContent = 'Saving…';
+    const response = await saveGlobalChrome(scope, field, input.value, revisionToken);
+    const payload = await response.json();
+    if (!response.ok || !payload?.success) {
+      hint.textContent = payload?.data?.message || 'Save failed.';
+      return;
+    }
+
+    selected.textContent = input.value;
+    const nextRevision = payload?.data?.revisionToken || revisionToken;
+    selected.setAttribute('data-whipify-revision', nextRevision);
+    panel.dataset.revision = nextRevision;
+    hint.textContent = 'Saved.';
   });
 }
 
@@ -483,7 +585,15 @@ function boot() {
   const panel = createPanel();
   document.body.appendChild(panel);
   bindAdminBarToggle(panel);
-  getEditableTargets().forEach(bindEditableTarget);
+  bindPanelActions(panel);
+  getEditableTargets().forEach((target) => {
+    bindEditableTarget(target);
+    target.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openTargetEditor(target, panel);
+    });
+  });
 }
 
 window.addEventListener('DOMContentLoaded', boot);
@@ -519,6 +629,40 @@ const renderCss = (): string => `.whipify-frontend-editor-panel {
 
 .whipify-frontend-editor-panel__body {
   padding: 1rem;
+}
+
+.whipify-frontend-editor-panel__label,
+.whipify-frontend-editor-panel__hint {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem;
+  color: rgba(226, 232, 240, 0.86);
+}
+
+.whipify-frontend-editor-panel__input {
+  width: 100%;
+  margin-bottom: 0.75rem;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 0.75rem;
+  background: rgba(15, 23, 42, 0.95);
+  color: #f8fafc;
+}
+
+.whipify-frontend-editor-panel__actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.whipify-frontend-editor-panel__actions button,
+.whipify-frontend-editor-panel__header button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.5rem 0.85rem;
+  background: rgba(59, 130, 246, 0.2);
+  color: #f8fafc;
+  cursor: pointer;
 }
 
 [data-whipify-editable="true"] {
