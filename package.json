@@ -11,6 +11,7 @@
     "test:url-capture-foundation": "node scripts/url-capture-foundation-regression.mjs",
     "test:url-capture-dashboard-ui": "npx playwright test scripts/url-capture-dashboard-ui.spec.mjs --reporter=line",
     "test:url-capture-browser": "node scripts/url-capture-browser-regression.mjs",
+    "test:url-capture-discovery": "node scripts/url-capture-discovery-regression.mjs",
     "test:dashboard-ui": "npx playwright test scripts/dashboard-ui-smoke.spec.mjs --reporter=line",
     "test:static-dashboard-ui": "npx playwright test scripts/static-dashboard-ui-flow.spec.mjs --reporter=line",
     "test:static-output": "node scripts/static-output-regression.mjs",
