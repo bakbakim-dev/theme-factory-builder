@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "audit:block-contracts": "node scripts/audit-block-contracts.mjs",
     "test:url-capture-foundation": "node scripts/url-capture-foundation-regression.mjs",
+    "test:url-capture-dashboard-ui": "npx playwright test scripts/url-capture-dashboard-ui.spec.mjs --reporter=line",
     "test:dashboard-ui": "npx playwright test scripts/dashboard-ui-smoke.spec.mjs --reporter=line",
     "test:static-dashboard-ui": "npx playwright test scripts/static-dashboard-ui-flow.spec.mjs --reporter=line",
     "test:static-output": "node scripts/static-output-regression.mjs",

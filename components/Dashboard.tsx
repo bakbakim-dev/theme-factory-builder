@@ -9,9 +9,12 @@ import { PLUGIN_FILES } from '../utils/plugintemplates';
 import { buildStaticSiteFromArtifactZip } from '../utils/static-artifact';
 import { createStaticSiteOutput, StaticSiteSettings } from '../utils/static-output';
 import type { StaticBuildReport } from '../utils/static-types';
+import { createDefaultUrlCaptureSettings } from '../utils/url-capture-common';
+import type { UrlCaptureCertificationStatus, UrlCaptureSettings } from '../utils/url-capture-types';
 
 interface DashboardProps { onConversionComplete: (record: ConversionRecord, zipBlob: Blob) => void; }
 type ConversionMode = 'gutenberg-native' | 'react-spa' | 'static-site';
+type StaticSiteInputMode = 'artifact-zip' | 'public-url-certified';
 
 const DEFAULT_STATIC_SITE_SETTINGS: StaticSiteSettings = {
     baseUrl: 'https://',
@@ -165,9 +168,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     const [showSeoConfig, setShowSeoConfig] = useState(false);
     const [showStaticSeoConfig, setShowStaticSeoConfig] = useState(false);
     const [staticSiteSettings, setStaticSiteSettings] = useState<StaticSiteSettings>(DEFAULT_STATIC_SITE_SETTINGS);
+    const [staticSiteInputMode, setStaticSiteInputMode] = useState<StaticSiteInputMode>('artifact-zip');
+    const [urlCaptureSettings, setUrlCaptureSettings] = useState<UrlCaptureSettings>(createDefaultUrlCaptureSettings());
+    const [urlCaptureStatus, setUrlCaptureStatus] = useState<UrlCaptureCertificationStatus | 'idle'>('idle');
 
     const updateStaticSiteSetting = <K extends keyof StaticSiteSettings>(key: K, value: StaticSiteSettings[K]) => {
         setStaticSiteSettings(prev => ({ ...prev, [key]: value }));
+    };
+
+    const updateUrlCaptureSetting = <K extends keyof UrlCaptureSettings>(key: K, value: UrlCaptureSettings[K]) => {
+        setUrlCaptureSettings(prev => ({ ...prev, [key]: value }));
     };
 
     const renderOutputModeSelector = () => (
@@ -421,6 +431,115 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                             </label>
                         </div>
                     </div>
+                )}
+            </div>
+        );
+    };
+
+    const renderStaticInputPanel = () => {
+        if (conversionMode !== 'static-site') return null;
+
+        return (
+            <div className="bg-slate-900/50 rounded-lg border border-slate-800 p-4 space-y-4">
+                <div>
+                    <h3 className="text-sm font-semibold text-slate-300">Static Site Input</h3>
+                    <p className="text-xs text-slate-500 mt-1">Choose whether this static export starts from a build artifact ZIP or a live public React URL.</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <label className={`rounded-lg border px-3 py-3 cursor-pointer transition-colors ${staticSiteInputMode === 'artifact-zip' ? 'border-cyan-500 bg-cyan-500/10' : 'border-slate-800 bg-slate-950/60'}`}>
+                        <div className="flex items-center gap-3">
+                            <input
+                                type="radio"
+                                name="static-site-input-mode"
+                                checked={staticSiteInputMode === 'artifact-zip'}
+                                onChange={() => setStaticSiteInputMode('artifact-zip')}
+                                className="text-cyan-500 bg-slate-900 border-slate-700"
+                            />
+                            <div>
+                                <div className="text-sm font-medium text-slate-200">Build Artifact ZIP</div>
+                                <div className="text-xs text-slate-500 mt-1">Use the existing static export path from a built project archive.</div>
+                            </div>
+                        </div>
+                    </label>
+
+                    <label className={`rounded-lg border px-3 py-3 cursor-pointer transition-colors ${staticSiteInputMode === 'public-url-certified' ? 'border-cyan-500 bg-cyan-500/10' : 'border-slate-800 bg-slate-950/60'}`}>
+                        <div className="flex items-center gap-3">
+                            <input
+                                type="radio"
+                                name="static-site-input-mode"
+                                checked={staticSiteInputMode === 'public-url-certified'}
+                                onChange={() => setStaticSiteInputMode('public-url-certified')}
+                                className="text-cyan-500 bg-slate-900 border-slate-700"
+                            />
+                            <div>
+                                <div className="text-sm font-medium text-slate-200">Public React URL (Certified Capture)</div>
+                                <div className="text-xs text-slate-500 mt-1">Capture a live site and route it through the new certified synthetic-artifact workflow.</div>
+                            </div>
+                        </div>
+                    </label>
+                </div>
+
+                {staticSiteInputMode === 'public-url-certified' && (
+                    <>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-1 md:col-span-2">
+                                <label htmlFor="url-capture-public-url" className="text-xs text-slate-500">Public URL</label>
+                                <input
+                                    id="url-capture-public-url"
+                                    type="text"
+                                    value={urlCaptureSettings.sourceUrl}
+                                    onChange={e => updateUrlCaptureSetting('sourceUrl', e.target.value)}
+                                    placeholder="https://example.com"
+                                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                                />
+                            </div>
+
+                            <div className="space-y-1 md:col-span-2">
+                                <label htmlFor="url-capture-sitemap-url" className="text-xs text-slate-500">Optional sitemap URL</label>
+                                <input
+                                    id="url-capture-sitemap-url"
+                                    type="text"
+                                    value={urlCaptureSettings.sitemapUrl}
+                                    onChange={e => updateUrlCaptureSetting('sitemapUrl', e.target.value)}
+                                    placeholder="https://example.com/sitemap.xml"
+                                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                                />
+                            </div>
+
+                            <div className="space-y-1">
+                                <label htmlFor="url-capture-route-seeds" className="text-xs text-slate-500">Optional route seeds</label>
+                                <textarea
+                                    id="url-capture-route-seeds"
+                                    value={urlCaptureSettings.routeSeeds}
+                                    onChange={e => updateUrlCaptureSetting('routeSeeds', e.target.value)}
+                                    placeholder="/pricing/&#10;/contact/"
+                                    className="w-full min-h-[92px] bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm"
+                                />
+                            </div>
+
+                            <div className="space-y-1">
+                                <label htmlFor="url-capture-auth-cookies" className="text-xs text-slate-500">Optional auth cookies JSON</label>
+                                <textarea
+                                    id="url-capture-auth-cookies"
+                                    value={urlCaptureSettings.authCookiesJson}
+                                    onChange={e => updateUrlCaptureSetting('authCookiesJson', e.target.value)}
+                                    placeholder='[{"name":"session","value":"..."}]'
+                                    className="w-full min-h-[92px] bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-950/60 border border-slate-800 rounded-lg p-4">
+                            <div className="text-sm font-semibold text-slate-300">Certification Status</div>
+                            <div className="mt-2 text-sm text-slate-400">
+                                {urlCaptureStatus === 'idle' && 'Waiting to run URL capture.'}
+                                {urlCaptureStatus === 'certified' && 'Certified artifact-equivalent for Static Site export.'}
+                                {urlCaptureStatus === 'needs-input' && 'More input is required before certification is possible.'}
+                                {urlCaptureStatus === 'uncertified' && 'Best-effort output only. Certification was not possible.'}
+                            </div>
+                        </div>
+                    </>
                 )}
             </div>
         );
@@ -5793,6 +5912,8 @@ echo "Theme Factory Data Migration Complete.";`;
 
                         {renderOutputModeSelector()}
 
+                        {renderStaticInputPanel()}
+
                         {renderStaticSignalsPanel()}
 
                             <div className="border-2 border-dashed border-slate-700 rounded-xl p-8 text-center hover:border-blue-500/50 hover:bg-slate-800/30 transition-colors relative group">
@@ -5822,6 +5943,8 @@ echo "Theme Factory Data Migration Complete.";`;
                             </div>
 
                             {renderOutputModeSelector()}
+
+                            {renderStaticInputPanel()}
 
                             {renderStaticSignalsPanel()}
 
