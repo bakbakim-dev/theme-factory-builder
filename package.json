@@ -15,6 +15,7 @@
     "test:url-capture-artifact": "node scripts/url-capture-artifact-regression.mjs",
     "test:url-capture-certification": "node scripts/url-capture-certification-regression.mjs",
     "test:url-capture-dashboard-smoke": "node scripts/url-capture-dashboard-smoke.mjs",
+    "test:wordpress-chrome-context": "node scripts/wordpress-chrome-context-regression.mjs",
     "test:dashboard-ui": "npx playwright test scripts/dashboard-ui-smoke.spec.mjs --reporter=line",
     "test:static-dashboard-ui": "npx playwright test scripts/static-dashboard-ui-flow.spec.mjs --reporter=line",
     "test:static-output": "node scripts/static-output-regression.mjs",

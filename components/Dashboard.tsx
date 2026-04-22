@@ -11,6 +11,7 @@ import { createStaticSiteOutput, StaticSiteSettings } from '../utils/static-outp
 import type { StaticBuildReport } from '../utils/static-types';
 import { createDefaultUrlCaptureSettings } from '../utils/url-capture-common';
 import type { UrlCaptureCertificationResult, UrlCaptureCertificationStatus, UrlCaptureReport, UrlCaptureSettings } from '../utils/url-capture-types';
+import { buildWordPressChromeContextPlan, buildWordPressChromeSelectorPhp, buildWordPressTemplateChromeBootstrap, localizeWordPressChromePaths } from '../utils/wordpress-chrome-context';
 
 interface DashboardProps { onConversionComplete: (record: ConversionRecord, zipBlob: Blob) => void; }
 type ConversionMode = 'gutenberg-native' | 'react-spa' | 'static-site';
@@ -1460,16 +1461,27 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             return;
         }
 
-        const pickShellHtml = async (): Promise<{ html: string; source: string }> => {
-            const homeRoute = routesToProcess.find(r => r.path === '/') || routesToProcess[0];
-            const homeSlug = homeRoute?.slug || 'home';
-            const candidates = [
-                `${effectiveRoot}prerendered/_shell.html`,
-                `prerendered/_shell.html`,
-                `${effectiveRoot}prerendered/${homeSlug}.html`,
-                `prerendered/${homeSlug}.html`,
-                actualIndexFile
-            ];
+        const chromeContextPlan = buildWordPressChromeContextPlan(routesToProcess);
+        addLog(`WordPress chrome contexts: ${chromeContextPlan.contexts.join(', ')}`, 'info');
+
+        const getRouteShellCandidates = (route?: RouteInfo | null, includeGlobalShell = false): string[] => {
+            const normalizedPath = route?.path === '/' ? '/' : `/${(route?.path || '').replace(/^\/+|\/+$/g, '')}/`;
+            const cleanRoute = normalizedPath.replace(/^\/|\/$/g, '');
+            const routeSlug = route?.slug || 'home';
+
+            return [
+                includeGlobalShell ? `${effectiveRoot}prerendered/_shell.html` : '',
+                includeGlobalShell ? `prerendered/_shell.html` : '',
+                `${effectiveRoot}prerendered/${routeSlug}.html`,
+                `prerendered/${routeSlug}.html`,
+                normalizedPath === '/' ? `${effectiveRoot}index.html` : `${effectiveRoot}${cleanRoute}/index.html`,
+                normalizedPath === '/' ? actualIndexFile : `${effectiveRoot}${cleanRoute}.html`,
+                actualIndexFile,
+            ].filter(Boolean) as string[];
+        };
+
+        const pickShellHtmlForRoute = async (route?: RouteInfo | null, includeGlobalShell = false): Promise<{ html: string; source: string }> => {
+            const candidates = getRouteShellCandidates(route, includeGlobalShell);
             for (const candidate of candidates) {
                 if (!candidate) continue;
                 const html = await readHtmlFromZip(candidate);
@@ -1479,6 +1491,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                 }
             }
             return { html: mainHtml, source: actualIndexFile || 'mainHtml' };
+        };
+
+        const pickShellHtml = async (): Promise<{ html: string; source: string }> => {
+            const homeRoute = routesToProcess.find(r => r.path === '/') || routesToProcess[0];
+            return pickShellHtmlForRoute(homeRoute, true);
         };
 
         const { html: shellHtml, source: shellSource } = await pickShellHtml();
@@ -1648,6 +1665,64 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             return wrap.innerHTML;
         };
 
+        const rewriteWordPressRouteLinks = (html: string, context: string = 'global'): string => {
+            let rewritten = localizeWordPressChromePaths(html, context, routesToProcess, chromeContextPlan.routeContextByPath);
+            for (const route of routesToProcess) {
+                if (route.path === '/') continue;
+                const reactPath = route.path;
+                const wpSlug = route.slug;
+                const escapedPath = reactPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                rewritten = rewritten
+                    .replace(new RegExp(`href=["']${escapedPath}/?["']`, 'g'), `href="/${wpSlug}/"`)
+                    .replace(new RegExp(`href=["']${escapedPath}#`, 'g'), `href="/${wpSlug}/#`)
+                    .replace(new RegExp(`data-href=["']${escapedPath}/?["']`, 'g'), `data-href="/${wpSlug}/"`);
+            }
+            return rewritten;
+        };
+
+        const extractChromeFromShell = (html: string): { headerHtml: string; footerHtml: string } => {
+            if (!html) return { headerHtml: '', footerHtml: '' };
+            const shellDoc = new DOMParser().parseFromString(html, 'text/html');
+            const shellRoot = shellDoc.getElementById('root') || shellDoc.body;
+            if (!shellRoot) return { headerHtml: '', footerHtml: '' };
+
+            let headerHtml = '';
+            let footerHtml = '';
+
+            const headerEl = shellRoot.querySelector('header');
+            if (headerEl) {
+                headerHtml = headerEl.outerHTML;
+            } else {
+                const navEl = shellRoot.querySelector('nav');
+                if (navEl) headerHtml = navEl.outerHTML;
+            }
+
+            const footerEl = shellRoot.querySelector('footer');
+            if (footerEl) {
+                footerHtml = footerEl.outerHTML;
+            }
+
+            if (headerHtml) {
+                headerHtml = normalizeHeaderDropdowns(headerHtml);
+            }
+
+            return { headerHtml, footerHtml };
+        };
+
+        const chromeVariants: Record<string, { headerHtml: string; footerHtml: string; source: string }> = {};
+        for (const context of chromeContextPlan.contexts) {
+            const representativeRoute = chromeContextPlan.representativeRouteByContext[context];
+            const variantShell = context === 'global'
+                ? { html: shellHtml, source: shellSource }
+                : await pickShellHtmlForRoute(representativeRoute, false);
+            const extractedChrome = extractChromeFromShell(variantShell.html);
+            chromeVariants[context] = {
+                ...extractedChrome,
+                source: variantShell.source,
+            };
+            addLog(`Chrome variant "${context}" source: ${variantShell.source}`, 'info');
+        }
+
         // PATTERN EXTRACTION LOGIC
         const globalPatterns: { headerPattern?: string, footerPattern?: string } = {};
         try {
@@ -1691,6 +1766,24 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         }
         stats.css = cssFiles.length; stats.js = jsFiles.length; stats.images = assetFiles.length;
         addLog(`Copied ${allFilesToCopy.length} files`, 'success'); setProgress(40);
+
+        Object.entries(chromeVariants).forEach(([context, variant]) => {
+            if (variant.headerHtml) {
+                const processedHeaderVariant = rewriteWordPressRouteLinks(
+                    replaceAssetPaths(variant.headerHtml, '<?php echo esc_url(get_template_directory_uri()); ?>/'),
+                    context,
+                );
+                folder.file(`partials/header-${context}.php`, processedHeaderVariant);
+            }
+            if (variant.footerHtml) {
+                const processedFooterVariant = rewriteWordPressRouteLinks(
+                    replaceAssetPaths(variant.footerHtml, '<?php echo esc_url(get_template_directory_uri()); ?>/'),
+                    context,
+                );
+                folder.file(`partials/footer-${context}.php`, processedFooterVariant);
+            }
+        });
+        addLog(`Generated ${chromeContextPlan.contexts.length} localized header/footer variant sets`, 'success');
 
         const parser = new DOMParser();
         const doc = parser.parseFromString(shellHtml, 'text/html');
@@ -1809,29 +1902,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             finalHeaderContent = finalHeaderContent.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
             finalHeaderContent = finalHeaderContent.replace(/<script\b[^>]*\/>/gi, '');
 
-            if (extractedHeader) {
-                // DEDUPE: headerPart from shell already contains a <header>/<nav>
-                // Strip them before appending the clean extractedHeader
-                addLog(`headerPart header count before dedupe: ${(finalHeaderContent.match(/<header\b/gi) || []).length}`, 'info');
-                finalHeaderContent = finalHeaderContent
-                    .replace(/<header\b[\s\S]*?<\/header>\s*/gi, '')
-                    .replace(/<nav\b[\s\S]*?<\/nav>\s*/gi, '');
+            addLog(`headerPart header count before dedupe: ${(finalHeaderContent.match(/<header\b/gi) || []).length}`, 'info');
+            finalHeaderContent = finalHeaderContent
+                .replace(/<header\b[\s\S]*?<\/header>\s*/gi, '')
+                .replace(/<nav\b[\s\S]*?<\/nav>\s*/gi, '');
+            finalFooterContent = finalFooterContent
+                .replace(/<footer\b[\s\S]*?<\/footer>\s*/gi, '');
 
-                const processedHeader = replaceAssetPaths(extractedHeader, '<?php echo esc_url(get_template_directory_uri()); ?>/');
-                finalHeaderContent = finalHeaderContent + '\n' + processedHeader;
-                addLog(`finalHeaderContent header count after dedupe: ${(finalHeaderContent.match(/<header\b/gi) || []).length}`, 'info');
-                addLog("Injected deduped navigation HTML into header.php", 'success');
-            }
-
-            if (extractedFooter) {
-                // DEDUPE: footerPart from shell already contains a <footer>
-                finalFooterContent = finalFooterContent
-                    .replace(/<footer\b[\s\S]*?<\/footer>\s*/gi, '');
-
-                const processedFooter = replaceAssetPaths(extractedFooter, '<?php echo esc_url(get_template_directory_uri()); ?>/');
-                finalFooterContent = processedFooter + '\n' + finalFooterContent;
-                addLog("Injected deduped footer HTML into footer.php", 'success');
-            }
+            finalHeaderContent = finalHeaderContent + '\n' + buildWordPressChromeSelectorPhp('header');
+            finalFooterContent = buildWordPressChromeSelectorPhp('footer') + '\n' + finalFooterContent;
+            addLog(`finalHeaderContent header count after dedupe: ${(finalHeaderContent.match(/<header\b/gi) || []).length}`, 'info');
+            addLog("Injected localized header/footer selectors into theme chrome", 'success');
 
             addLog("Stripped React scripts from header.php and footer.php", 'info');
         }
@@ -5636,6 +5717,8 @@ ${faqBlocks.join('\n\n')}`;
             
             // Generate template body, conditionally injecting noindex logic for bad routes
             let templateBody = `<?php\n/**\n * Template Name: ${route.title}\n */\n`;
+            const normalizedRoutePath = route.path === '/' ? '/' : `/${route.path.replace(/^\/+|\/+$/g, '')}/`;
+            const routeChromeContext = chromeContextPlan.routeContextByPath[normalizedRoutePath] || 'global';
             
             // Inject the custom Title, Meta, and SCHEMA tags specifically into this page's head before get_header() is dumped
             templateBody += `add_action('wp_head', function() {\n?>\n${customTitleCode}${customDescCode}\n<!-- wp:html -->\n<script type="application/ld+json">\n${rawJsonString}\n</script>\n<!-- /wp:html -->\n<?php\n}, 1);\n`;
@@ -5664,6 +5747,7 @@ ${faqBlocks.join('\n\n')}`;
   </div>\n`;
             }
 
+            templateBody += buildWordPressTemplateChromeBootstrap(routeChromeContext);
             templateBody += `get_header(); ?>\n<main id="main" class="site-main">\n${visibleTrustHTML}  <?php while (have_posts()) : the_post(); the_content(); endwhile; ?>\n</main>\n<?php get_footer(); ?>`;
             
             // AUTO-FIX CANONICALS: Aggressively regex replace any local links missing trailing slashes
@@ -5752,9 +5836,9 @@ ${faqBlocks.join('\n\n')}`;
             }
         }
 
-        folder.file("index.php", `<?php get_header(); ?>\n<main><?php while(have_posts()): the_post(); the_content(); endwhile; ?></main>\n<?php get_footer(); ?>`);
+        folder.file("index.php", `<?php\n${buildWordPressTemplateChromeBootstrap('global')}get_header(); ?>\n<main><?php while(have_posts()): the_post(); the_content(); endwhile; ?></main>\n<?php get_footer(); ?>`);
         folder.file("assets/data/routes.json", JSON.stringify(routesToProcess, null, 2));
-        folder.file("404.php", `<?php get_header(); ?>\n<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:60vh;"><h1>404</h1><p>Page Not Found</p></div>\n<?php get_footer(); ?>`);
+        folder.file("404.php", `<?php\n${buildWordPressTemplateChromeBootstrap('global')}get_header(); ?>\n<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:60vh;"><h1>404</h1><p>Page Not Found</p></div>\n<?php get_footer(); ?>`);
         folder.file("style.css", `/*\nTheme Name: ${themeName}\nVersion: 1.0.0\nAuthor: Theme Factory AI\n*/`);
         
         // NATIVE FSE: Generate theme.json to populate the Site Editor global variables
@@ -5863,6 +5947,7 @@ ${faqBlocks.join('\n\n')}`;
 /**
  * Template Name: HTML Sitemap
  */
+${buildWordPressTemplateChromeBootstrap('global')}
 get_header(); ?>
 <main id="main" class="site-main" style="padding: 4rem 1.5rem; max-width: 800px; margin: 0 auto;">
   <header class="page-header" style="margin-bottom: 3rem;">
