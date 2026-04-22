@@ -190,14 +190,29 @@ if ( ! function_exists( 'tf_frontend_editor_tag_block_content' ) ) {
             return $block_content;
         }
 
+        $post_id = get_the_ID();
+        if ( ! $post_id || ! tf_frontend_editor_current_user_can_edit_post( $post_id ) ) {
+            return $block_content;
+        }
+
+        $field = 'core/button' === $block_name ? 'text' : 'content';
+        $revision = tf_frontend_editor_revision_token_for_post( get_post( $post_id ) );
+
         $processor = new WP_HTML_Tag_Processor( $block_content );
         if ( ! $processor->next_tag() ) {
             return $block_content;
         }
 
         $processor->set_attribute( 'data-whipify-editable', 'true' );
+        $processor->set_attribute( 'data-whipify-edit-scope', 'page-block' );
+        $processor->set_attribute( 'data-whipify-post-id', (string) $post_id );
         $processor->set_attribute( 'data-whipify-block-name', $block_name );
         $processor->set_attribute( 'data-whipify-block-path', tf_frontend_editor_block_path_string( tf_frontend_editor_block_path_for_parsed_block( $parsed_block, $index ) ) );
+        $processor->set_attribute( 'data-whipify-field', $field );
+        $processor->set_attribute( 'data-whipify-revision', $revision );
+        if ( 'core/button' === $block_name ) {
+            $processor->set_attribute( 'data-whipify-secondary-field', 'url' );
+        }
         return $processor->get_updated_html();
     }
 }
@@ -441,6 +456,8 @@ function createPanel() {
     <section class="whipify-frontend-editor-panel__body">
       <label class="whipify-frontend-editor-panel__label" for="whipify-frontend-editor-input">Value</label>
       <input id="whipify-frontend-editor-input" class="whipify-frontend-editor-panel__input" type="text" />
+      <label class="whipify-frontend-editor-panel__label" for="whipify-frontend-editor-secondary-input" data-whipify-role="secondary-label" hidden>URL</label>
+      <input id="whipify-frontend-editor-secondary-input" class="whipify-frontend-editor-panel__input" type="text" data-whipify-role="secondary-input" hidden />
       <p class="whipify-frontend-editor-panel__hint" data-whipify-role="hint">Select an editable field to begin.</p>
       <div class="whipify-frontend-editor-panel__actions">
         <button type="button" data-whipify-action="save">Save</button>
@@ -477,27 +494,44 @@ function bindEditableTarget(target) {
 
 function openTargetEditor(target, panel) {
   const input = panel.querySelector('#whipify-frontend-editor-input');
+  const secondaryLabel = panel.querySelector('[data-whipify-role="secondary-label"]');
+  const secondaryInput = panel.querySelector('[data-whipify-role="secondary-input"]');
   const hint = panel.querySelector('[data-whipify-role="hint"]');
-  if (!(input instanceof HTMLInputElement) || !(hint instanceof HTMLElement)) return;
+  if (!(input instanceof HTMLInputElement) || !(hint instanceof HTMLElement) || !(secondaryLabel instanceof HTMLElement) || !(secondaryInput instanceof HTMLInputElement)) return;
 
   document.querySelectorAll('.' + selectedClassName).forEach((node) => node.classList.remove(selectedClassName));
   target.classList.add(selectedClassName);
   input.value = target.textContent || '';
   panel.dataset.scope = target.getAttribute('data-whipify-scope') || '';
   panel.dataset.field = target.getAttribute('data-whipify-field') || '';
+  panel.dataset.secondaryField = target.getAttribute('data-whipify-secondary-field') || '';
   panel.dataset.revision = target.getAttribute('data-whipify-revision') || '';
-  panel.dataset.targetId = target.getAttribute('data-whipify-field') || '';
+  panel.dataset.targetId = target.getAttribute('data-whipify-field') || target.getAttribute('data-whipify-block-path') || '';
+  panel.dataset.postId = target.getAttribute('data-whipify-post-id') || '';
+  panel.dataset.blockPath = target.getAttribute('data-whipify-block-path') || '';
+  panel.dataset.blockName = target.getAttribute('data-whipify-block-name') || '';
+  if (panel.dataset.scope === 'page-block' && panel.dataset.secondaryField && target instanceof HTMLAnchorElement) {
+    secondaryLabel.hidden = false;
+    secondaryInput.hidden = false;
+    secondaryInput.value = target.getAttribute('href') || '';
+  } else {
+    secondaryLabel.hidden = true;
+    secondaryInput.hidden = true;
+    secondaryInput.value = '';
+  }
   hint.textContent = 'Editing ' + (panel.dataset.field || 'field');
   setEnabled(true, panel);
 }
 
 function bindPanelActions(panel) {
   const input = panel.querySelector('#whipify-frontend-editor-input');
+  const secondaryLabel = panel.querySelector('[data-whipify-role="secondary-label"]');
+  const secondaryInput = panel.querySelector('[data-whipify-role="secondary-input"]');
   const hint = panel.querySelector('[data-whipify-role="hint"]');
   const saveButton = panel.querySelector('[data-whipify-action="save"]');
   const cancelButton = panel.querySelector('[data-whipify-action="cancel"]');
   const gutenbergButton = panel.querySelector('[data-whipify-action="edit-in-gutenberg"]');
-  if (!(input instanceof HTMLInputElement) || !(hint instanceof HTMLElement) || !(saveButton instanceof HTMLButtonElement) || !(cancelButton instanceof HTMLButtonElement) || !(gutenbergButton instanceof HTMLButtonElement)) {
+  if (!(input instanceof HTMLInputElement) || !(hint instanceof HTMLElement) || !(saveButton instanceof HTMLButtonElement) || !(cancelButton instanceof HTMLButtonElement) || !(gutenbergButton instanceof HTMLButtonElement) || !(secondaryLabel instanceof HTMLElement) || !(secondaryInput instanceof HTMLInputElement)) {
     return;
   }
 
@@ -505,9 +539,16 @@ function bindPanelActions(panel) {
     document.querySelectorAll('.' + selectedClassName).forEach((node) => node.classList.remove(selectedClassName));
     panel.dataset.scope = '';
     panel.dataset.field = '';
+    panel.dataset.secondaryField = '';
     panel.dataset.revision = '';
     panel.dataset.targetId = '';
+    panel.dataset.postId = '';
+    panel.dataset.blockPath = '';
+    panel.dataset.blockName = '';
     input.value = '';
+    secondaryLabel.hidden = true;
+    secondaryInput.hidden = true;
+    secondaryInput.value = '';
     hint.textContent = 'Select an editable field to begin.';
   };
 
@@ -530,7 +571,43 @@ function bindPanelActions(panel) {
     const field = panel.dataset.field || '';
     const revisionToken = panel.dataset.revision || '';
     if (selected.getAttribute('data-whipify-edit-scope') !== 'global-chrome' || !scope || !field) {
-      hint.textContent = 'This field is not ready for frontend saving yet.';
+      const postId = panel.dataset.postId || '';
+      const blockPath = panel.dataset.blockPath || '';
+      const secondaryField = panel.dataset.secondaryField || '';
+      if (selected.getAttribute('data-whipify-edit-scope') !== 'page-block' || !postId || !blockPath || !field) {
+        hint.textContent = 'This field is not ready for frontend saving yet.';
+        return;
+      }
+
+      let activeRevision = revisionToken;
+      hint.textContent = 'Saving…';
+      let response = await savePageBlock(postId, blockPath, field, input.value, activeRevision);
+      let payload = await response.json();
+
+      if (!response.ok || !payload?.success) {
+        hint.textContent = payload?.data?.message || 'Save failed.';
+        return;
+      }
+
+      activeRevision = payload?.data?.revisionToken || activeRevision;
+      selected.setAttribute('data-whipify-revision', activeRevision);
+      panel.dataset.revision = activeRevision;
+      selected.textContent = input.value;
+
+      if (secondaryField && !secondaryInput.hidden && selected instanceof HTMLAnchorElement) {
+        response = await savePageBlock(postId, blockPath, secondaryField, secondaryInput.value, activeRevision);
+        payload = await response.json();
+        if (!response.ok || !payload?.success) {
+          hint.textContent = payload?.data?.message || 'Secondary save failed.';
+          return;
+        }
+        activeRevision = payload?.data?.revisionToken || activeRevision;
+        selected.setAttribute('href', secondaryInput.value);
+        selected.setAttribute('data-whipify-revision', activeRevision);
+        panel.dataset.revision = activeRevision;
+      }
+
+      hint.textContent = 'Saved.';
       return;
     }
 
