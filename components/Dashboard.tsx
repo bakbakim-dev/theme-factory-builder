@@ -10,11 +10,34 @@ import { buildStaticSiteFromArtifactZip } from '../utils/static-artifact';
 import { createStaticSiteOutput, StaticSiteSettings } from '../utils/static-output';
 import type { StaticBuildReport } from '../utils/static-types';
 import { createDefaultUrlCaptureSettings } from '../utils/url-capture-common';
-import type { UrlCaptureCertificationStatus, UrlCaptureSettings } from '../utils/url-capture-types';
+import type { UrlCaptureCertificationResult, UrlCaptureCertificationStatus, UrlCaptureReport, UrlCaptureSettings } from '../utils/url-capture-types';
 
 interface DashboardProps { onConversionComplete: (record: ConversionRecord, zipBlob: Blob) => void; }
 type ConversionMode = 'gutenberg-native' | 'react-spa' | 'static-site';
 type StaticSiteInputMode = 'artifact-zip' | 'public-url-certified';
+
+interface UrlCaptureTransportResponse {
+    artifact: {
+        siteSlug: string;
+        routes: RouteInfo[];
+        routeManifest: Array<{ path: string; outputPath: string; canonicalUrl: string }>;
+        assetManifest: Array<{ sourcePath: string; outputPath: string }>;
+        captureMetadata: Record<string, unknown>;
+    };
+    certification: UrlCaptureCertificationResult;
+    report: UrlCaptureReport;
+    staticResult: {
+        files: Record<string, string>;
+        report: StaticBuildReport;
+        assetFilesBase64: Record<string, string>;
+        assetCounts: {
+            css: number;
+            js: number;
+            assets: number;
+            other: number;
+        };
+    };
+}
 
 const DEFAULT_STATIC_SITE_SETTINGS: StaticSiteSettings = {
     baseUrl: 'https://',
@@ -171,6 +194,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     const [staticSiteInputMode, setStaticSiteInputMode] = useState<StaticSiteInputMode>('artifact-zip');
     const [urlCaptureSettings, setUrlCaptureSettings] = useState<UrlCaptureSettings>(createDefaultUrlCaptureSettings());
     const [urlCaptureStatus, setUrlCaptureStatus] = useState<UrlCaptureCertificationStatus | 'idle'>('idle');
+    const [urlCaptureReport, setUrlCaptureReport] = useState<UrlCaptureReport | null>(null);
 
     const updateStaticSiteSetting = <K extends keyof StaticSiteSettings>(key: K, value: StaticSiteSettings[K]) => {
         setStaticSiteSettings(prev => ({ ...prev, [key]: value }));
@@ -178,6 +202,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
 
     const updateUrlCaptureSetting = <K extends keyof UrlCaptureSettings>(key: K, value: UrlCaptureSettings[K]) => {
         setUrlCaptureSettings(prev => ({ ...prev, [key]: value }));
+    };
+
+    const decodeBase64Asset = (value: string): Uint8Array => {
+        const binary = atob(value);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) {
+            bytes[index] = binary.charCodeAt(index);
+        }
+        return bytes;
     };
 
     const renderOutputModeSelector = () => (
@@ -538,6 +571,40 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                                 {urlCaptureStatus === 'needs-input' && 'More input is required before certification is possible.'}
                                 {urlCaptureStatus === 'uncertified' && 'Best-effort output only. Certification was not possible.'}
                             </div>
+                            {urlCaptureReport && (
+                                <div className="mt-3 space-y-3 text-xs text-slate-400">
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="bg-slate-900/60 rounded-lg px-3 py-2">
+                                            <div className="text-slate-500">Routes discovered</div>
+                                            <div className="text-slate-200 font-semibold">{urlCaptureReport.routesDiscovered}</div>
+                                        </div>
+                                        <div className="bg-slate-900/60 rounded-lg px-3 py-2">
+                                            <div className="text-slate-500">Routes captured</div>
+                                            <div className="text-slate-200 font-semibold">{urlCaptureReport.routesCaptured}</div>
+                                        </div>
+                                    </div>
+                                    {urlCaptureReport.recommendations.length > 0 && (
+                                        <div>
+                                            <div className="text-cyan-300 font-semibold mb-1">Recommendations</div>
+                                            <ul className="space-y-1 list-disc pl-4">
+                                                {urlCaptureReport.recommendations.map((item, index) => (
+                                                    <li key={`url-capture-recommendation-${index}`}>{item}</li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    )}
+                                    {urlCaptureReport.blockers.length > 0 && (
+                                        <div>
+                                            <div className="text-amber-300 font-semibold mb-1">Blockers</div>
+                                            <ul className="space-y-1 list-disc pl-4">
+                                                {urlCaptureReport.blockers.map((item, index) => (
+                                                    <li key={`url-capture-blocker-${index}`}>{item}</li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     </>
                 )}
@@ -545,12 +612,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         );
     };
 
-    const sourceDetectedMessage = conversionMode === 'static-site'
-        ? 'Source code detected. Select pages to include in the static export.'
+    const isCertifiedUrlMode = conversionMode === 'static-site' && staticSiteInputMode === 'public-url-certified';
+    const sourceDetectedMessage = isCertifiedUrlMode
+        ? 'Public URL capture is active. Uploaded route selection will be ignored and routes will be discovered from the live site.'
+        : conversionMode === 'static-site'
+            ? 'Source code detected. Select pages to include in the static export.'
         : 'Source code detected. Select pages to include in the WordPress theme.';
 
-    const primaryBuildLabel = conversionMode === 'static-site'
-        ? (connectionStatus === 'success' ? 'Remote Build & Export Static Site' : 'Local Simulation Build & Export Static Site')
+    const primaryBuildLabel = isCertifiedUrlMode
+        ? 'Run Certified URL Capture'
+        : conversionMode === 'static-site'
+            ? (connectionStatus === 'success' ? 'Remote Build & Export Static Site' : 'Local Simulation Build & Export Static Site')
         : (connectionStatus === 'success' ? 'Remote Build & Convert' : 'Local Simulation Build');
 
     const packagingStepLabel = conversionMode === 'static-site' ? 'Step 4: Packaging Static Site' : 'Step 4: Packaging Theme';
@@ -662,7 +734,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         const derivedThemeSlug = file.name.replace('.zip', '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
         setSourceFile(file);
         if (!JSZipLib) { addLog("Engine not ready. Please wait...", 'error'); return; }
-        setStep(STEPS.ANALYZING); setLogs([]); setProgress(5); setConversionStats(null); setStaticExportReport(null); setFinalZipBlob(null); setPluginZipBlob(null); setThumbnails([]); setRedirectsData(null); setLlmsData(null);
+        setStep(STEPS.ANALYZING); setLogs([]); setProgress(5); setConversionStats(null); setStaticExportReport(null); setUrlCaptureReport(null); setUrlCaptureStatus('idle'); setFinalZipBlob(null); setPluginZipBlob(null); setThumbnails([]); setRedirectsData(null); setLlmsData(null);
         setThemeSlug(derivedThemeSlug);
         addLog(`Initiating analysis for: ${file.name}`);
         try {
@@ -1092,6 +1164,104 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
 
     const downloadArtifact = async (url: string, routesToProcess: RouteInfo[], preExtractedFaq?: {q: string, a: string}[]) => { setStep(STEPS.DOWNLOADING_ARTIFACT); addLog("Downloading build artifact..."); const res = await fetch(url, { headers: { 'ngrok-skip-browser-warning': 'true' } }); if (!res.ok) throw new Error("Failed to download artifact."); const blob = await res.blob(); await handleBuildArtifact(blob, routesToProcess, preExtractedFaq); };
     const handleBuildArtifact = async (blob: Blob, routesToProcess: RouteInfo[], preExtractedFaq?: {q: string, a: string}[]) => { if (!JSZipLib) throw new Error("JSZip utility missing."); setStep(STEPS.PROCESSING); addLog("Artifact received. Processing...", 'info'); const distZip = new JSZipLib(); const distContent = await distZip.loadAsync(blob); await processConversion(distContent, "", selectedPlatform, routesToProcess, conversionMode, false, preExtractedFaq, themeSlug || sourceFile?.name.replace('.zip', '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase()); };
+    const handleCertifiedUrlCaptureBuild = async () => {
+        if (!JSZipLib) throw new Error("JSZip utility missing.");
+
+        const trimmedUrl = urlCaptureSettings.sourceUrl.trim();
+        if (!trimmedUrl) {
+            alert('Please enter a Public URL before running certified capture.');
+            return;
+        }
+
+        setStep(STEPS.PROCESSING);
+        setProgress(5);
+        setStaticExportReport(null);
+        setUrlCaptureReport(null);
+        setUrlCaptureStatus('idle');
+        setFinalZipBlob(null);
+        setPluginZipBlob(null);
+        setRedirectsData(null);
+        setLlmsData(null);
+        addLog(`Starting certified URL capture for ${trimmedUrl}...`, 'info');
+
+        try {
+            await waitForHealth(remoteConfig.url);
+
+            const response = await fetch(remoteConfig.url.replace(/\/build\/?$/, '/capture-url-static'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${remoteConfig.apiKey}`,
+                    'ngrok-skip-browser-warning': 'true',
+                },
+                body: JSON.stringify({
+                    ...urlCaptureSettings,
+                    seoSettings: {
+                        companyName: seoSettings.companyName,
+                        url: seoSettings.url,
+                        description: seoSettings.description,
+                        telephone: seoSettings.telephone,
+                        addressLocality: seoSettings.addressLocality,
+                        addressRegion: seoSettings.addressRegion,
+                        addressCountry: seoSettings.addressCountry,
+                        priceRange: seoSettings.priceRange,
+                        ogImage: seoSettings.ogImage,
+                        socialFacebook: seoSettings.socialFacebook,
+                        socialInstagram: seoSettings.socialInstagram,
+                        socialTwitter: seoSettings.socialTwitter,
+                        socialLinkedIn: seoSettings.socialLinkedIn,
+                        primaryLocale: seoSettings.primaryLocale,
+                        alternateLocales: seoSettings.alternateLocales,
+                    },
+                    staticSiteSettings,
+                    siteSlug: themeSlug || '',
+                }),
+            });
+
+            if (!response.ok) {
+                throw new Error(`Certified URL capture failed (${response.status}): ${await response.text()}`);
+            }
+
+            const result = await response.json() as UrlCaptureTransportResponse;
+            const resolvedThemeSlug = result.artifact.siteSlug || themeSlug || 'captured-site';
+            setThemeSlug(resolvedThemeSlug);
+            setUrlCaptureStatus(result.certification.status);
+            setUrlCaptureReport(result.report);
+            setStaticExportReport(result.staticResult.report);
+            setRedirectsData(result.staticResult.files['_redirects'] || null);
+            setLlmsData(result.staticResult.files['llms.txt'] || null);
+
+            result.report.recommendations.forEach((item) => addLog(`URL capture recommendation: ${item}`, 'warning'));
+            result.report.blockers.forEach((item) => addLog(`URL capture blocker: ${item}`, result.certification.status === 'uncertified' ? 'error' : 'warning'));
+
+            const archiveRootName = `${resolvedThemeSlug}-static-site`;
+            const newZip = new JSZipLib();
+            const folder = newZip.folder(archiveRootName);
+            if (!folder) throw new Error("Could not create folder in zip");
+
+            Object.entries(result.staticResult.assetFilesBase64).forEach(([filePath, content]) => {
+                folder.file(filePath, decodeBase64Asset(content));
+            });
+            Object.entries(result.staticResult.files).forEach(([filePath, content]) => {
+                folder.file(filePath, content);
+            });
+
+            setConversionStats({
+                php: 0,
+                js: result.staticResult.assetCounts.js,
+                css: result.staticResult.assetCounts.css,
+                images: result.staticResult.assetCounts.assets,
+                routes: result.report.routesCaptured,
+                patterns: 0,
+            });
+
+            addLog(`Certified URL capture finished with status: ${result.certification.status}`, result.certification.status === 'certified' ? 'success' : 'warning');
+            await finishBuild(newZip);
+        } catch (err: unknown) {
+            setStep(STEPS.ERROR);
+            addLog(`Certified URL capture failed: ${(err as Error).message}`, 'error');
+        }
+    };
 
     const generateCompanionPlugin = async (zipInstance: any): Promise<Blob> => {
         const folder = zipInstance.folder('theme-factory-blocks');
@@ -5916,23 +6086,40 @@ echo "Theme Factory Data Migration Complete.";`;
 
                         {renderStaticSignalsPanel()}
 
-                            <div className="border-2 border-dashed border-slate-700 rounded-xl p-8 text-center hover:border-blue-500/50 hover:bg-slate-800/30 transition-colors relative group">
-                                <input
-                                    type="file"
-                                    accept=".zip"
-                                    onChange={handleFileUpload}
-                                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                                    ref={fileInputRef}
-                                />
-                                <div className="pointer-events-none">
-                                    <div className="w-16 h-16 bg-blue-600/20 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-500 group-hover:scale-110 transition-transform">
-                                        <Upload className="w-8 h-8" />
+                            {isCertifiedUrlMode ? (
+                                <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-6 space-y-4">
+                                    <div>
+                                        <h3 className="text-lg font-medium text-white mb-1">Run Certified URL Capture</h3>
+                                        <p className="text-slate-400 text-sm">This sends the live public URL through the local builder server, reconstructs a synthetic artifact, certifies it, and then packages the static export.</p>
                                     </div>
-                                    <h3 className="text-lg font-medium text-white mb-1">Upload Project ZIP</h3>
-                                    <p className="text-slate-400 text-sm">Drag and drop or click to select</p>
-                                    <p className="text-slate-500 text-xs mt-2">Our AI handles React, HTML, and Next.js archives seamlessly.</p>
+                                    <button
+                                        type="button"
+                                        onClick={handleCertifiedUrlCaptureBuild}
+                                        className="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-lg font-medium flex items-center justify-center gap-2"
+                                    >
+                                        <Globe className="w-4 h-4" />
+                                        Run Certified URL Capture
+                                    </button>
                                 </div>
-                            </div>
+                            ) : (
+                                <div className="border-2 border-dashed border-slate-700 rounded-xl p-8 text-center hover:border-blue-500/50 hover:bg-slate-800/30 transition-colors relative group">
+                                    <input
+                                        type="file"
+                                        accept=".zip"
+                                        onChange={handleFileUpload}
+                                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                                        ref={fileInputRef}
+                                    />
+                                    <div className="pointer-events-none">
+                                        <div className="w-16 h-16 bg-blue-600/20 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-500 group-hover:scale-110 transition-transform">
+                                            <Upload className="w-8 h-8" />
+                                        </div>
+                                        <h3 className="text-lg font-medium text-white mb-1">Upload Project ZIP</h3>
+                                        <p className="text-slate-400 text-sm">Drag and drop or click to select</p>
+                                        <p className="text-slate-500 text-xs mt-2">Our AI handles React, HTML, and Next.js archives seamlessly.</p>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
 
@@ -5948,48 +6135,56 @@ echo "Theme Factory Data Migration Complete.";`;
 
                             {renderStaticSignalsPanel()}
 
-                            <div className="flex justify-between items-center px-1">
-                                <span className="text-xs text-slate-500">
-                                    {selectedRoutes.size} of {detectedRoutes.length} pages selected
-                                </span>
-                                <div className="flex gap-3 text-xs font-medium">
-                                    <button
-                                        onClick={() => setSelectedRoutes(new Set(detectedRoutes.map(r => r.path)))}
-                                        className="text-blue-400 hover:text-blue-300 transition-colors"
-                                    >
-                                        Select All
-                                    </button>
-                                    <span className="text-slate-700">|</span>
-                                    <button
-                                        onClick={() => setSelectedRoutes(new Set(detectedRoutes.slice(0, 25).map(r => r.path)))}
-                                        className="text-emerald-400 hover:text-emerald-300 transition-colors"
-                                    >
-                                        First 25
-                                    </button>
-                                    <span className="text-slate-700">|</span>
-                                    <button
-                                        onClick={() => setSelectedRoutes(new Set())}
-                                        className="text-slate-500 hover:text-slate-400 transition-colors"
-                                    >
-                                        Deselect All
-                                    </button>
+                            {isCertifiedUrlMode ? (
+                                <div className="bg-slate-950/60 border border-slate-800 rounded-lg p-4 text-sm text-slate-400">
+                                    Route selection is skipped in Public URL mode. The capture engine will discover routes from the live site, optional route seeds, sitemap hints, and bundle inspection.
                                 </div>
-                            </div>
+                            ) : (
+                                <>
+                                    <div className="flex justify-between items-center px-1">
+                                        <span className="text-xs text-slate-500">
+                                            {selectedRoutes.size} of {detectedRoutes.length} pages selected
+                                        </span>
+                                        <div className="flex gap-3 text-xs font-medium">
+                                            <button
+                                                onClick={() => setSelectedRoutes(new Set(detectedRoutes.map(r => r.path)))}
+                                                className="text-blue-400 hover:text-blue-300 transition-colors"
+                                            >
+                                                Select All
+                                            </button>
+                                            <span className="text-slate-700">|</span>
+                                            <button
+                                                onClick={() => setSelectedRoutes(new Set(detectedRoutes.slice(0, 25).map(r => r.path)))}
+                                                className="text-emerald-400 hover:text-emerald-300 transition-colors"
+                                            >
+                                                First 25
+                                            </button>
+                                            <span className="text-slate-700">|</span>
+                                            <button
+                                                onClick={() => setSelectedRoutes(new Set())}
+                                                className="text-slate-500 hover:text-slate-400 transition-colors"
+                                            >
+                                                Deselect All
+                                            </button>
+                                        </div>
+                                    </div>
 
-                            <div className="max-h-60 overflow-y-auto bg-slate-950 rounded-lg border border-slate-800 p-2 space-y-1">
-                                {detectedRoutes.map(route => (
-                                    <label key={route.path} className="flex items-center gap-3 p-2 hover:bg-slate-900 rounded cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={selectedRoutes.has(route.path)}
-                                            onChange={() => toggleRoute(route.path)}
-                                            className="rounded border-slate-700 bg-slate-800 text-blue-600 focus:ring-blue-500"
-                                        />
-                                        <span className="flex-1 font-mono text-sm">{route.path}</span>
-                                        <span className="text-xs text-slate-500 bg-slate-900 px-2 py-1 rounded">{route.title}</span>
-                                    </label>
-                                ))}
-                            </div>
+                                    <div className="max-h-60 overflow-y-auto bg-slate-950 rounded-lg border border-slate-800 p-2 space-y-1">
+                                        {detectedRoutes.map(route => (
+                                            <label key={route.path} className="flex items-center gap-3 p-2 hover:bg-slate-900 rounded cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedRoutes.has(route.path)}
+                                                    onChange={() => toggleRoute(route.path)}
+                                                    className="rounded border-slate-700 bg-slate-800 text-blue-600 focus:ring-blue-500"
+                                                />
+                                                <span className="flex-1 font-mono text-sm">{route.path}</span>
+                                                <span className="text-xs text-slate-500 bg-slate-900 px-2 py-1 rounded">{route.title}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </>
+                            )}
 
                             <div className="bg-slate-900/50 rounded-lg border border-slate-800 p-4 space-y-4">
                                 <button
@@ -6328,14 +6523,20 @@ echo "Theme Factory Data Migration Complete.";`;
 
                             <div className="flex gap-4">
                                 <button
-                                    onClick={() => processRemoteBuild(sourceFile, detectedRoutes)}
+                                    onClick={() => {
+                                        if (isCertifiedUrlMode) {
+                                            void handleCertifiedUrlCaptureBuild();
+                                            return;
+                                        }
+                                        void processRemoteBuild(sourceFile, detectedRoutes);
+                                    }}
                                     className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-lg font-medium flex items-center justify-center gap-2"
                                 >
                                     {connectionStatus === 'success' ? <Server className="w-4 h-4" /> : <Wrench className="w-4 h-4" />}
                                     {primaryBuildLabel}
                                 </button>
                                 <button
-                                    onClick={() => { setStep(STEPS.IDLE); setSourceFile(null); }}
+                                    onClick={() => { setStep(STEPS.IDLE); setSourceFile(null); setUrlCaptureReport(null); setUrlCaptureStatus('idle'); }}
                                     className="px-6 py-3 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-300"
                                 >
                                     Cancel

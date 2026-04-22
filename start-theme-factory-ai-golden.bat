@@ -39,7 +39,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 if errorlevel 1 (
   echo [Theme Factory] Launching builder...
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$c = Get-NetTCPConnection -LocalPort %BUILDER_PORT% -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($c -and $c.OwningProcess) { Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue }; [Environment]::SetEnvironmentVariable('PORT',$null,'Process'); Start-Process -FilePath '%NODE_EXE%' -ArgumentList 'index.js' -WorkingDirectory '%BUILDER_DIR%' -WindowStyle Hidden"
+    "$c = Get-NetTCPConnection -LocalPort %BUILDER_PORT% -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($c -and $c.OwningProcess) { Stop-Process -Id $c.OwningProcess -Force -ErrorAction SilentlyContinue }; [Environment]::SetEnvironmentVariable('PORT',$null,'Process'); [Environment]::SetEnvironmentVariable('THEME_FACTORY_APP_DIR','%APP_DIR%','Process'); Start-Process -FilePath '%NODE_EXE%' -ArgumentList 'index.js' -WorkingDirectory '%BUILDER_DIR%' -WindowStyle Hidden"
 )
 
 set /a BUILDER_TRIES=0

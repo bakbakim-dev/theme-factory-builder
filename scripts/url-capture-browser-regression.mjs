@@ -24,6 +24,8 @@ const result = await captureUrlSession({
 assert.equal(result.initialUrl, 'http://127.0.0.1:4317/');
 assert.match(result.initialHtml, /<h1>Pricing<\/h1>/);
 assert.ok(result.networkRequests.some((item) => item.url.endsWith('/app.js')));
+assert.ok(result.networkRequests.some((item) => item.resourceType === 'script'));
+assert.ok(result.networkRequests.every((item) => item.status !== null));
 
 await disposeUrlSession(result);
 server.close();

@@ -4,8 +4,8 @@ import { promises as fs } from 'node:fs';
 import { createStaticSiteOutput } from '../utils/static-output.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
-const artifactRoot = path.join(repoRoot, 'logs', 'artifact-inspect');
-const prerenderedRoot = path.join(artifactRoot, 'prerendered');
+const defaultArtifactRoot = path.join(repoRoot, 'logs', 'artifact-inspect');
+const fallbackArtifactRoot = path.join(process.env.USERPROFILE || '', 'Documents', 'theme-factory-ai-golden', 'logs', 'artifact-inspect');
 
 const slugToTitle = (slug) => slug
   .replace(/[-_]+/g, ' ')
@@ -13,7 +13,18 @@ const slugToTitle = (slug) => slug
   .trim()
   .replace(/\b\w/g, (char) => char.toUpperCase());
 
+const resolveArtifactRoot = async () => {
+  try {
+    await fs.access(path.join(defaultArtifactRoot, 'prerendered'));
+    return defaultArtifactRoot;
+  } catch {
+    return fallbackArtifactRoot;
+  }
+};
+
 const readArtifactInput = async () => {
+  const artifactRoot = await resolveArtifactRoot();
+  const prerenderedRoot = path.join(artifactRoot, 'prerendered');
   const entries = await fs.readdir(prerenderedRoot, { withFileTypes: true });
   const htmlFiles = entries
     .filter((entry) => entry.isFile() && entry.name.endsWith('.html'))

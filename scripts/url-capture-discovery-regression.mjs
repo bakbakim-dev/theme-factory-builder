@@ -43,6 +43,7 @@ assert.ok(routes.some((route) => route.path === '/special/'));
 assert.ok(routes.some((route) => route.path === '/from-bundle/'));
 assert.ok(interactions.tabPanels.some((panel) => panel.panelId === 'panel-b'));
 assert.ok(interactions.accordionRegions.some((region) => region.id === 'region-a'));
+assert.ok(interactions.accordionRegions.every((region) => region.state === 'closed' || region.state === 'open'));
 
 await disposeUrlSession(session);
 server.close();

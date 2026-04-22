@@ -5,7 +5,8 @@ import JSZip from 'jszip';
 import { buildStaticSiteFromArtifactZip } from '../utils/static-artifact.ts';
 
 const repoRoot = path.resolve(import.meta.dirname, '..');
-const artifactRoot = path.join(repoRoot, 'logs', 'artifact-inspect');
+const defaultArtifactRoot = path.join(repoRoot, 'logs', 'artifact-inspect');
+const fallbackArtifactRoot = path.join(process.env.USERPROFILE || '', 'Documents', 'theme-factory-ai-golden', 'logs', 'artifact-inspect');
 
 const slugToTitle = (slug) => slug
   .replace(/[-_]+/g, ' ')
@@ -27,6 +28,16 @@ const addDirectoryToZip = async (zip, rootDir, currentDir = rootDir) => {
   }
 };
 
+const resolveArtifactRoot = async () => {
+  try {
+    await fs.access(path.join(defaultArtifactRoot, 'prerendered'));
+    return defaultArtifactRoot;
+  } catch {
+    return fallbackArtifactRoot;
+  }
+};
+
+const artifactRoot = await resolveArtifactRoot();
 const prerenderedRoot = path.join(artifactRoot, 'prerendered');
 const prerenderedEntries = await fs.readdir(prerenderedRoot, { withFileTypes: true });
 const routes = prerenderedEntries
