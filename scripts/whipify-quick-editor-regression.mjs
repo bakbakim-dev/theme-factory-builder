@@ -1,10 +1,23 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import {
   bindWhipifyQuickEditorChrome,
   buildWhipifyQuickEditorDefaults,
   buildWhipifyQuickEditorPhp,
+  extractTelCtaCandidate,
   mergeWhipifyQuickEditorSlotSupport,
 } from '../utils/whipifyQuickEditor.ts';
+
+const dashboardSource = await fs.readFile(new URL('../components/Dashboard.tsx', import.meta.url), 'utf8');
+
+assert.match(dashboardSource, /buildWhipifyQuickEditorDefaults/);
+assert.match(dashboardSource, /bindWhipifyQuickEditorChrome\(\s*'header'/);
+assert.match(dashboardSource, /bindWhipifyQuickEditorChrome\(\s*'footer'/);
+assert.match(dashboardSource, /mergeWhipifyQuickEditorSlotSupport/);
+assert.match(dashboardSource, /buildWhipifyQuickEditorPhp/);
+assert.match(dashboardSource, /extractTelCtaCandidate/);
+assert.match(dashboardSource, /functionsPhpContent\s*=\s*functionsPhpContent\.replace\(\/\\\?>\\s\*\$\/,\s*''\)/);
+assert.ok(dashboardSource.includes("cptCode.replace(/^<\\?php\\s*/, '').replace(/\\?>\\s*$/, '')"));
 
 const seoSettings = {
   primaryCtaText: 'Book Now',
@@ -44,6 +57,86 @@ assert.deepEqual(defaults, {
   x: 'https://x.com/whipify',
 });
 
+const dashboardSeoSettings = {
+  companyName: 'Whipify Cleaning',
+  telephone: '(555) 123-4567',
+  ctaText1: 'Book Now',
+  ctaLink1: 'https://example.com/book',
+  ctaText2: 'Get Estimate',
+  ctaLink2: 'https://example.com/estimate',
+  addressLocality: 'Edmonton',
+  addressRegion: 'AB',
+  addressCountry: 'CA',
+  socialFacebook: 'https://facebook.com/whipify',
+  socialInstagram: 'https://instagram.com/whipify',
+  socialLinkedIn: 'https://linkedin.com/company/whipify',
+  socialTwitter: 'https://x.com/whipify',
+};
+
+const dashboardDefaults = buildWhipifyQuickEditorDefaults(dashboardSeoSettings);
+
+assert.equal(dashboardDefaults.primary_cta_text, 'Book Now');
+assert.equal(dashboardDefaults.primary_cta_url, 'https://example.com/book');
+assert.equal(dashboardDefaults.secondary_cta_text, 'Get Estimate');
+assert.equal(dashboardDefaults.secondary_cta_url, 'https://example.com/estimate');
+assert.equal(dashboardDefaults.business_name, 'Whipify Cleaning');
+assert.equal(dashboardDefaults.address_line_1, 'Edmonton, AB');
+assert.equal(dashboardDefaults.address_line_2, 'CA');
+
+const extractedTelCta = extractTelCtaCandidate(
+  '<div><a href="tel:5551234567">(555) 123-4567</a><a href="tel:5551234567">Call Us</a></div>',
+  '(555) 123-4567',
+);
+
+assert.deepEqual(extractedTelCta, {
+  link: 'tel:5551234567',
+  text: 'Call Us',
+});
+
+const extractedNormalizedTelCta = extractTelCtaCandidate(
+  '<div><a href="tel:+15551234567">+1 (555) 123-4567</a><a href="tel:5551234567">Call Us</a></div>',
+  '(555) 123-4567',
+);
+
+assert.deepEqual(extractedNormalizedTelCta, {
+  link: 'tel:5551234567',
+  text: 'Call Us',
+});
+
+const extractedDecoratedTelCta = extractTelCtaCandidate(
+  '<div><a href="tel:+15551234567">+1 (555) 123-4567 ext. 2</a><a href="tel:5551234567">Call Us</a></div>',
+  '',
+);
+
+assert.deepEqual(extractedDecoratedTelCta, {
+  link: 'tel:5551234567',
+  text: 'Call Us',
+});
+
+const extractedDecoratedKnownPhoneTelCta = extractTelCtaCandidate(
+  '<div><a href="tel:+15551234567">+1 (555) 123-4567 ext. 2</a><a href="tel:5551234567">Call Us</a></div>',
+  '(555) 123-4567',
+);
+
+assert.deepEqual(extractedDecoratedKnownPhoneTelCta, {
+  link: 'tel:5551234567',
+  text: 'Call Us',
+});
+
+const extractedShorthandExtensionTelCta = extractTelCtaCandidate(
+  '<div><a href="tel:+15551234567">+1 (555) 123-4567 x89</a><a href="tel:5551234567">Call Us</a></div>',
+  '(555) 123-4567',
+);
+
+assert.deepEqual(extractedShorthandExtensionTelCta, {
+  link: 'tel:5551234567',
+  text: 'Call Us',
+});
+assert.equal(dashboardDefaults.facebook, 'https://facebook.com/whipify');
+assert.equal(dashboardDefaults.instagram, 'https://instagram.com/whipify');
+assert.equal(dashboardDefaults.linkedin, 'https://linkedin.com/company/whipify');
+assert.equal(dashboardDefaults.x, 'https://x.com/whipify');
+
 const overlapDefaults = buildWhipifyQuickEditorDefaults({
   primaryCtaText: 'book',
   primaryCtaUrl: 'https://example.com/book',
@@ -61,6 +154,112 @@ assert.equal(
 );
 assert.deepEqual(overlapChrome.slotSupport, {
   header: ['primary_cta_text', 'primary_cta_url'],
+  footer: [],
+  social: [],
+});
+
+const telCtaDefaults = buildWhipifyQuickEditorDefaults({
+  secondaryCtaUrl: 'tel:5551234567',
+  phone: '(555) 123-4567',
+});
+
+const telCtaChrome = bindWhipifyQuickEditorChrome(
+  'header',
+  '<div><a href="tel:5551234567">Call Us</a></div>',
+  telCtaDefaults,
+);
+
+assert.equal(
+  telCtaChrome.html,
+  '<div><a href="<?php echo esc_url( tf_quick_editor_get( \'secondary_cta_url\', \'tel:5551234567\' ) ); ?>">Call Us</a></div>',
+);
+assert.deepEqual(telCtaChrome.slotSupport, {
+  header: ['secondary_cta_url'],
+  footer: [],
+  social: [],
+});
+
+const mixedTelDefaults = buildWhipifyQuickEditorDefaults({
+  secondaryCtaUrl: 'tel:5551234567',
+  phone: '(555) 123-4567',
+});
+
+const mixedTelChrome = bindWhipifyQuickEditorChrome(
+  'header',
+  '<div><a class="cta" href="tel:5551234567">Call Us</a><a class="phone" href="tel:5551234567">(555) 123-4567</a></div>',
+  mixedTelDefaults,
+);
+
+assert.equal(
+  mixedTelChrome.html,
+  '<div><a class="cta" href="<?php echo esc_url( tf_quick_editor_get( \'secondary_cta_url\', \'tel:5551234567\' ) ); ?>">Call Us</a><a class="phone" href="<?php echo esc_attr( tf_quick_editor_tel_href( \'phone\', \'tel:5551234567\' ) ); ?>"><?php echo esc_html( tf_quick_editor_get( \'phone\', \'(555) 123-4567\' ) ); ?></a></div>',
+);
+assert.deepEqual(mixedTelChrome.slotSupport, {
+  header: ['secondary_cta_url', 'phone'],
+  footer: [],
+  social: [],
+});
+
+const mixedNormalizedTelChrome = bindWhipifyQuickEditorChrome(
+  'header',
+  '<div><a class="cta" href="tel:5551234567">Call Us</a><a class="phone" href="tel:+15551234567">(555) 123-4567</a></div>',
+  mixedTelDefaults,
+);
+
+assert.equal(
+  mixedNormalizedTelChrome.html,
+  '<div><a class="cta" href="<?php echo esc_url( tf_quick_editor_get( \'secondary_cta_url\', \'tel:5551234567\' ) ); ?>">Call Us</a><a class="phone" href="<?php echo esc_attr( tf_quick_editor_tel_href( \'phone\', \'tel:+15551234567\' ) ); ?>"><?php echo esc_html( tf_quick_editor_get( \'phone\', \'(555) 123-4567\' ) ); ?></a></div>',
+);
+assert.deepEqual(mixedNormalizedTelChrome.slotSupport, {
+  header: ['secondary_cta_url', 'phone'],
+  footer: [],
+  social: [],
+});
+
+const plusOneVisiblePhoneChrome = bindWhipifyQuickEditorChrome(
+  'header',
+  '<a class="phone" href="tel:+15551234567">+1 (555) 123-4567</a>',
+  defaults,
+);
+
+assert.equal(
+  plusOneVisiblePhoneChrome.html,
+  '<a class="phone" href="<?php echo esc_attr( tf_quick_editor_tel_href( \'phone\', \'tel:+15551234567\' ) ); ?>"><?php echo esc_html( tf_quick_editor_get( \'phone\', \'(555) 123-4567\' ) ); ?></a>',
+);
+assert.deepEqual(plusOneVisiblePhoneChrome.slotSupport, {
+  header: ['phone'],
+  footer: [],
+  social: [],
+});
+
+const decoratedVisiblePhoneChrome = bindWhipifyQuickEditorChrome(
+  'header',
+  '<a class="phone" href="tel:+15551234567">+1 (555) 123-4567 ext. 2</a>',
+  defaults,
+);
+
+assert.equal(
+  decoratedVisiblePhoneChrome.html,
+  '<a class="phone" href="<?php echo esc_attr( tf_quick_editor_tel_href( \'phone\', \'tel:+15551234567\' ) ); ?>"><?php echo esc_html( tf_quick_editor_get( \'phone\', \'(555) 123-4567\' ) ); ?></a>',
+);
+assert.deepEqual(decoratedVisiblePhoneChrome.slotSupport, {
+  header: ['phone'],
+  footer: [],
+  social: [],
+});
+
+const shorthandExtensionPhoneChrome = bindWhipifyQuickEditorChrome(
+  'header',
+  '<a class="phone" href="tel:+15551234567">+1 (555) 123-4567 x89</a>',
+  defaults,
+);
+
+assert.equal(
+  shorthandExtensionPhoneChrome.html,
+  '<a class="phone" href="<?php echo esc_attr( tf_quick_editor_tel_href( \'phone\', \'tel:+15551234567\' ) ); ?>"><?php echo esc_html( tf_quick_editor_get( \'phone\', \'(555) 123-4567\' ) ); ?></a>',
+);
+assert.deepEqual(shorthandExtensionPhoneChrome.slotSupport, {
+  header: ['phone'],
   footer: [],
   social: [],
 });
@@ -180,6 +379,71 @@ assert.deepEqual(headerChrome.slotSupport, {
   social: [],
 });
 
+const phoneLinkChrome = bindWhipifyQuickEditorChrome(
+  'header',
+  '<a class="phone" href="tel:(555) 123-4567">(555) 123-4567</a>',
+  defaults,
+);
+
+assert.match(phoneLinkChrome.html, /tf_quick_editor_get\( 'phone', '\(555\) 123-4567' \)/);
+assert.match(phoneLinkChrome.html, /tf_quick_editor_tel_href\( 'phone', 'tel:\(555\) 123-4567' \)/);
+assert.deepEqual(phoneLinkChrome.slotSupport, {
+  header: ['phone'],
+  footer: [],
+  social: [],
+});
+
+const normalizedPhoneLinkChrome = bindWhipifyQuickEditorChrome(
+  'header',
+  '<a class="phone" href="tel:5551234567">(555) 123-4567</a>',
+  defaults,
+);
+
+assert.match(normalizedPhoneLinkChrome.html, /tf_quick_editor_get\( 'phone', '\(555\) 123-4567' \)/);
+assert.match(normalizedPhoneLinkChrome.html, /tf_quick_editor_tel_href\( 'phone', 'tel:5551234567' \)/);
+assert.deepEqual(normalizedPhoneLinkChrome.slotSupport, {
+  header: ['phone'],
+  footer: [],
+  social: [],
+});
+
+const largerWordSafetyDefaults = buildWhipifyQuickEditorDefaults({
+  primaryCtaText: 'Book',
+  businessName: 'A',
+});
+
+const largerWordHeaderChrome = bindWhipifyQuickEditorChrome(
+  'header',
+  '<div><span>Booking now</span><span>PreBook flow</span></div>',
+  largerWordSafetyDefaults,
+);
+
+assert.equal(
+  largerWordHeaderChrome.html,
+  '<div><span>Booking now</span><span>PreBook flow</span></div>',
+);
+assert.deepEqual(largerWordHeaderChrome.slotSupport, {
+  header: [],
+  footer: [],
+  social: [],
+});
+
+const largerWordFooterChrome = bindWhipifyQuickEditorChrome(
+  'footer',
+  '<footer><p>About A-team</p><p>Plan A/B testing</p></footer>',
+  largerWordSafetyDefaults,
+);
+
+assert.equal(
+  largerWordFooterChrome.html,
+  '<footer><p>About A-team</p><p>Plan A/B testing</p></footer>',
+);
+assert.deepEqual(largerWordFooterChrome.slotSupport, {
+  header: [],
+  footer: [],
+  social: [],
+});
+
 const footerChrome = bindWhipifyQuickEditorChrome(
   'footer',
   [
@@ -196,6 +460,25 @@ const footerChrome = bindWhipifyQuickEditorChrome(
 assert.match(footerChrome.html, /tf_quick_editor_get\( 'business_name'/);
 assert.match(footerChrome.html, /tf_quick_editor_get\( 'address_line_1'/);
 assert.match(footerChrome.html, /tf_quick_editor_get\( 'contact_line'/);
+
+const footerWithSocialChrome = bindWhipifyQuickEditorChrome(
+  'footer',
+  [
+    '<footer>',
+    '<strong>Whipify Cleaning</strong>',
+    '<a href="https://facebook.com/whipify">Facebook</a>',
+    '</footer>',
+  ].join(''),
+  dashboardDefaults,
+);
+
+assert.match(footerWithSocialChrome.html, /tf_quick_editor_get\( 'business_name'/);
+assert.match(footerWithSocialChrome.html, /tf_quick_editor_get\( 'facebook'/);
+assert.deepEqual(footerWithSocialChrome.slotSupport, {
+  header: [],
+  footer: ['business_name'],
+  social: ['facebook'],
+});
 
 const socialChrome = bindWhipifyQuickEditorChrome(
   'social',
@@ -236,19 +519,40 @@ assert.deepEqual(slots, {
 });
 
 const php = buildWhipifyQuickEditorPhp(defaults, slots);
+const assembledFunctionsPhp = [
+  '<?php',
+  'function tf_base_theme_bootstrap() {}',
+  '?>',
+].join('\n')
+  .replace(/\?>\s*$/, '')
+  + `\n${php}\n`
+  + [
+    '<?php',
+    'function tf_register_locations_cpt() {}',
+    '?>',
+  ].join('\n').replace(/^<\?php\s*/, '').replace(/\?>\s*$/, '');
 
-assert.match(php, /whipify_quick_editor_settings/);
+assert.match(php, /WHIPIFY_QUICK_EDITOR_SETTINGS_OPTION/);
 assert.match(php, /function tf_quick_editor_defaults/);
 assert.match(php, /function tf_quick_editor_settings/);
 assert.match(php, /function tf_quick_editor_get/);
 assert.match(php, /add_theme_page\( 'Whipify Quick Editor'/);
 assert.match(php, /check_admin_referer\( 'tf_quick_editor_save'/);
-assert.match(php, /delete_option\( 'whipify_quick_editor_settings' \)/);
+assert.match(php, /delete_option\( WHIPIFY_QUICK_EDITOR_SETTINGS_OPTION \)/);
 assert.match(php, /sanitize_text_field/);
 assert.match(php, /esc_url_raw/);
 assert.match(php, /primary_cta_text/);
 assert.match(php, /business_name/);
 assert.match(php, /facebook/);
+assert.doesNotMatch(php, /^<\?php/);
+assert.doesNotMatch(php, /\?>\s*$/);
+assert.ok(assembledFunctionsPhp.includes('function tf_quick_editor_handle_save()'));
+assert.ok(assembledFunctionsPhp.includes('function tf_register_locations_cpt() {}'));
+assert.doesNotMatch(assembledFunctionsPhp, /\?>\s*<\?php\s*function tf_register_locations_cpt/);
+assert.doesNotMatch(php, /\bob_start\b/);
+assert.doesNotMatch(php, /\bthe_content\b/);
+assert.doesNotMatch(php, /\bpost_content\b/);
+assert.doesNotMatch(php, /\bbody-content override\b/i);
 
 console.log('Whipify quick editor regression');
 console.log('[PASS] Defaults, chrome rewriting, slot merging, and PHP scaffolding are stable');
