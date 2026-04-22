@@ -79,7 +79,8 @@ const serializeWpBlock = (blockName: string, attributes: Record<string, any> | u
     const normalizedAttributes = attributes && Object.keys(attributes).length > 0 ? ` ${JSON.stringify(attributes)}` : '';
     return `<!-- wp:${toWpCommentBlockName(blockName)}${normalizedAttributes} -->\n${innerContent}\n<!-- /wp:${toWpCommentBlockName(blockName)} -->`;
 };
-const REMOTE_BUILD_REQUEST_TIMEOUT_MS = 60 * 60 * 1000;
+const REMOTE_BUILD_INIT_TIMEOUT_MS = 30 * 1000;
+const REMOTE_BUILD_UPLOAD_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 const OUTPUT_MODES: Array<{ id: ConversionMode; title: string; description: string; badge?: string }> = [
     {
         id: 'gutenberg-native',
@@ -1093,44 +1094,96 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             // Pre-extract FAQ data from source before it's sent to the remote builder
             const sourceFaqData = await preExtractFaqFromSource(cleanZip);
             const cleanBlob = await cleanZip.generateAsync({ type: 'blob', compression: "DEFLATE" });
-            const formData = new FormData(); formData.append('zip', cleanBlob, "source.zip"); formData.append('platform', selectedPlatform);
-            const routePaths = routesToProcess.map(r => r.path); formData.append('routes', JSON.stringify(routePaths));
-            formData.append('render_wait_time', renderDelay.toString());
+            const routePaths = routesToProcess.map(r => r.path);
+            const buildBaseUrl = remoteConfig.url.replace(/\/build\/?$/, '');
+            const initUrl = `${buildBaseUrl}/build/init`;
+            const initBody = new URLSearchParams({
+                platform: selectedPlatform,
+                routes: JSON.stringify(routePaths),
+                render_wait_time: renderDelay.toString(),
+            });
             addLog(`Sending ${routePaths.length} routes for build + prerendering...`, 'info'); setStep(STEPS.WAKING_UP); setProgress(10);
             await waitForHealth(remoteConfig.url); setStep(STEPS.UPLOADING_REMOTE); addLog(`Uploading to ${remoteConfig.url}...`);
-            abortControllerRef.current = new AbortController(); const uploadTimeout = setTimeout(() => abortControllerRef.current?.abort(), REMOTE_BUILD_REQUEST_TIMEOUT_MS);
-            let response;
-            try { response = await fetch(remoteConfig.url, { method: 'POST', headers: { 'Authorization': `Bearer ${remoteConfig.apiKey}`, 'ngrok-skip-browser-warning': 'true' }, body: formData, signal: abortControllerRef.current.signal }); clearTimeout(uploadTimeout); }
-            catch (e: unknown) { const err = e as Error; if (err.name === 'AbortError') throw new Error("Remote build request timed out before the server acknowledged the job (60m)."); throw e; }
-            if (!response.ok) { const errText = await response.text(); throw new Error(`Remote Build Failed (${response.status}): ${errText}`); }
-            if (response.status === 202) { 
-                const jobData = await response.json(); 
-                addLog(`Job Queued: ${jobData.jobId}`, 'success'); 
-                
-                if (isAdmin) {
-                    const socketUrl = remoteConfig.url.replace(/\/build\/?$/, '');
-                    const newSocket = io(socketUrl);
-                    
-                    newSocket.on('connect', () => {
-                        newSocket.emit('join_job', jobData.jobId || jobData.id);
-                        addLog(`Socket Connected: Streaming Live Logs...`, 'info');
-                    });
-                    
-                    newSocket.on('log', (data) => {
-                        addLog(data.msg, data.type);
-                    });
-                    
-                    newSocket.on('progress', (val) => {
-                        setProgress(val);
-                    });
-                    
-                    setSocket(newSocket);
-                }
-
-                try { await pollJobStatus(jobData.jobId || jobData.id, routesToProcess, sourceFaqData); } 
-                catch (pollErr: unknown) { setStep(STEPS.ERROR); addLog((pollErr as Error).message, 'error'); } 
+            abortControllerRef.current = new AbortController();
+            const initTimeout = setTimeout(() => abortControllerRef.current?.abort(), REMOTE_BUILD_INIT_TIMEOUT_MS);
+            let initResponse;
+            try {
+                initResponse = await fetch(initUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${remoteConfig.apiKey}`,
+                        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                        'ngrok-skip-browser-warning': 'true',
+                    },
+                    body: initBody.toString(),
+                    signal: abortControllerRef.current.signal,
+                });
+            } catch (e: unknown) {
+                const err = e as Error;
+                if (err.name === 'AbortError') throw new Error("Remote build init request timed out.");
+                throw e;
+            } finally {
+                clearTimeout(initTimeout);
             }
-            else { setStep(STEPS.DOWNLOADING_ARTIFACT); const distBlob = await response.blob(); await handleBuildArtifact(distBlob, routesToProcess, sourceFaqData); }
+            if (!initResponse.ok) {
+                const errText = await initResponse.text();
+                throw new Error(`Remote Build Failed (${initResponse.status}): ${errText}`);
+            }
+
+            const initData = await initResponse.json();
+            const jobId = initData.jobId || initData.id;
+            if (!jobId) throw new Error("Remote build init did not return a job ID.");
+            addLog(`Job Queued: ${jobId}`, 'success');
+
+            const uploadUrl = `${buildBaseUrl}/build/${jobId}/upload`;
+            abortControllerRef.current = new AbortController();
+            const uploadTimeout = setTimeout(() => abortControllerRef.current?.abort(), REMOTE_BUILD_UPLOAD_TIMEOUT_MS);
+            let uploadResponse;
+            try {
+                uploadResponse = await fetch(uploadUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${remoteConfig.apiKey}`,
+                        'Content-Type': 'application/zip',
+                        'ngrok-skip-browser-warning': 'true',
+                    },
+                    body: cleanBlob,
+                    signal: abortControllerRef.current.signal,
+                });
+            } catch (e: unknown) {
+                const err = e as Error;
+                if (err.name === 'AbortError') throw new Error("Remote build upload timed out before the ZIP finished uploading.");
+                throw e;
+            } finally {
+                clearTimeout(uploadTimeout);
+            }
+            if (!uploadResponse.ok) {
+                const errText = await uploadResponse.text();
+                throw new Error(`Remote Build Failed (${uploadResponse.status}): ${errText}`);
+            }
+
+            if (isAdmin) {
+                const socketUrl = remoteConfig.url.replace(/\/build\/?$/, '');
+                const newSocket = io(socketUrl);
+                
+                newSocket.on('connect', () => {
+                    newSocket.emit('join_job', jobId);
+                    addLog(`Socket Connected: Streaming Live Logs...`, 'info');
+                });
+                
+                newSocket.on('log', (data) => {
+                    addLog(data.msg, data.type);
+                });
+                
+                newSocket.on('progress', (val) => {
+                    setProgress(val);
+                });
+                
+                setSocket(newSocket);
+            }
+
+            try { await pollJobStatus(jobId, routesToProcess, sourceFaqData); } 
+            catch (pollErr: unknown) { setStep(STEPS.ERROR); addLog((pollErr as Error).message, 'error'); } 
         } catch (err: unknown) { setStep(STEPS.ERROR); addLog(`Remote Error: ${(err as Error).message}`, 'error'); }
     };
 
