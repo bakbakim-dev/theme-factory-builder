@@ -15,6 +15,7 @@ import {
 } from '../utils/wordpress-content-registry.ts';
 
 const registry = createEmptyWordPressContentRegistry();
+const orderIndependentRegistry = createEmptyWordPressContentRegistry();
 
 assert.equal(registry.version, '2');
 assert.deepEqual(registry.routes, []);
@@ -64,6 +65,26 @@ appendWordPressContentRegistryChrome(registry, {
   },
 });
 
+appendWordPressContentRegistryChrome(orderIndependentRegistry, {
+  context: 'edmonton',
+  sourceRoutePath: '/pricing/',
+  headerFile: 'partials/header-edmonton.php',
+  footerFile: 'partials/footer-edmonton.php',
+  support: {
+    header: ['phone'],
+    footer: ['business_name'],
+    social: [],
+  },
+});
+
+appendWordPressContentRegistryRoute(orderIndependentRegistry, {
+  path: '/pricing/',
+  slug: 'pricing',
+  title: 'Pricing',
+  template: 'page-pricing.php',
+  chromeContext: 'edmonton',
+});
+
 appendWordPressContentRegistrySharedContentTargets(registry, {
   sourcePath: 'functions.php',
 });
@@ -107,6 +128,21 @@ appendWordPressContentRegistryEditor(registry, {
   assetFiles: ['assets/whipify-frontend-editor.css', 'assets/whipify-frontend-editor.js'],
 });
 
+appendWordPressContentRegistryEditor(registry, {
+  kind: 'quick',
+  name: 'whipify-quick-editor',
+  supportMap: {
+    globalChrome: {
+      header: ['primary_cta_text'],
+      footer: [],
+      social: [],
+    },
+    pageBlocks: {
+      'core/quote': ['content'],
+    },
+  },
+});
+
 appendWordPressContentRegistryReport(registry, {
   warnings: ['Forms require plugin wiring'],
   emittedFiles: [
@@ -118,6 +154,7 @@ appendWordPressContentRegistryReport(registry, {
 });
 
 const finalized = finalizeWordPressContentRegistry(registry);
+const finalizedOrderIndependent = finalizeWordPressContentRegistry(orderIndependentRegistry);
 const derivedQuickEditorSlotSupport = deriveWhipifyQuickEditorSlotSupportFromWordPressContentRegistry(finalized);
 const derivedFrontendEditorSupportMap = buildWhipifyFrontendEditorSupportMapFromWordPressContentRegistry(finalized);
 const dashboardSource = await fs.readFile(new URL('../components/Dashboard.tsx', import.meta.url), 'utf8');
@@ -147,12 +184,21 @@ assert.equal(sharedContentTarget.sourcePath, 'functions.php');
 assert.match(sharedContentTarget.provenanceLabel, /quick editor/i);
 assert.ok(sharedContentTarget.id);
 assert.ok(sharedContentTarget.stableId);
+assert.notEqual(sharedContentTarget.stableId, sharedContentTarget.sourceToken);
 
 const chromeTarget = finalized.targets.find((target) => target.scope === 'global-chrome' && target.group === 'header' && target.field === 'phone');
 assert.ok(chromeTarget);
 assert.equal(chromeTarget.chromeContext, 'edmonton');
 assert.equal(chromeTarget.sourcePath, 'partials/header-edmonton.php');
 assert.equal(chromeTarget.sourceToken, 'chrome:edmonton:header:phone');
+assert.notEqual(chromeTarget.stableId, chromeTarget.sourceToken);
+assert.equal(chromeTarget.routeSlug, undefined);
+assert.equal(chromeTarget.routeTitle, undefined);
+
+const backfilledChromeTarget = finalizedOrderIndependent.targets.find((target) => target.scope === 'global-chrome' && target.field === 'phone');
+assert.ok(backfilledChromeTarget);
+assert.equal(backfilledChromeTarget.routeSlug, 'pricing');
+assert.equal(backfilledChromeTarget.routeTitle, 'Pricing');
 
 const pageBlockTarget = finalized.targets.find((target) => target.scope === 'page-block' && target.blockName === 'core/button' && target.field === 'text');
 assert.ok(pageBlockTarget);
@@ -168,13 +214,15 @@ assert.equal(finalized.forms.length, 1);
 assert.equal(finalized.forms[0].templateFile, 'partials/forms/pricing-lead.php');
 assert.equal(finalized.forms[0].blocksFile, 'assets/blocks/pricing-lead.json');
 
-assert.equal(finalized.editors.length, 1);
-assert.deepEqual(finalized.editors[0].supportMap.globalChrome.header, ['phone', 'primary_cta_text']);
-assert.deepEqual(finalized.editors[0].supportMap.pageBlocks, {
+assert.equal(finalized.editors.length, 2);
+const frontendEditorEntry = finalized.editors.find((editor) => editor.kind === 'frontend');
+assert.ok(frontendEditorEntry);
+assert.deepEqual(frontendEditorEntry.supportMap.globalChrome.header, ['phone', 'primary_cta_text']);
+assert.deepEqual(frontendEditorEntry.supportMap.pageBlocks, {
   'core/button': ['text', 'url'],
   'core/heading': ['content'],
 });
-assert.deepEqual(finalized.editors[0].assetFiles, ['assets/whipify-frontend-editor.css', 'assets/whipify-frontend-editor.js']);
+assert.deepEqual(frontendEditorEntry.assetFiles, ['assets/whipify-frontend-editor.css', 'assets/whipify-frontend-editor.js']);
 assert.deepEqual(derivedQuickEditorSlotSupport, {
   header: [
     'announcement_text',
@@ -209,12 +257,13 @@ assert.deepEqual(derivedFrontendEditorSupportMap, {
     'core/button': ['text', 'url'],
   },
 });
+assert.equal(Object.prototype.hasOwnProperty.call(derivedFrontendEditorSupportMap.pageBlocks, 'core/quote'), false);
 
 assert.deepEqual(finalized.report, {
   routes: 2,
   chromeVariants: 1,
   forms: 1,
-  editors: 1,
+  editors: 2,
   targets: finalized.targets.length,
   targetScopes: {
     'global-chrome': finalized.targets.filter((target) => target.scope === 'global-chrome').length,
@@ -243,6 +292,7 @@ assert.match(dashboardSource, /buildWhipifyFrontendEditorSupportMapFromWordPress
 assert.match(dashboardSource, /folder\.file\("assets\/data\/content-registry\.json",\s*JSON\.stringify\(finalizedWordPressContentRegistry,\s*null,\s*2\)\)/);
 assert.match(dashboardSource, /folder\.file\("assets\/data\/content-registry\.report\.json",\s*JSON\.stringify\(finalizedWordPressContentRegistry\.report,\s*null,\s*2\)\)/);
 assert.match(dashboardSource, /emittedFiles:\s*\[[\s\S]*'assets\/data\/content-registry\.json'[\s\S]*'assets\/data\/content-registry\.report\.json'/);
+assert.match(dashboardSource, /const registryCompatibilitySource = mode === 'gutenberg-native' && wordpressContentRegistry/);
 
 console.log('WordPress content registry regression');
 console.log('[PASS] Registry contract and dashboard WordPress aggregation are stable');

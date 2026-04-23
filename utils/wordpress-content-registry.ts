@@ -130,6 +130,34 @@ const normalizeQuickEditorFieldType = (
 const normalizeFrontendFieldType = (fieldType: 'plainText' | 'richText' | 'url' | 'imageAlt'): WordPressContentFieldType =>
   fieldType === 'imageAlt' ? 'imageAlt' : fieldType;
 
+const buildSemanticStableId = (
+  target: Omit<WordPressContentRegistryTarget, 'id' | 'stableId'>,
+): string => {
+  const identityParts: string[] = [target.scope];
+
+  if (target.editor) {
+    identityParts.push(target.editor);
+  }
+
+  if (target.scope === 'global-chrome') {
+    identityParts.push(target.chromeContext || target.routePath || 'global');
+    if (target.group) {
+      identityParts.push(target.group);
+    }
+  } else if (target.scope === 'shared-content') {
+    if (target.group) {
+      identityParts.push(target.group);
+    }
+  } else if (target.scope === 'page-block' || target.scope === 'media') {
+    if (target.blockName) {
+      identityParts.push(target.blockName);
+    }
+  }
+
+  identityParts.push(target.field);
+  return identityParts.filter(Boolean).join(':');
+};
+
 const sortTargets = (targets: WordPressContentRegistryTarget[]): WordPressContentRegistryTarget[] =>
   [...targets]
     .map((target) => ({
@@ -179,15 +207,7 @@ const countTargetsByScope = (targets: WordPressContentRegistryTarget[]): Record<
 const createTarget = (
   target: Omit<WordPressContentRegistryTarget, 'id' | 'stableId'> & { stableId?: string },
 ): WordPressContentRegistryTarget => {
-  const stableId = target.stableId || [
-    target.scope,
-    target.chromeContext,
-    target.group,
-    target.routePath,
-    target.blockName,
-    target.field,
-    target.sourceToken,
-  ].filter(Boolean).join(':');
+  const stableId = target.stableId || buildSemanticStableId(target);
 
   return {
     ...target,
@@ -204,9 +224,28 @@ const appendTargets = (
   return registry;
 };
 
-const buildRouteLookup = (
-  registry: WordPressContentRegistryV2,
-): Map<string, WordPressContentRegistryRoute> => new Map(registry.routes.map((route) => [route.path, route]));
+const backfillRouteMetadata = (
+  targets: WordPressContentRegistryTarget[],
+  routes: WordPressContentRegistryRoute[],
+): WordPressContentRegistryTarget[] => {
+  const routeLookup = new Map(routes.map((route) => [route.path, route]));
+  return targets.map((target) => {
+    if (!target.routePath) {
+      return target;
+    }
+
+    const route = routeLookup.get(target.routePath);
+    if (!route) {
+      return target;
+    }
+
+    return {
+      ...target,
+      routeSlug: target.routeSlug || route.slug,
+      routeTitle: target.routeTitle || route.title,
+    };
+  });
+};
 
 export const createEmptyWordPressContentRegistry = (): WordPressContentRegistryV2 => ({
   version: '2',
@@ -285,8 +324,6 @@ export const appendWordPressContentRegistryChrome = (
   };
   registry.chrome.push(normalizedChrome);
 
-  const routeLookup = buildRouteLookup(registry);
-  const route = normalizedChrome.sourceRoutePath ? routeLookup.get(normalizedChrome.sourceRoutePath) : undefined;
   const targetGroups: Array<[WordPressChromeGroup, string | undefined, string[]]> = [
     ['header', normalizedChrome.headerFile, normalizedChrome.support.header],
     ['footer', normalizedChrome.footerFile, normalizedChrome.support.footer],
@@ -306,8 +343,6 @@ export const appendWordPressContentRegistryChrome = (
         group,
         chromeContext: normalizedChrome.context,
         routePath: normalizedChrome.sourceRoutePath,
-        routeSlug: route?.slug,
-        routeTitle: route?.title,
       })),
     ),
   );
@@ -353,10 +388,11 @@ export const appendWordPressContentRegistryReport = (
 export const finalizeWordPressContentRegistry = (
   registry: WordPressContentRegistryV2,
 ): WordPressContentRegistryV2 => {
-  const finalizedTargets = finalizeTargets(registry.targets);
+  const finalizedRoutes = [...registry.routes].sort((left, right) => left.path.localeCompare(right.path));
+  const finalizedTargets = backfillRouteMetadata(finalizeTargets(registry.targets), finalizedRoutes);
   return {
     version: '2',
-    routes: [...registry.routes].sort((left, right) => left.path.localeCompare(right.path)),
+    routes: finalizedRoutes,
     chrome: [...registry.chrome]
       .map((entry) => ({
         ...entry,
@@ -412,7 +448,11 @@ export const buildWhipifyFrontendEditorSupportMapFromWordPressContentRegistry = 
   const pageBlocks = Object.fromEntries(
     Array.from(
       registry.targets
-        .filter((target) => (target.scope === 'page-block' || target.scope === 'media') && target.blockName)
+        .filter((target) =>
+          target.editor === 'frontend'
+          && (target.scope === 'page-block' || target.scope === 'media')
+          && target.blockName,
+        )
         .reduce((map, target) => {
           const blockName = target.blockName as string;
           if (!map.has(blockName)) {
