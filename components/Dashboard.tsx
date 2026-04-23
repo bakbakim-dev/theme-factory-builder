@@ -1127,15 +1127,23 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             }
             if (!initResponse.ok) {
                 const errText = await initResponse.text();
-                throw new Error(`Remote Build Failed (${initResponse.status}): ${errText}`);
+                throw new Error(`Remote build init failed (${initResponse.status}): ${errText}`);
             }
 
             const initData = await initResponse.json();
             const jobId = initData.jobId || initData.id;
             if (!jobId) throw new Error("Remote build init did not return a job ID.");
-            addLog(`Job Queued: ${jobId}`, 'success');
+            const initStatus = typeof initData.status === 'string' ? initData.status : '';
+            addLog(
+                initStatus === 'awaiting_upload'
+                    ? `Upload slot ready: ${jobId}`
+                    : `Remote build initialized: ${jobId}`,
+                'success',
+            );
 
             const uploadUrl = `${buildBaseUrl}/build/${jobId}/upload`;
+            const uploadFormData = new FormData();
+            uploadFormData.append('zip', cleanBlob, file.name);
             abortControllerRef.current = new AbortController();
             const uploadTimeout = setTimeout(() => abortControllerRef.current?.abort(), REMOTE_BUILD_UPLOAD_TIMEOUT_MS);
             let uploadResponse;
@@ -1144,10 +1152,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${remoteConfig.apiKey}`,
-                        'Content-Type': 'application/zip',
                         'ngrok-skip-browser-warning': 'true',
                     },
-                    body: cleanBlob,
+                    body: uploadFormData,
                     signal: abortControllerRef.current.signal,
                 });
             } catch (e: unknown) {
@@ -1159,8 +1166,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             }
             if (!uploadResponse.ok) {
                 const errText = await uploadResponse.text();
-                throw new Error(`Remote Build Failed (${uploadResponse.status}): ${errText}`);
+                throw new Error(`Remote build upload failed (${uploadResponse.status}): ${errText}`);
             }
+            addLog(`Job Queued: ${jobId}`, 'success');
 
             if (isAdmin) {
                 const socketUrl = remoteConfig.url.replace(/\/build\/?$/, '');

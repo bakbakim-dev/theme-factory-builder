@@ -11,8 +11,20 @@ const assertions = [
     message: 'Expected Dashboard.tsx to initialize remote builds via /build/init.',
   },
   {
-    ok: /\/build\/\$\{[^}]+\}\/upload/.test(dashboardSource) || dashboardSource.includes('/upload'),
+    ok: /\/build\/\$\{[^}]+\}\/upload/.test(dashboardSource),
     message: 'Expected Dashboard.tsx to upload ZIPs via /build/${jobId}/upload or equivalent.',
+  },
+  {
+    ok: /new\s+FormData\s*\(/.test(dashboardSource),
+    message: 'Expected Dashboard.tsx to create FormData for the remote ZIP upload.',
+  },
+  {
+    ok: /\.append\(\s*['"]zip['"]\s*,/.test(dashboardSource),
+    message: 'Expected Dashboard.tsx to append the ZIP blob to FormData with the "zip" field.',
+  },
+  {
+    ok: !/['"]Content-Type['"]\s*:\s*['"]application\/zip['"]/.test(dashboardSource),
+    message: 'Expected Dashboard.tsx to stop sending the remote ZIP upload as raw application/zip.',
   },
   {
     ok: !dashboardSource.includes('Remote build request timed out before the server acknowledged the job'),
