@@ -24,9 +24,11 @@ import { buildWordPressChromeContextPlan, buildWordPressChromeSelectorPhp, build
 import {
     appendWordPressContentRegistryChrome,
     appendWordPressContentRegistryEditor,
+    appendWordPressContentRegistryFrontendEditorTargets,
     appendWordPressContentRegistryForm,
     appendWordPressContentRegistryReport,
     appendWordPressContentRegistryRoute,
+    appendWordPressContentRegistrySharedContentTargets,
     buildWhipifyFrontendEditorSupportMapFromWordPressContentRegistry,
     createEmptyWordPressContentRegistry,
     deriveWhipifyQuickEditorSlotSupportFromWordPressContentRegistry,
@@ -1864,12 +1866,20 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             setProgress(15 + Math.floor((i / allFilesToCopy.length) * 25));
         }
         stats.css = cssFiles.length; stats.js = jsFiles.length; stats.images = assetFiles.length;
-        addLog(`Copied ${allFilesToCopy.length} files`, 'success'); setProgress(40);
+       addLog(`Copied ${allFilesToCopy.length} files`, 'success'); setProgress(40);
 
-        const quickEditorDefaults = buildWhipifyQuickEditorDefaults(seoSettings);
-        let quickEditorSlotSupport = mergeWhipifyQuickEditorSlotSupport();
+       const quickEditorDefaults = buildWhipifyQuickEditorDefaults(seoSettings);
+       let quickEditorSlotSupport = mergeWhipifyQuickEditorSlotSupport();
+       if (wordpressContentRegistry) {
+           appendWordPressContentRegistrySharedContentTargets(wordpressContentRegistry, {
+               sourcePath: 'functions.php',
+           });
+           appendWordPressContentRegistryFrontendEditorTargets(wordpressContentRegistry, {
+               sourcePath: 'functions.php',
+           });
+       }
 
-        Object.entries(chromeVariants).forEach(([context, variant]) => {
+       Object.entries(chromeVariants).forEach(([context, variant]) => {
             if (variant.headerHtml) {
                 const processedHeaderVariant = rewriteWordPressRouteLinks(
                     replaceAssetPaths(variant.headerHtml, '<?php echo esc_url(get_template_directory_uri()); ?>/'),

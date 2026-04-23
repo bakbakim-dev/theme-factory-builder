@@ -22,6 +22,13 @@ export interface WhipifyFrontendEditorSupportMap {
   pageBlocks: Record<string, string[]>;
 }
 
+export interface WhipifyFrontendEditorPageBlockFieldSupport {
+  blockName: string;
+  field: string;
+  fieldType: 'plainText' | 'richText' | 'url' | 'imageAlt';
+  scope: 'page-block' | 'media';
+}
+
 interface BuildWhipifyFrontendEditorSupportMapInput {
   hasHeaderSlots?: string[];
   hasFooterSlots?: string[];
@@ -1264,6 +1271,43 @@ const renderCss = (): string => `.whipify-frontend-editor-panel {
 body.is-whipify-frontend-editor-enabled .whipify-frontend-editor-admin-only {
   display: block;
 }`;
+
+const inferPageBlockFieldType = (
+  blockName: string,
+  field: string,
+): WhipifyFrontendEditorPageBlockFieldSupport['fieldType'] => {
+  if (blockName === 'core/image' && field === 'alt') {
+    return 'imageAlt';
+  }
+
+  if (field === 'url') {
+    return 'url';
+  }
+
+  if (field === 'content') {
+    return 'richText';
+  }
+
+  return 'plainText';
+};
+
+const inferPageBlockScope = (
+  blockName: string,
+): WhipifyFrontendEditorPageBlockFieldSupport['scope'] => (blockName === 'core/image' ? 'media' : 'page-block');
+
+export const listWhipifyFrontendEditorPageBlockSupport = (): WhipifyFrontendEditorPageBlockFieldSupport[] =>
+  Object.entries(PAGE_BLOCK_WHITELIST)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .flatMap(([blockName, fields]) =>
+      [...fields]
+        .sort((left, right) => left.localeCompare(right))
+        .map((field) => ({
+          blockName,
+          field,
+          fieldType: inferPageBlockFieldType(blockName, field),
+          scope: inferPageBlockScope(blockName),
+        })),
+    );
 
 export const buildWhipifyFrontendEditorSupportMap = (
   input: BuildWhipifyFrontendEditorSupportMapInput = {},

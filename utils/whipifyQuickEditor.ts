@@ -32,6 +32,13 @@ interface QuickEditorFieldDefinition {
   kind: 'text' | 'url';
 }
 
+export interface WhipifyQuickEditorSchemaField {
+  part: QuickEditorPart;
+  key: keyof WhipifyQuickEditorDefaults;
+  label: string;
+  kind: 'text' | 'url';
+}
+
 interface WhipifyQuickEditorChromeBinding {
   html: string;
   slotSupport: WhipifyQuickEditorSlotSupport;
@@ -90,6 +97,17 @@ const getFieldDefinition = (part: QuickEditorPart, key: keyof WhipifyQuickEditor
 
 const getSchemaKeysForPart = (part: QuickEditorPart): string[] =>
   QUICK_EDITOR_FIELD_DEFINITIONS[part].map((definition) => String(definition.key));
+
+export const listWhipifyQuickEditorSchemaFields = (): WhipifyQuickEditorSchemaField[] =>
+  (Object.entries(QUICK_EDITOR_FIELD_DEFINITIONS) as Array<[QuickEditorPart, QuickEditorFieldDefinition[]]>)
+    .flatMap(([part, definitions]) =>
+      definitions.map((definition) => ({
+        part,
+        key: definition.key,
+        label: definition.label,
+        kind: definition.kind,
+      })),
+    );
 
 const uniqueSlotKeys = (values: string[] = []): string[] => Array.from(new Set(values.filter(Boolean)));
 
