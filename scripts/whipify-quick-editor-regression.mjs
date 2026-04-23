@@ -90,6 +90,11 @@ assert.deepEqual(slots, {
 });
 
 const php = buildWhipifyQuickEditorPhp(defaults, slots);
+const phpWithEmptySlots = buildWhipifyQuickEditorPhp(defaults, {
+  header: [],
+  footer: [],
+  social: [],
+});
 
 assert.match(php, /function tf_quick_editor_defaults/);
 assert.match(php, /function tf_quick_editor_settings/);
@@ -102,10 +107,15 @@ assert.match(php, /sanitize_text_field/);
 assert.match(php, /esc_url_raw/);
 assert.match(php, /^<\?php/);
 assert.match(php, /\?>\s*$/);
+assert.match(phpWithEmptySlots, /Primary CTA Text/);
+assert.match(phpWithEmptySlots, /Phone/);
+assert.match(phpWithEmptySlots, /Business Name/);
+assert.match(phpWithEmptySlots, /Facebook/);
 
 const dashboardSource = fs.readFileSync(new URL('../components/Dashboard.tsx', import.meta.url), 'utf8');
 assert.ok(
-  dashboardSource.includes("buildWhipifyQuickEditorPhp(quickEditorDefaults, quickEditorSlotSupport).replace(/^<\\?php\\s*/, '').replace(/\\?>\\s*$/, '')"),
+  dashboardSource.includes('buildWhipifyQuickEditorPhp(quickEditorDefaults,')
+  && dashboardSource.includes(".replace(/^<\\?php\\s*/, '').replace(/\\?>\\s*$/, '')"),
   'Expected Dashboard.tsx to strip Quick Editor PHP tags before appending to functions.php.',
 );
 

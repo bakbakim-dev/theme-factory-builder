@@ -28,6 +28,9 @@ require_once TFB_PATH . 'inc/sanitize.php';
 require_once TFB_PATH . 'inc/blocks.php';
 require_once TFB_PATH . 'inc/import.php';
 require_once TFB_PATH . 'inc/editor-assets.php';
+require_once TFB_PATH . 'inc/editor-curation.php';
+require_once TFB_PATH . 'inc/frontend-editor.php';
+require_once TFB_PATH . 'inc/bindings.php';
 
 register_activation_hook(__FILE__, function() {
     if (class_exists('TFB_Import')) {
@@ -35,6 +38,9 @@ register_activation_hook(__FILE__, function() {
     }
     if (class_exists('TFB_Editor_Assets')) {
         TFB_Editor_Assets::on_activate();
+    }
+    if (class_exists('TFB_Frontend_Editor')) {
+        TFB_Frontend_Editor::on_activate();
     }
     flush_rewrite_rules();
 });
@@ -186,11 +192,22 @@ final class TFB_Blocks {
     }
 
     public static function enqueue_editor_assets() {
+        $site_content_values = function_exists( 'tfb_site_content_binding_settings_for_editor' )
+            ? tfb_site_content_binding_settings_for_editor()
+            : array();
         wp_localize_script( 'tfb-blocks', 'tfbData', array(
             'siteUrl'  => home_url( '/' ),
             'siteName' => get_bloginfo( 'name' ),
             'ajaxUrl'  => admin_url( 'admin-ajax.php' ),
             'nonce'    => wp_create_nonce( 'tfb_nonce' ),
+            'blockBindings' => array(
+                'sourceName' => function_exists( 'tfb_site_content_binding_source_name' ) ? tfb_site_content_binding_source_name() : '',
+                'fields' => function_exists( 'tfb_site_content_binding_fields_for_editor' ) ? tfb_site_content_binding_fields_for_editor() : array(),
+                'values' => $site_content_values,
+                'revisionToken' => function_exists( 'tfb_site_content_binding_revision_token' ) ? tfb_site_content_binding_revision_token( $site_content_values ) : '',
+                'updateUrl' => function_exists( 'tfb_site_content_binding_update_url' ) ? tfb_site_content_binding_update_url() : '',
+                'restNonce' => wp_create_nonce( 'wp_rest' ),
+            ),
         ) );
     }
 
@@ -654,18 +671,19 @@ final class TFB_Blocks {
         return '<button class="wp-block-theme-factory-nav-toggle' . $class_name . '" type="button" aria-expanded="false"></button>';
     }
 
-    public static function render_button( $attributes, $content ) {
-        if ( '' === trim( (string) ( $attributes['text'] ?? '' ) ) && '' !== trim( $content ) ) {
-            return $content;
-        }
+  public static function render_button( $attributes, $content ) {
+      if ( '' === trim( (string) ( $attributes['text'] ?? '' ) ) && '' !== trim( $content ) ) {
+          return $content;
+      }
 
-        $href      = ! empty( $attributes['href'] ) ? esc_url( $attributes['href'] ) : '';
-        $text      = ! empty( $attributes['text'] ) ? wp_kses_post( self::decode_loose_unicode_escapes( (string) $attributes['text'] ) ) : '';
-        $class     = 'wp-block-theme-factory-button';
-        $className = ! empty( $attributes['className'] ) ? TFB_Sanitize::classes( $attributes['className'] ) : '';
-        $aria_label = ! empty( $attributes['ariaLabel'] ) ? sanitize_text_field( $attributes['ariaLabel'] ) : '';
-        $tag_name  = ! empty( $attributes['tagName'] ) && 'button' === strtolower( $attributes['tagName'] ) ? 'button' : 'a';
-        $button_type = ! empty( $attributes['buttonType'] ) ? sanitize_text_field( $attributes['buttonType'] ) : 'button';
+      $href       = ! empty( $attributes['href'] ) ? esc_url( $attributes['href'] ) : '';
+      $text       = ! empty( $attributes['text'] ) ? wp_kses_post( self::decode_loose_unicode_escapes( (string) $attributes['text'] ) ) : '';
+      $class      = 'wp-block-theme-factory-button';
+      $className = ! empty( $attributes['className'] ) ? TFB_Sanitize::classes( $attributes['className'] ) : '';
+      $aria_label = ! empty( $attributes['ariaLabel'] ) ? sanitize_text_field( $attributes['ariaLabel'] ) : '';
+      $tag_name   = ! empty( $attributes['tagName'] ) && 'button' === strtolower( $attributes['tagName'] ) ? 'button' : 'a';
+      $button_type = ! empty( $attributes['buttonType'] ) ? sanitize_text_field( $attributes['buttonType'] ) : 'button';
+      $style      = self::style_object_to_css( self::normalize_style_object( $attributes ) );
 
         if ( '' !== $className ) {
             $class .= ' ' . $className;
@@ -692,12 +710,16 @@ final class TFB_Blocks {
             $extra_attributes['rel'] = $rel;
         }
 
-        if ( '' !== $aria_label ) {
-            $extra_attributes['aria-label'] = $aria_label;
-        }
+      if ( '' !== $aria_label ) {
+          $extra_attributes['aria-label'] = $aria_label;
+      }
 
-        return '<' . $tag_name . self::build_attr_string( $extra_attributes ) . '>' . $text . '</' . $tag_name . '>';
-    }
+      if ( '' !== $style ) {
+          $extra_attributes['style'] = $style;
+      }
+
+      return '<' . $tag_name . self::build_attr_string( $extra_attributes ) . '>' . $text . '</' . $tag_name . '>';
+  }
 
     public static function render_select( $attributes, $content ) {
         if ( '' !== trim( $content ) ) {
@@ -999,7 +1021,7 @@ class TFB_Import {
         $has_shell = !empty($blocks) && isset($blocks[0]['blockName']) && $blocks[0]['blockName'] === 'theme-factory/page-shell';
 
         if ($has_shell) {
-            return serialize_blocks($blocks);
+            return serialize_blocks(self::apply_curated_block_locks($blocks));
         }
 
         $shell_class = 'min-h-screen bg-white';
@@ -1007,7 +1029,44 @@ class TFB_Import {
                    $html .
                    '<!-- /wp:theme-factory/page-shell -->';
 
-        return serialize_blocks(parse_blocks($wrapped));
+        return serialize_blocks(self::apply_curated_block_locks(parse_blocks($wrapped)));
+    }
+
+    private static function apply_curated_block_locks($blocks) {
+        $lockable_blocks = array(
+            'theme-factory/page-shell',
+            'theme-factory/container',
+            'theme-factory/buttons',
+        );
+
+        foreach ($blocks as &$block) {
+            $block_name = isset($block['blockName']) ? $block['blockName'] : '';
+
+            if (in_array($block_name, $lockable_blocks, true)) {
+                if (!isset($block['attrs']) || !is_array($block['attrs'])) {
+                    $block['attrs'] = array();
+                }
+
+                $existing_lock = isset($block['attrs']['lock']) && is_array($block['attrs']['lock'])
+                    ? $block['attrs']['lock']
+                    : array();
+
+                $block['attrs']['lock'] = array_merge(
+                    $existing_lock,
+                    array(
+                        'move' => true,
+                        'remove' => true,
+                    )
+                );
+            }
+
+            if (isset($block['innerBlocks']) && is_array($block['innerBlocks']) && !empty($block['innerBlocks'])) {
+                $block['innerBlocks'] = self::apply_curated_block_locks($block['innerBlocks']);
+            }
+        }
+        unset($block);
+
+        return $blocks;
     }
 
     private static function import_menus($routes) {
@@ -1136,6 +1195,644 @@ endif;
 
 TFB_Editor_Assets::init();`,
 
+  'inc/editor-curation.php': `<?php
+/**
+ * Curated Gutenberg editing surface for converted pages
+ */
+
+if (!defined('ABSPATH')) exit;
+
+if ( ! class_exists( 'TFB_Editor_Curation' ) ) :
+
+final class TFB_Editor_Curation {
+    public static function init() {
+        add_filter( 'allowed_block_types_all', array( __CLASS__, 'filter_allowed_block_types' ), 20, 2 );
+        add_filter( 'block_editor_settings_all', array( __CLASS__, 'curate_editor_settings' ), 20, 2 );
+    }
+
+    private static function get_allowed_blocks() {
+        return array(
+            'core/heading',
+            'core/paragraph',
+            'core/button',
+            'core/image',
+            'core/list',
+            'core/list-item',
+            'core/group',
+            'core/columns',
+            'core/column',
+            'core/spacer',
+            'core/separator',
+            'theme-factory/page-shell',
+            'theme-factory/container',
+            'theme-factory/buttons',
+            'theme-factory/link-group',
+            'theme-factory/table',
+            'theme-factory/svg',
+            'theme-factory/nav-toggle',
+            'theme-factory/button',
+            'theme-factory/select',
+            'theme-factory/input',
+            'theme-factory/textarea'
+        );
+    }
+
+    private static function is_curated_context( $editor_context ) {
+        $post = is_object( $editor_context ) && isset( $editor_context->post ) ? $editor_context->post : null;
+        if ( ! $post || ! isset( $post->post_type ) || 'page' !== $post->post_type ) {
+            return false;
+        }
+
+        $post_content = isset( $post->post_content ) && is_string( $post->post_content ) ? $post->post_content : '';
+        return false !== strpos( $post_content, '<!-- wp:theme-factory/page-shell' );
+    }
+
+    public static function filter_allowed_block_types( $allowed_block_types, $editor_context ) {
+        if ( ! self::is_curated_context( $editor_context ) ) {
+            return $allowed_block_types;
+        }
+
+        return self::get_allowed_blocks();
+    }
+
+    public static function curate_editor_settings( $settings, $editor_context ) {
+        if ( ! self::is_curated_context( $editor_context ) ) {
+            return $settings;
+        }
+
+        $settings['canLockBlocks'] = false;
+        $settings['allowedBlockTypes'] = self::get_allowed_blocks();
+
+        return $settings;
+    }
+}
+
+endif;
+
+TFB_Editor_Curation::init();`,
+
+  'inc/bindings.php': `<?php
+/**
+ * Block Bindings source for global Whipify site content
+ */
+
+if (!defined('ABSPATH')) exit;
+
+if ( ! class_exists( 'TFB_Bindings' ) ) :
+
+final class TFB_Bindings {
+    const SOURCE_NAME = 'theme-factory/site-content';
+
+    public static function init() {
+        add_action( 'init', array( __CLASS__, 'register_source' ) );
+        add_filter( 'block_bindings_supported_attributes_theme-factory/button', array( __CLASS__, 'filter_button_supported_attributes' ) );
+    }
+
+    public static function get_field_definitions() {
+        return array(
+            'primary_cta_text' => array(
+                'label' => __( 'Header: Primary CTA Text', 'theme-factory-blocks' ),
+                'scope' => 'header',
+                'kind'  => 'text',
+                'type'  => 'string',
+            ),
+            'primary_cta_url' => array(
+                'label' => __( 'Header: Primary CTA URL', 'theme-factory-blocks' ),
+                'scope' => 'header',
+                'kind'  => 'url',
+                'type'  => 'string',
+            ),
+            'secondary_cta_text' => array(
+                'label' => __( 'Header: Secondary CTA Text', 'theme-factory-blocks' ),
+                'scope' => 'header',
+                'kind'  => 'text',
+                'type'  => 'string',
+            ),
+            'secondary_cta_url' => array(
+                'label' => __( 'Header: Secondary CTA URL', 'theme-factory-blocks' ),
+                'scope' => 'header',
+                'kind'  => 'url',
+                'type'  => 'string',
+            ),
+            'phone' => array(
+                'label' => __( 'Header: Phone', 'theme-factory-blocks' ),
+                'scope' => 'header',
+                'kind'  => 'text',
+                'type'  => 'string',
+            ),
+            'announcement_text' => array(
+                'label' => __( 'Header: Announcement Text', 'theme-factory-blocks' ),
+                'scope' => 'header',
+                'kind'  => 'text',
+                'type'  => 'string',
+            ),
+            'announcement_url' => array(
+                'label' => __( 'Header: Announcement URL', 'theme-factory-blocks' ),
+                'scope' => 'header',
+                'kind'  => 'url',
+                'type'  => 'string',
+            ),
+            'business_name' => array(
+                'label' => __( 'Footer: Business Name', 'theme-factory-blocks' ),
+                'scope' => 'footer',
+                'kind'  => 'text',
+                'type'  => 'string',
+            ),
+            'address_line_1' => array(
+                'label' => __( 'Footer: Address Line 1', 'theme-factory-blocks' ),
+                'scope' => 'footer',
+                'kind'  => 'text',
+                'type'  => 'string',
+            ),
+            'address_line_2' => array(
+                'label' => __( 'Footer: Address Line 2', 'theme-factory-blocks' ),
+                'scope' => 'footer',
+                'kind'  => 'text',
+                'type'  => 'string',
+            ),
+            'contact_line' => array(
+                'label' => __( 'Footer: Contact Line', 'theme-factory-blocks' ),
+                'scope' => 'footer',
+                'kind'  => 'text',
+                'type'  => 'string',
+            ),
+            'facebook' => array(
+                'label' => __( 'Social: Facebook URL', 'theme-factory-blocks' ),
+                'scope' => 'social',
+                'kind'  => 'url',
+                'type'  => 'string',
+            ),
+            'instagram' => array(
+                'label' => __( 'Social: Instagram URL', 'theme-factory-blocks' ),
+                'scope' => 'social',
+                'kind'  => 'url',
+                'type'  => 'string',
+            ),
+            'linkedin' => array(
+                'label' => __( 'Social: LinkedIn URL', 'theme-factory-blocks' ),
+                'scope' => 'social',
+                'kind'  => 'url',
+                'type'  => 'string',
+            ),
+            'x' => array(
+                'label' => __( 'Social: X URL', 'theme-factory-blocks' ),
+                'scope' => 'social',
+                'kind'  => 'url',
+                'type'  => 'string',
+            ),
+        );
+    }
+
+    public static function register_source() {
+        if ( ! function_exists( 'register_block_bindings_source' ) ) {
+            return;
+        }
+
+        register_block_bindings_source(
+            self::SOURCE_NAME,
+            array(
+                'label'              => __( 'Whipify Site Content', 'theme-factory-blocks' ),
+                'get_value_callback' => array( __CLASS__, 'get_value' ),
+            )
+        );
+    }
+
+    public static function filter_button_supported_attributes( $supported_attributes ) {
+        foreach ( array( 'text', 'href' ) as $attribute_name ) {
+            if ( ! in_array( $attribute_name, $supported_attributes, true ) ) {
+                $supported_attributes[] = $attribute_name;
+            }
+        }
+
+        return $supported_attributes;
+    }
+
+    public static function get_settings() {
+        $field_definitions = self::get_field_definitions();
+        $settings = get_option( 'whipify_quick_editor_settings', array() );
+        if ( ! is_array( $settings ) ) {
+            $settings = array();
+        }
+
+        $normalized = array();
+        foreach ( $field_definitions as $key => $definition ) {
+            $value = isset( $settings[ $key ] ) ? $settings[ $key ] : '';
+            $normalized[ $key ] = self::sanitize_value( $key, $value );
+        }
+
+        return $normalized;
+    }
+
+    public static function sanitize_value( $key, $value ) {
+        $field_definitions = self::get_field_definitions();
+        if ( ! isset( $field_definitions[ $key ] ) ) {
+            return '';
+        }
+
+        $definition = $field_definitions[ $key ];
+        $value = is_scalar( $value ) ? (string) $value : '';
+
+        if ( 'url' === $definition['kind'] ) {
+            return esc_url_raw( $value );
+        }
+
+        return sanitize_text_field( $value );
+    }
+
+    public static function get_revision_token( $settings = null ) {
+        if ( ! is_array( $settings ) ) {
+            $settings = self::get_settings();
+        }
+
+        return hash( 'sha256', wp_json_encode( $settings ) );
+    }
+
+    public static function get_value( array $source_args, $block_instance, $attribute_name ) {
+        $key = isset( $source_args['key'] ) ? sanitize_key( $source_args['key'] ) : '';
+        if ( ! $key ) {
+            return null;
+        }
+
+        $settings = self::get_settings();
+        if ( ! array_key_exists( $key, $settings ) ) {
+            return null;
+        }
+
+        return $settings[ $key ];
+    }
+
+    public static function get_fields_for_editor() {
+        $fields = array();
+        foreach ( self::get_field_definitions() as $key => $definition ) {
+            $fields[] = array(
+                'key'   => $key,
+                'label' => $definition['label'],
+                'scope' => $definition['scope'],
+                'kind'  => $definition['kind'],
+                'type'  => $definition['type'],
+                'args'  => array(
+                    'key' => $key,
+                ),
+            );
+        }
+
+        return $fields;
+    }
+}
+
+endif;
+
+function tfb_site_content_binding_source_name() {
+    return TFB_Bindings::SOURCE_NAME;
+}
+
+function tfb_site_content_binding_fields_for_editor() {
+    return TFB_Bindings::get_fields_for_editor();
+}
+
+function tfb_site_content_binding_settings_for_editor() {
+    return TFB_Bindings::get_settings();
+}
+
+function tfb_site_content_binding_revision_token( $settings = null ) {
+    return TFB_Bindings::get_revision_token( $settings );
+}
+
+function tfb_site_content_binding_update_url() {
+    if ( function_exists( 'tfb_frontend_editor_rest_base_url' ) ) {
+        return tfb_frontend_editor_rest_base_url() . '/chrome';
+    }
+
+    return rest_url( 'tfb/v1/frontend-editor/chrome' );
+}
+
+TFB_Bindings::init();`,
+
+  'inc/frontend-editor.php': `<?php
+/**
+ * Frontend editor REST transport and lightweight lock integration
+ */
+
+if (!defined('ABSPATH')) exit;
+
+if ( ! class_exists( 'TFB_Frontend_Editor' ) ) :
+
+final class TFB_Frontend_Editor {
+    const REST_NAMESPACE = 'tfb/v1';
+    const REST_BASE = '/frontend-editor';
+    const LOCK_POLL_INTERVAL = 20;
+
+    public static function init() {
+        add_action( 'rest_api_init', array( __CLASS__, 'register_rest_routes' ) );
+    }
+
+    public static function on_activate() { }
+
+    public static function register_rest_routes() {
+        register_rest_route(
+            self::REST_NAMESPACE,
+            self::REST_BASE . '/chrome',
+            array(
+                array(
+                    'methods' => WP_REST_Server::CREATABLE,
+                    'callback' => array( __CLASS__, 'save_chrome' ),
+                    'permission_callback' => array( __CLASS__, 'can_edit_theme' ),
+                ),
+            )
+        );
+
+        register_rest_route(
+            self::REST_NAMESPACE,
+            self::REST_BASE . '/page-block',
+            array(
+                array(
+                    'methods' => WP_REST_Server::CREATABLE,
+                    'callback' => array( __CLASS__, 'save_page_block' ),
+                    'permission_callback' => array( __CLASS__, 'can_edit_posts' ),
+                ),
+            )
+        );
+
+        register_rest_route(
+            self::REST_NAMESPACE,
+            self::REST_BASE . '/lock',
+            array(
+                array(
+                    'methods' => WP_REST_Server::CREATABLE,
+                    'callback' => array( __CLASS__, 'refresh_post_lock' ),
+                    'permission_callback' => array( __CLASS__, 'can_edit_posts' ),
+                ),
+            )
+        );
+    }
+
+    public static function can_edit_theme() {
+        return current_user_can( 'edit_theme_options' );
+    }
+
+    public static function can_edit_posts() {
+        return current_user_can( 'edit_pages' ) || current_user_can( 'edit_posts' );
+    }
+
+    private static function json_error( $message, $status = 400, $data = array() ) {
+        return new WP_REST_Response(
+            array(
+                'success' => false,
+                'data' => array_merge( array( 'message' => $message ), $data ),
+            ),
+            $status
+        );
+    }
+
+    private static function json_success( $data = array(), $status = 200 ) {
+        return new WP_REST_Response(
+            array(
+                'success' => true,
+                'data' => $data,
+            ),
+            $status
+        );
+    }
+
+    private static function get_payload( WP_REST_Request $request ) {
+        $payload = $request->get_json_params();
+        if ( ! is_array( $payload ) || empty( $payload ) ) {
+            $payload = $request->get_params();
+        }
+        return is_array( $payload ) ? $payload : array();
+    }
+
+    private static function chrome_revision_token( $settings ) {
+        if ( function_exists( 'tf_frontend_editor_global_chrome_revision_token' ) ) {
+            return tf_frontend_editor_global_chrome_revision_token( $settings );
+        }
+
+        return hash( 'sha256', wp_json_encode( $settings ) );
+    }
+
+  private static function post_revision_token( $post ) {
+      if ( function_exists( 'tf_frontend_editor_revision_token_for_post' ) ) {
+          return tf_frontend_editor_revision_token_for_post( $post );
+      }
+
+        if ( ! $post || ! isset( $post->ID ) ) {
+            return '';
+        }
+
+      return hash( 'sha256', $post->ID . '|' . $post->post_modified_gmt . '|' . $post->post_content );
+  }
+
+  private static function is_supported_page_post( $post ) {
+      return $post && 'page' === get_post_type( $post );
+  }
+
+  private static function get_lock_owner_payload( $user_id ) {
+      $user = get_userdata( $user_id );
+        if ( ! $user ) {
+            return array( 'id' => (int) $user_id, 'name' => '' );
+        }
+
+        return array(
+            'id' => (int) $user->ID,
+            'name' => $user->display_name,
+        );
+    }
+
+    public static function save_chrome( WP_REST_Request $request ) {
+        $payload = self::get_payload( $request );
+        $scope = isset( $payload['scope'] ) ? sanitize_key( wp_unslash( $payload['scope'] ) ) : '';
+        $field = isset( $payload['field'] ) ? sanitize_key( wp_unslash( $payload['field'] ) ) : '';
+        $value = isset( $payload['value'] ) ? wp_unslash( $payload['value'] ) : '';
+        $revision_token = isset( $payload['revisionToken'] ) ? sanitize_text_field( wp_unslash( $payload['revisionToken'] ) ) : '';
+        $allowed_fields = function_exists( 'tf_frontend_editor_allowed_chrome_fields' )
+            ? tf_frontend_editor_allowed_chrome_fields()
+            : array();
+
+        if ( ! isset( $allowed_fields[ $scope ] ) || ! in_array( $field, $allowed_fields[ $scope ], true ) ) {
+            return self::json_error( 'Unsupported chrome field.', 400 );
+        }
+
+        $settings = get_option( 'whipify_quick_editor_settings', array() );
+        if ( ! is_array( $settings ) ) {
+            $settings = array();
+        }
+
+        $current_revision_token = self::chrome_revision_token( $settings );
+        if ( $revision_token && ! hash_equals( $current_revision_token, $revision_token ) ) {
+            return self::json_error(
+                'Global chrome revision token mismatch.',
+                409,
+                array( 'revisionToken' => $current_revision_token )
+            );
+        }
+
+        $settings[ $field ] = function_exists( 'tf_quick_editor_sanitize_value' )
+            ? tf_quick_editor_sanitize_value( $field, $value )
+            : sanitize_text_field( $value );
+        update_option( 'whipify_quick_editor_settings', $settings );
+
+        return self::json_success(
+            array(
+                'scope' => $scope,
+                'field' => $field,
+                'revisionToken' => self::chrome_revision_token( $settings ),
+            )
+        );
+    }
+
+    public static function save_page_block( WP_REST_Request $request ) {
+        if ( ! function_exists( 'tf_frontend_editor_page_block_target_from_payload' ) ) {
+            return self::json_error( 'Theme page-block adapter is unavailable.', 500 );
+        }
+
+        $payload = self::get_payload( $request );
+        $value = isset( $payload['value'] ) ? wp_unslash( $payload['value'] ) : '';
+        $target = tf_frontend_editor_page_block_target_from_payload( $payload );
+        $post_id = isset( $target['identity']['postId'] ) ? absint( $target['identity']['postId'] ) : 0;
+        $post = get_post( $post_id );
+
+      if ( ! $post ) {
+          return self::json_error( 'Post not found.', 404 );
+      }
+
+      if ( ! self::is_supported_page_post( $post ) ) {
+          return self::json_error( 'Only pages support frontend page-block editing.', 400 );
+      }
+
+      if ( ! current_user_can( 'edit_post', $post_id ) ) {
+          return self::json_error( 'Permission denied.', 403 );
+      }
+
+        $lock_owner = wp_check_post_lock( $post_id );
+        if ( $lock_owner && (int) $lock_owner !== get_current_user_id() ) {
+            return self::json_error(
+                'Page is locked by another editor.',
+                409,
+                array( 'lockOwner' => self::get_lock_owner_payload( $lock_owner ) )
+            );
+        }
+
+        wp_set_post_lock( $post_id );
+
+        $current_revision_token = self::post_revision_token( $post );
+        $target_revision_token = isset( $target['revisionToken'] ) ? (string) $target['revisionToken'] : '';
+        if ( ! $target_revision_token || ! hash_equals( $current_revision_token, $target_revision_token ) ) {
+            return self::json_error(
+                'Page block revision token mismatch.',
+                409,
+                array( 'revisionToken' => $current_revision_token )
+            );
+        }
+
+        $blocks = parse_blocks( $post->post_content );
+        $resolved_target = function_exists( 'tf_frontend_editor_resolve_page_block_target' )
+            ? tf_frontend_editor_resolve_page_block_target( $blocks, $target )
+            : null;
+        if ( null === $resolved_target ) {
+            return self::json_error(
+                'Unsupported block path or field.',
+                409,
+                array( 'revisionToken' => $current_revision_token )
+            );
+        }
+
+        $current_source_hash = isset( $resolved_target['sourceHash'] ) ? (string) $resolved_target['sourceHash'] : '';
+        $target_source_hash = isset( $target['sourceHash'] ) ? (string) $target['sourceHash'] : '';
+        if ( $target_source_hash && ( ! $current_source_hash || ! hash_equals( $current_source_hash, $target_source_hash ) ) ) {
+            return self::json_error(
+                'Page block source hash mismatch.',
+                409,
+                array(
+                    'revisionToken' => $current_revision_token,
+                    'sourceHash' => $current_source_hash,
+                )
+            );
+        }
+
+        $adapter_result = function_exists( 'tf_frontend_editor_apply_page_block_adapter_update' )
+            ? tf_frontend_editor_apply_page_block_adapter_update( $post, $blocks, $resolved_target, $value )
+            : null;
+        if ( null === $adapter_result ) {
+            return self::json_error(
+                'Unsupported block path or field.',
+                409,
+                array( 'revisionToken' => $current_revision_token )
+            );
+        }
+
+        if ( is_wp_error( $adapter_result ) ) {
+            return self::json_error( $adapter_result->get_error_message(), 500 );
+        }
+
+        $fresh_post = get_post( $post_id );
+        $result = function_exists( 'tf_frontend_editor_page_block_adapter_result' )
+            ? tf_frontend_editor_page_block_adapter_result( $fresh_post, $adapter_result )
+            : array(
+                'postId' => $post_id,
+                'revisionToken' => self::post_revision_token( $fresh_post ),
+                'postContent' => $fresh_post ? $fresh_post->post_content : '',
+            );
+
+        return self::json_success( $result );
+    }
+
+  public static function refresh_post_lock( WP_REST_Request $request ) {
+      $payload = self::get_payload( $request );
+      $post_id = isset( $payload['postId'] ) ? absint( $payload['postId'] ) : 0;
+      if ( ! $post_id ) {
+          return self::json_error( 'Post not found.', 404 );
+      }
+
+      $post = get_post( $post_id );
+      if ( ! $post ) {
+          return self::json_error( 'Post not found.', 404 );
+      }
+
+      if ( ! self::is_supported_page_post( $post ) ) {
+          return self::json_error( 'Only pages support frontend page-block editing.', 400 );
+      }
+
+      if ( ! current_user_can( 'edit_post', $post_id ) ) {
+          return self::json_error( 'Permission denied.', 403 );
+      }
+
+        $lock_owner = wp_check_post_lock( $post_id );
+        if ( $lock_owner && (int) $lock_owner !== get_current_user_id() ) {
+            return self::json_error(
+                'Page is locked by another editor.',
+                409,
+                array( 'lockOwner' => self::get_lock_owner_payload( $lock_owner ) )
+            );
+        }
+
+        wp_set_post_lock( $post_id );
+
+        return self::json_success(
+            array(
+                'postId' => $post_id,
+                'locked' => true,
+                'refreshInterval' => self::LOCK_POLL_INTERVAL,
+            )
+        );
+    }
+}
+
+function tfb_frontend_editor_rest_base_url() {
+    return rest_url( TFB_Frontend_Editor::REST_NAMESPACE . TFB_Frontend_Editor::REST_BASE );
+}
+
+function tfb_frontend_editor_lock_url() {
+    return rest_url( TFB_Frontend_Editor::REST_NAMESPACE . TFB_Frontend_Editor::REST_BASE . '/lock' );
+}
+
+function tfb_frontend_editor_lock_interval() {
+    return TFB_Frontend_Editor::LOCK_POLL_INTERVAL;
+}
+
+endif;
+
+TFB_Frontend_Editor::init();`,
+
   'build/blocks.asset.php': `<?php
 return array(
     'dependencies' => array(
@@ -1159,6 +1856,7 @@ if (!wp || !wp.blocks || !wp.element || !wp.blockEditor) {
 }
 
 var registerBlockType = wp.blocks.registerBlockType;
+var registerBlockBindingsSource = wp.blocks.registerBlockBindingsSource;
 var el = wp.element.createElement;
 var Fragment = wp.element.Fragment;
 var useBlockProps = wp.blockEditor.useBlockProps;
@@ -1171,6 +1869,7 @@ var SelectControl = wp.components.SelectControl;
 var Button = wp.components.Button;
 var MediaUpload = wp.blockEditor.MediaUpload;
 var __ = wp.i18n.__;
+var CONTENT_ONLY_TEMPLATE_LOCK = 'contentOnly';
 
 var CONTAINER_TAG_OPTIONS = [
     { label: 'div', value: 'div' },
@@ -1366,6 +2065,181 @@ function migrateLegacyLinkGroupAttributes(attributes) {
     };
 }
 
+function getSiteContentBindingsConfig() {
+    var blockBindings = window.tfbData && window.tfbData.blockBindings;
+    if (!blockBindings || typeof blockBindings !== 'object' || Array.isArray(blockBindings)) {
+        return {};
+    }
+    return blockBindings;
+}
+
+function getSiteContentBindingsFields() {
+    var config = getSiteContentBindingsConfig();
+    return Array.isArray(config.fields) ? config.fields : [];
+}
+
+function getSiteContentBindingsValues() {
+    var config = getSiteContentBindingsConfig();
+    if (!config.values || typeof config.values !== 'object' || Array.isArray(config.values)) {
+        config.values = {};
+    }
+    return config.values;
+}
+
+function getSiteContentBindingsSourceName() {
+    var config = getSiteContentBindingsConfig();
+    return typeof config.sourceName === 'string' && config.sourceName
+        ? config.sourceName
+        : 'theme-factory/site-content';
+}
+
+function getSiteContentBindingsRevisionToken() {
+    var config = getSiteContentBindingsConfig();
+    return typeof config.revisionToken === 'string' ? config.revisionToken : '';
+}
+
+function setSiteContentBindingsRevisionToken(token) {
+    var config = getSiteContentBindingsConfig();
+    config.revisionToken = typeof token === 'string' ? token : '';
+}
+
+function getSiteContentBindingsField(key) {
+    return getSiteContentBindingsFields().find(function(field) {
+        return field && field.key === key;
+    }) || null;
+}
+
+function getSiteContentBindingsFieldKey(source) {
+    if (!source || typeof source !== 'object') return '';
+    var args = source.args && typeof source.args === 'object' ? source.args : {};
+    return typeof args.key === 'string' ? args.key : '';
+}
+
+function getSiteContentBindingsValue(key) {
+    var values = getSiteContentBindingsValues();
+    return typeof values[key] === 'string' ? values[key] : '';
+}
+
+function setSiteContentBindingsValue(key, value) {
+    var values = getSiteContentBindingsValues();
+    values[key] = value;
+}
+
+function readSiteContentBindingsPayload(response) {
+    return response.json().catch(function() {
+        return {
+            success: false,
+            data: {
+                message: 'Block bindings request failed.'
+            }
+        };
+    });
+}
+
+function saveSiteContentBindingValue(field, value) {
+    var config = getSiteContentBindingsConfig();
+    if (!config.updateUrl) {
+        return Promise.resolve({
+            success: false,
+            data: {
+                message: 'Block bindings update URL is unavailable.'
+            }
+        });
+    }
+
+    return fetch(config.updateUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-WP-Nonce': config.restNonce || ''
+        },
+        body: JSON.stringify({
+            scope: field.scope,
+            field: field.key,
+            value: value,
+            revisionToken: getSiteContentBindingsRevisionToken()
+        })
+    }).then(function(response) {
+        return readSiteContentBindingsPayload(response).then(function(payload) {
+            return {
+                response: response,
+                payload: payload
+            };
+        });
+    }).then(function(result) {
+        if (result.response.ok && result.payload && result.payload.success) {
+            if (result.payload.data && typeof result.payload.data.revisionToken === 'string') {
+                setSiteContentBindingsRevisionToken(result.payload.data.revisionToken);
+            }
+            return result.payload;
+        }
+
+        console.warn('Theme Factory Blocks: binding save failed', result.payload && result.payload.data ? result.payload.data.message : '');
+        return result.payload;
+    }).catch(function(error) {
+        console.warn('Theme Factory Blocks: binding save failed', error);
+        return {
+            success: false,
+            data: {
+                message: 'Block bindings save failed.'
+            }
+        };
+    });
+}
+
+function registerSiteContentBindingsSource() {
+    if (typeof registerBlockBindingsSource !== 'function') {
+        return;
+    }
+
+    registerBlockBindingsSource({
+        name: getSiteContentBindingsSourceName(),
+        getFieldsList: function() {
+            return getSiteContentBindingsFields().map(function(field) {
+                return {
+                    label: field.label,
+                    type: field.type || 'string',
+                    args: field.args || { key: field.key }
+                };
+            });
+        },
+        getValues: function(args) {
+            var bindings = args && args.bindings && typeof args.bindings === 'object' ? args.bindings : {};
+            var values = {};
+
+            Object.keys(bindings).forEach(function(attributeName) {
+                var key = getSiteContentBindingsFieldKey(bindings[attributeName]);
+                var field = getSiteContentBindingsField(key);
+                if (!field) return;
+                values[attributeName] = getSiteContentBindingsValue(field.key);
+            });
+
+            return values;
+        },
+        setValues: function(args) {
+            var bindings = args && args.bindings && typeof args.bindings === 'object' ? args.bindings : {};
+
+            Object.keys(bindings).forEach(function(attributeName) {
+                var source = bindings[attributeName];
+                var key = getSiteContentBindingsFieldKey(source);
+                var field = getSiteContentBindingsField(key);
+                if (!field || !source || !Object.prototype.hasOwnProperty.call(source, 'newValue')) {
+                    return;
+                }
+
+                var nextValue = source.newValue == null ? '' : String(source.newValue);
+                setSiteContentBindingsValue(field.key, nextValue);
+                void saveSiteContentBindingValue(field, nextValue);
+            });
+        },
+        canUserEditValue: function(args) {
+            var field = getSiteContentBindingsField(args && args.args ? args.args.key : '');
+            var config = getSiteContentBindingsConfig();
+            return Boolean(field && config.updateUrl && config.restNonce);
+        }
+    });
+}
+
 function legacyPageShellSave(props) {
     var blockProps = useBlockProps.save({ className: getEditorClassName(props.attributes.className) });
     return el('div', blockProps, el(InnerBlocks.Content));
@@ -1471,7 +2345,10 @@ function renderContainerEditor(props, extraClassName) {
                 )
             )
         ),
-        el(Tag, blockProps, el(InnerBlocks, { renderAppender: InnerBlocks.ButtonBlockAppender }))
+        el(Tag, blockProps, el(InnerBlocks, {
+            templateLock: CONTENT_ONLY_TEMPLATE_LOCK,
+            renderAppender: InnerBlocks.ButtonBlockAppender
+        }))
     );
 }
 
@@ -1486,6 +2363,7 @@ registerBlockType('theme-factory/page-shell', {
     supports: {
         align: ['full', 'wide'],
         html: false,
+        lock: false,
         color: { background: true, text: true, gradients: true },
         spacing: { margin: true, padding: true, blockGap: true },
         typography: { fontSize: true, lineHeight: true },
@@ -1494,7 +2372,10 @@ registerBlockType('theme-factory/page-shell', {
     },
     edit: function(props) {
         var blockProps = useBlockProps({ className: ['tf-page-shell-editor', getEditorClassName(props.attributes.className)].filter(Boolean).join(' ').trim() });
-        return el('div', blockProps, el(InnerBlocks, { renderAppender: InnerBlocks.ButtonBlockAppender }));
+        return el('div', blockProps, el(InnerBlocks, {
+            templateLock: CONTENT_ONLY_TEMPLATE_LOCK,
+            renderAppender: InnerBlocks.ButtonBlockAppender
+        }));
     },
     save: function() { return el(InnerBlocks.Content); },
     deprecated: [
@@ -1521,6 +2402,7 @@ registerBlockType('theme-factory/container', {
     supports: {
         align: ['full', 'wide'],
         html: false,
+        lock: false,
         color: { background: true, text: true, gradients: true },
         spacing: { margin: true, padding: true, blockGap: true },
         typography: { fontSize: true, lineHeight: true },
@@ -1557,6 +2439,7 @@ registerBlockType('theme-factory/buttons', {
     },
     supports: {
         html: false,
+        lock: false,
         spacing: { margin: true, padding: true, blockGap: true }
     },
     edit: function(props) {
@@ -1564,6 +2447,7 @@ registerBlockType('theme-factory/buttons', {
         return el('div', blockProps, el(InnerBlocks, {
             allowedBlocks: ['core/button', 'theme-factory/button'],
             orientation: 'horizontal',
+            templateLock: CONTENT_ONLY_TEMPLATE_LOCK,
             renderAppender: InnerBlocks.ButtonBlockAppender
         }));
     },
@@ -1709,9 +2593,10 @@ registerBlockType('theme-factory/button', {
     category: 'theme-factory',
     icon: 'button',
     attributes: {
-        text: { type: 'string', default: '' },
+        text: { type: 'string', default: '', role: 'content' },
         href: { type: 'string', default: '#' },
         className: { type: 'string', default: '' },
+        customStyle: { type: 'object', default: {} },
         target: { type: 'string', default: '' },
         rel: { type: 'string', default: '' },
         ariaLabel: { type: 'string', default: '' },
@@ -1732,9 +2617,14 @@ registerBlockType('theme-factory/button', {
         var previewClass = ['tf-button-preview', getEditorClassName(attributes.className)].filter(Boolean).join(' ').trim();
         var isDotButton = /\brounded-full\b/.test(previewClass) && /\b(?:w|h)-(?:2|2\\.5|3|3\\.5)\b/.test(previewClass);
         var previewTag = attributes.tagName === 'button' || !attributes.href ? 'button' : 'a';
+        var previewStyle = attributes.customStyle;
+        if (!previewStyle || typeof previewStyle !== 'object' || Array.isArray(previewStyle)) {
+            previewStyle = parseLegacyStyle(attributes.style);
+        }
         var previewProps = {
             className: previewClass,
             'aria-label': attributes.ariaLabel || undefined,
+            style: previewStyle,
             onClick: function(event) { event.preventDefault(); }
         };
         if (previewTag === 'a') {
@@ -1927,6 +2817,8 @@ registerBlockType('theme-factory/textarea', {
     save: function() { return null; }
 });
 
+registerSiteContentBindingsSource();
+
 console.log('Theme Factory Blocks: All blocks registered successfully');
 
 })(window.wp);`,
@@ -2086,6 +2978,7 @@ console.log('Theme Factory Blocks: All blocks registered successfully');
     "supports": { 
       "align": ["full", "wide"], 
       "html": false,
+      "lock": false,
       "color": { "text": true, "background": true, "link": true, "gradients": true },
       "spacing": { "margin": true, "padding": true, "blockGap": true },
       "typography": { "fontSize": true, "lineHeight": true, "fontWeight": true, "fontStyle": true, "letterSpacing": true, "textDecoration": true, "textTransform": true },
@@ -2114,6 +3007,7 @@ console.log('Theme Factory Blocks: All blocks registered successfully');
     "supports": { 
       "align": ["full", "wide"], 
       "html": false,
+      "lock": false,
       "color": { "text": true, "background": true, "link": true, "gradients": true },
       "spacing": { "margin": true, "padding": true, "blockGap": true },
       "typography": { "fontSize": true, "lineHeight": true, "fontWeight": true, "fontStyle": true, "letterSpacing": true, "textDecoration": true, "textTransform": true },
@@ -2136,6 +3030,7 @@ console.log('Theme Factory Blocks: All blocks registered successfully');
     },
     "supports": {
       "html": false,
+      "lock": false,
       "spacing": { "margin": true, "padding": true, "blockGap": true }
     },
     "textdomain": "theme-factory-blocks"
@@ -2215,14 +3110,15 @@ console.log('Theme Factory Blocks: All blocks registered successfully');
     "category": "theme-factory",
     "icon": "button",
     "description": "Custom styled button/link",
-    "attributes": {
-      "text": { "type": "string", "default": "" },
-      "href": { "type": "string", "default": "#" },
-      "className": { "type": "string", "default": "" },
-      "target": { "type": "string" },
-      "rel": { "type": "string" },
-      "ariaLabel": { "type": "string", "default": "" },
-      "tagName": { "type": "string", "default": "a" },
+  "attributes": {
+    "text": { "type": "string", "default": "", "role": "content" },
+    "href": { "type": "string", "default": "#" },
+    "className": { "type": "string", "default": "" },
+    "customStyle": { "type": "object", "default": {} },
+    "target": { "type": "string" },
+    "rel": { "type": "string" },
+    "ariaLabel": { "type": "string", "default": "" },
+    "tagName": { "type": "string", "default": "a" },
       "buttonType": { "type": "string", "default": "button" }
     },
     "supports": { 

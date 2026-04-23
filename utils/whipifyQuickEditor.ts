@@ -1,4 +1,4 @@
-type QuickEditorPart = 'header' | 'footer' | 'social';
+export type QuickEditorPart = 'header' | 'footer' | 'social';
 
 export const WHIPIFY_QUICK_EDITOR_SETTINGS_OPTION = 'whipify_quick_editor_settings';
 
@@ -88,6 +88,37 @@ const readString = (source: Record<string, unknown>, keys: string[]): string => 
 const getFieldDefinition = (part: QuickEditorPart, key: keyof WhipifyQuickEditorDefaults): QuickEditorFieldDefinition | undefined =>
   QUICK_EDITOR_FIELD_DEFINITIONS[part].find((definition) => definition.key === key);
 
+const getSchemaKeysForPart = (part: QuickEditorPart): string[] =>
+  QUICK_EDITOR_FIELD_DEFINITIONS[part].map((definition) => String(definition.key));
+
+const uniqueSlotKeys = (values: string[] = []): string[] => Array.from(new Set(values.filter(Boolean)));
+
+const resolveSlotSupportForPart = (
+  part: QuickEditorPart,
+  slotSupport: WhipifyQuickEditorSlotSupport,
+): string[] => uniqueSlotKeys([
+  ...getSchemaKeysForPart(part),
+  ...(slotSupport[part] || []),
+]);
+
+export const buildWhipifyQuickEditorSchemaSlotSupport = (): WhipifyQuickEditorSlotSupport => ({
+  header: getSchemaKeysForPart('header'),
+  footer: getSchemaKeysForPart('footer'),
+  social: getSchemaKeysForPart('social'),
+});
+
+export const findWhipifyQuickEditorPartForField = (
+  key: WhipifyQuickEditorDefaults[keyof WhipifyQuickEditorDefaults] extends never ? never : keyof WhipifyQuickEditorDefaults,
+): QuickEditorPart => {
+  for (const part of Object.keys(QUICK_EDITOR_FIELD_DEFINITIONS) as QuickEditorPart[]) {
+    if (QUICK_EDITOR_FIELD_DEFINITIONS[part].some((definition) => definition.key === key)) {
+      return part;
+    }
+  }
+
+  return 'header';
+};
+
 const buildPhpTextEcho = (part: QuickEditorPart, key: keyof WhipifyQuickEditorDefaults, fallback: string): string =>
   `<?php echo tf_frontend_editor_render_chrome_text( '${part}', '${String(key)}', '${escapePhpSingleQuoted(fallback)}' ); ?>`;
 
@@ -169,7 +200,7 @@ const renderPhpArray = (entries: Array<[string, string]>): string =>
     : '        ';
 
 const renderPhpGroup = (part: QuickEditorPart, slotSupport: WhipifyQuickEditorSlotSupport): string => {
-  const fields = slotSupport[part];
+  const fields = resolveSlotSupportForPart(part, slotSupport);
   if (!fields.length) return `        '${part}' => array(),`;
   const labels = fields
     .map((field) => getFieldDefinition(part, field as keyof WhipifyQuickEditorDefaults))
@@ -325,6 +356,20 @@ if ( ! function_exists( 'tf_quick_editor_get' ) ) {
     }
 }
 
+if ( ! function_exists( 'tf_quick_editor_url_fields' ) ) {
+    function tf_quick_editor_url_fields() {
+        return array( ${urlFieldArray} );
+    }
+}
+
+if ( ! function_exists( 'tf_quick_editor_sanitize_value' ) ) {
+    function tf_quick_editor_sanitize_value( $key, $value ) {
+        return in_array( $key, tf_quick_editor_url_fields(), true )
+            ? esc_url_raw( $value )
+            : sanitize_text_field( $value );
+    }
+}
+
 if ( ! function_exists( 'tf_quick_editor_field_groups' ) ) {
     function tf_quick_editor_field_groups() {
 ${renderPhpFieldGroups(slotSupport)}
@@ -399,9 +444,7 @@ if ( ! function_exists( 'tf_quick_editor_handle_save' ) ) {
         foreach ( tf_quick_editor_field_groups() as $tf_quick_editor_group => $tf_quick_editor_fields ) {
             foreach ( $tf_quick_editor_fields as $tf_quick_editor_key => $tf_quick_editor_label ) {
                 $tf_quick_editor_value = isset( $tf_quick_editor_raw[ $tf_quick_editor_key ] ) ? $tf_quick_editor_raw[ $tf_quick_editor_key ] : '';
-                $tf_quick_editor_settings[ $tf_quick_editor_key ] = in_array( $tf_quick_editor_key, array( ${urlFieldArray} ), true )
-                    ? esc_url_raw( $tf_quick_editor_value )
-                    : sanitize_text_field( $tf_quick_editor_value );
+                $tf_quick_editor_settings[ $tf_quick_editor_key ] = tf_quick_editor_sanitize_value( $tf_quick_editor_key, $tf_quick_editor_value );
             }
         }
 

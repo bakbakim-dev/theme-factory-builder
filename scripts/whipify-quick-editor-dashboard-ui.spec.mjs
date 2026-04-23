@@ -94,21 +94,28 @@ test('wordpress export includes Whipify Quick Editor helpers and bound chrome pa
     || fileNames.find((name) => /\/partials\/header-[^/]+\.php$/.test(name));
   const footerPartialPath = fileNames.find((name) => name === `${root}/partials/footer-global.php`)
     || fileNames.find((name) => /\/partials\/footer-[^/]+\.php$/.test(name));
+  const footerPhpPath = `${root}/footer.php`;
 
   expect(fileNames).toContain(functionsPhpPath);
   expect(headerPartialPath).toBeTruthy();
   expect(footerPartialPath).toBeTruthy();
+  expect(fileNames).toContain(footerPhpPath);
 
   const functionsPhp = await zip.file(functionsPhpPath).async('string');
   const headerPartial = await zip.file(headerPartialPath).async('string');
   const footerPartial = await zip.file(footerPartialPath).async('string');
+  const footerPhp = await zip.file(footerPhpPath).async('string');
 
   expect(functionsPhp).toContain('Whipify Quick Editor');
   expect(functionsPhp).toContain('whipify_quick_editor_settings');
   expect(functionsPhp).toContain("add_theme_page( 'Whipify Quick Editor'");
   expect(functionsPhp).toContain('admin_post_tf_quick_editor_save');
+  expect(functionsPhp).toContain('Primary CTA Text');
+  expect(functionsPhp).toContain('Business Name');
+  expect(functionsPhp).toContain('Facebook');
 
-  expect(headerPartial).toContain("tf_quick_editor_get( 'primary_cta_text'");
-  expect(headerPartial).toContain("tf_quick_editor_get( 'phone'");
-  expect(footerPartial).toContain("tf_quick_editor_get( 'business_name'");
+  expect(headerPartial).toContain("tf_frontend_editor_render_chrome_text( 'header', 'phone'");
+  expect(footerPartial).toContain("tf_frontend_editor_render_chrome_text( 'footer', 'business_name'");
+  expect(footerPhp).toContain("tf_frontend_editor_render_chrome_text( 'footer', 'business_name'");
+  expect(footerPhp).toContain("tf_frontend_editor_render_chrome_link_attributes( 'social', 'facebook'");
 });

@@ -14,7 +14,24 @@ import { createDefaultUrlCaptureSettings } from '../utils/url-capture-common';
 import type { UrlCaptureCertificationResult, UrlCaptureCertificationStatus, UrlCaptureReport, UrlCaptureSettings } from '../utils/url-capture-types';
 import { bindWhipifyQuickEditorChrome, buildWhipifyQuickEditorDefaults, buildWhipifyQuickEditorPhp, extractTelCtaCandidate, mergeWhipifyQuickEditorSlotSupport } from '../utils/whipifyQuickEditor';
 import { buildWhipifyFrontendEditorArtifacts, buildWhipifyFrontendEditorSupportMap } from '../utils/whipifyFrontendEditor';
+import {
+  buildStickyMobileCtaPhp,
+  buildWhipifySiteContentPhpEditableLinkAttributes,
+  buildWhipifySiteContentPhpTelHref,
+  buildWhipifySiteContentPhpTextEcho,
+} from '../utils/whipifySiteContentBindings';
 import { buildWordPressChromeContextPlan, buildWordPressChromeSelectorPhp, buildWordPressTemplateChromeBootstrap, localizeWordPressChromePaths } from '../utils/wordpress-chrome-context';
+import {
+    appendWordPressContentRegistryChrome,
+    appendWordPressContentRegistryEditor,
+    appendWordPressContentRegistryForm,
+    appendWordPressContentRegistryReport,
+    appendWordPressContentRegistryRoute,
+    buildWhipifyFrontendEditorSupportMapFromWordPressContentRegistry,
+    createEmptyWordPressContentRegistry,
+    deriveWhipifyQuickEditorSlotSupportFromWordPressContentRegistry,
+    finalizeWordPressContentRegistry,
+} from '../utils/wordpress-content-registry';
 
 interface DashboardProps { onConversionComplete: (record: ConversionRecord, zipBlob: Blob) => void; }
 type ConversionMode = 'gutenberg-native' | 'react-spa' | 'static-site';
@@ -1456,6 +1473,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
 
         const stats: ConversionStats = { php: 0, js: 0, css: 0, images: 0, routes: routesToProcess.length, patterns: 0 };
         const generatedFormsManifest: GeneratedFormManifestEntry[] = [];
+        const wordpressContentRegistry = mode === 'gutenberg-native'
+            ? createEmptyWordPressContentRegistry()
+            : null;
         let mainHtml = "";
         const foundCssFiles: string[] = [];
         const cssFiles: string[] = []; const jsFiles: string[] = []; const assetFiles: string[] = []; const otherFiles: string[] = [];
@@ -1858,6 +1878,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                 if (mode === 'gutenberg-native') {
                     const boundHeader = bindWhipifyQuickEditorChrome('header', processedHeaderVariant, quickEditorDefaults);
                     quickEditorSlotSupport = mergeWhipifyQuickEditorSlotSupport(quickEditorSlotSupport, boundHeader.slotSupport);
+                    if (wordpressContentRegistry) {
+                        appendWordPressContentRegistryChrome(wordpressContentRegistry, {
+                            context,
+                            sourceRoutePath: chromeContextPlan.representativeRouteByContext[context]?.path,
+                            headerFile: `partials/header-${context}.php`,
+                            support: boundHeader.slotSupport,
+                        });
+                    }
                     folder.file(`partials/header-${context}.php`, boundHeader.html);
                 } else {
                     folder.file(`partials/header-${context}.php`, processedHeaderVariant);
@@ -1871,6 +1899,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                 if (mode === 'gutenberg-native') {
                     const boundFooter = bindWhipifyQuickEditorChrome('footer', processedFooterVariant, quickEditorDefaults);
                     quickEditorSlotSupport = mergeWhipifyQuickEditorSlotSupport(quickEditorSlotSupport, boundFooter.slotSupport);
+                    if (wordpressContentRegistry) {
+                        appendWordPressContentRegistryChrome(wordpressContentRegistry, {
+                            context,
+                            sourceRoutePath: chromeContextPlan.representativeRouteByContext[context]?.path,
+                            footerFile: `partials/footer-${context}.php`,
+                            support: boundFooter.slotSupport,
+                        });
+                    }
                     folder.file(`partials/footer-${context}.php`, boundFooter.html);
                 } else {
                     folder.file(`partials/footer-${context}.php`, processedFooterVariant);
@@ -2036,11 +2072,24 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         }
         addLog(`  Rewrote internal links in header.php and footer.php (${routes.length - 1} routes)`, 'success');
 
-        const stickyMobileCTA = `\n<!-- Sticky Mobile CTA -->
-<div class="fixed bottom-0 left-0 w-full z-[9999] md:hidden shadow-[0_-4px_10px_rgba(0,0,0,0.1)] flex" style="background-color: ${seoSettings.ctaColor};">
-    <a href="${seoSettings.ctaLink1}" class="flex-1 text-center py-4 font-bold text-lg hover:opacity-80 transition-opacity border-r" style="color: ${seoSettings.ctaTextColor}; border-color: color-mix(in srgb, ${seoSettings.ctaTextColor} 20%, transparent);">${seoSettings.ctaText1}</a>
-    <a href="${seoSettings.ctaLink2}" class="flex-1 text-center py-4 font-bold text-lg hover:opacity-80 transition-opacity" style="color: ${seoSettings.ctaTextColor};">${seoSettings.ctaText2}</a>
-</div>\n`;
+        const stickyMobileCTA = buildStickyMobileCtaPhp({
+            ctaColor: seoSettings.ctaColor,
+            ctaTextColor: seoSettings.ctaTextColor,
+            primaryText: seoSettings.ctaText1,
+            primaryUrl: seoSettings.ctaLink1,
+            secondaryText: seoSettings.ctaText2,
+            secondaryUrl: seoSettings.ctaLink2,
+        });
+        const boundBusinessName = buildWhipifySiteContentPhpTextEcho('business_name', seoSettings.companyName);
+        const boundPhoneText = buildWhipifySiteContentPhpTextEcho('phone', seoSettings.telephone);
+        const boundPhoneHref = buildWhipifySiteContentPhpTelHref('phone', seoSettings.telephone);
+        const boundAddressLine1 = buildWhipifySiteContentPhpTextEcho('address_line_1', `${seoSettings.addressLocality}, ${seoSettings.addressRegion}`);
+        const boundAddressLine2 = buildWhipifySiteContentPhpTextEcho('address_line_2', seoSettings.addressCountry);
+        const boundContactLine = buildWhipifySiteContentPhpTextEcho('contact_line', `Website: ${seoSettings.url}`);
+       const boundFacebookLinkAttrs = buildWhipifySiteContentPhpEditableLinkAttributes('facebook', seoSettings.socialFacebook);
+       const boundInstagramLinkAttrs = buildWhipifySiteContentPhpEditableLinkAttributes('instagram', seoSettings.socialInstagram);
+       const boundLinkedInLinkAttrs = buildWhipifySiteContentPhpEditableLinkAttributes('linkedin', seoSettings.socialLinkedIn);
+       const boundXLinkAttrs = buildWhipifySiteContentPhpEditableLinkAttributes('x', seoSettings.socialTwitter);
 
         // VISIBLE ENTITY FACTS: Render highly semantic business info matching LocalBusiness schema directly into the visible footer
         const visibleEntityFacts = `
@@ -2049,18 +2098,25 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     <div style="max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 2rem;">
         <div style="display: flex; flex-wrap: wrap; gap: 2rem; width: 100%;">
             <div style="flex: 1 1 300px;">
-                <h3 style="font-size: 1.125rem; font-weight: 700; color: #0f172a; margin-bottom: 1rem;">About ${seoSettings.companyName}</h3>
-                <p style="margin-bottom: 1rem; font-size: 0.875rem; color: #475569;">${seoSettings.companyName} is a verified local business located in ${seoSettings.addressLocality}, ${seoSettings.addressRegion}. ${seoSettings.description}</p>
+                <h3 style="font-size: 1.125rem; font-weight: 700; color: #0f172a; margin-bottom: 1rem;">About ${boundBusinessName}</h3>
+                <p style="margin-bottom: 1rem; font-size: 0.875rem; color: #475569;">${boundBusinessName} is a verified local business located in ${seoSettings.addressLocality}, ${seoSettings.addressRegion}. ${seoSettings.description}</p>
                 <p style="font-size: 0.875rem; color: #475569;"><strong>Pricing:</strong> ${seoSettings.priceRange}</p>
             </div>
             <div style="flex: 1 1 300px;">
                 <h3 style="font-size: 1.125rem; font-weight: 700; color: #0f172a; margin-bottom: 1rem;">Contact &amp; Location</h3>
                 <address style="font-style: normal; line-height: 1.6; font-size: 0.875rem; color: #475569;">
-                    <strong>${seoSettings.companyName}</strong><br>
-                    ${seoSettings.addressLocality}, ${seoSettings.addressRegion}, ${seoSettings.addressCountry}<br>
-                    Phone: <a href="tel:${seoSettings.telephone}" style="color: #2563eb; text-decoration: underline;">${seoSettings.telephone}</a><br>
-                    Website: <a href="${seoSettings.url}" style="color: #2563eb; text-decoration: underline;">${seoSettings.url}</a>
+                    <strong>${boundBusinessName}</strong><br>
+                    ${boundAddressLine1}<br>
+                    ${boundAddressLine2}<br>
+                    Phone: <a href="${boundPhoneHref}" style="color: #2563eb; text-decoration: underline;">${boundPhoneText}</a><br>
+                    ${boundContactLine}
                 </address>
+                <p style="margin-top: 1rem; font-size: 0.875rem; color: #475569; display: flex; flex-wrap: wrap; gap: 0.75rem 1rem;">
+                    <a ${boundFacebookLinkAttrs} style="color: #2563eb; text-decoration: underline;">Facebook</a>
+                    <a ${boundInstagramLinkAttrs} style="color: #2563eb; text-decoration: underline;">Instagram</a>
+                    <a ${boundLinkedInLinkAttrs} style="color: #2563eb; text-decoration: underline;">LinkedIn</a>
+                    <a ${boundXLinkAttrs} style="color: #2563eb; text-decoration: underline;">X</a>
+                </p>
             </div>
             ${(seoSettings.reviewRating && seoSettings.reviewCount && parseFloat(seoSettings.reviewRating) > 0) ? `
             <div style="flex: 1 1 300px;">
@@ -4801,20 +4857,36 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
 ?>
 ` : '';
 
+        const registryCompatibilitySource = mode === 'gutenberg-native' && wordpressContentRegistry
+            ? finalizeWordPressContentRegistry(wordpressContentRegistry)
+            : null;
+        const registryDerivedQuickEditorSlotSupport = registryCompatibilitySource
+            ? deriveWhipifyQuickEditorSlotSupportFromWordPressContentRegistry(registryCompatibilitySource)
+            : quickEditorSlotSupport;
+        const frontendEditorSupportMap = registryCompatibilitySource
+            ? buildWhipifyFrontendEditorSupportMapFromWordPressContentRegistry(registryCompatibilitySource)
+            : buildWhipifyFrontendEditorSupportMap({
+                hasHeaderSlots: quickEditorSlotSupport.header,
+                hasFooterSlots: quickEditorSlotSupport.footer,
+                hasSocialSlots: quickEditorSlotSupport.social,
+            });
         const quickEditorPhp = mode === 'gutenberg-native'
-            ? buildWhipifyQuickEditorPhp(quickEditorDefaults, quickEditorSlotSupport).replace(/^<\?php\s*/, '').replace(/\?>\s*$/, '')
+            ? buildWhipifyQuickEditorPhp(quickEditorDefaults, registryDerivedQuickEditorSlotSupport).replace(/^<\?php\s*/, '').replace(/\?>\s*$/, '')
             : '';
         const frontendEditorArtifacts = mode === 'gutenberg-native'
             ? buildWhipifyFrontendEditorArtifacts({
                 defaults: quickEditorDefaults,
-                supportMap: buildWhipifyFrontendEditorSupportMap({
-                    hasHeaderSlots: quickEditorSlotSupport.header,
-                    hasFooterSlots: quickEditorSlotSupport.footer,
-                    hasSocialSlots: quickEditorSlotSupport.social,
-                }),
+                supportMap: frontendEditorSupportMap,
                 themeSlug,
             })
             : null;
+        if (mode === 'gutenberg-native' && wordpressContentRegistry) {
+            appendWordPressContentRegistryEditor(wordpressContentRegistry, {
+                kind: 'quick',
+                name: 'whipify-quick-editor',
+                phpFile: 'functions.php',
+            });
+        }
 
         if (mode === 'gutenberg-native') {
             functionsPhpContent = functionsPhpContent.replace(/\?>\s*$/, '');
@@ -4829,6 +4901,15 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
 
         folder.file("functions.php", functionsPhpContent); stats.php++;
         if (mode === 'gutenberg-native' && frontendEditorArtifacts) {
+            if (wordpressContentRegistry) {
+                appendWordPressContentRegistryEditor(wordpressContentRegistry, {
+                    kind: 'frontend',
+                    name: 'whipify-frontend-editor',
+                    supportMap: frontendEditorSupportMap,
+                    assetFiles: ['assets/whipify-frontend-editor.js', 'assets/whipify-frontend-editor.css'],
+                    phpFile: 'functions.php',
+                });
+            }
             folder.file('assets/whipify-frontend-editor.js', frontendEditorArtifacts.js);
             folder.file('assets/whipify-frontend-editor.css', frontendEditorArtifacts.css);
         }
@@ -5371,6 +5452,15 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                     allAuditLogs.push(...conversionResult.logs);
                     if (conversionResult.formsManifest.length > 0) {
                         generatedFormsManifest.push(...conversionResult.formsManifest);
+                        if (wordpressContentRegistry) {
+                            conversionResult.formsManifest.forEach((entry) => {
+                                appendWordPressContentRegistryForm(wordpressContentRegistry, {
+                                    ...entry,
+                                    templateFile: route.path === '/' ? 'front-page.php' : `page-${slug}.php`,
+                                    blocksFile: `assets/content/${slug}.blocks.html`,
+                                });
+                            });
+                        }
                     }
                     
                     // Log conversion diagnostics
@@ -5888,6 +5978,13 @@ ${faqBlocks.join('\n\n')}`;
 
             if (isHome) { folder.file("front-page.php", templateBody); } else { folder.file(`page-${slug}.php`, templateBody); }
             if (isArticle) { folder.file(`single-${slug}.php`, templateBody); } // Bind WordPress template hierarchy natively
+            if (wordpressContentRegistry) {
+                appendWordPressContentRegistryRoute(wordpressContentRegistry, {
+                    ...route,
+                    template: isHome ? 'front-page.php' : `page-${slug}.php`,
+                    chromeContext: routeChromeContext,
+                });
+            }
             stats.php++;
         }
 
@@ -6228,6 +6325,21 @@ echo "Theme Factory Data Migration Complete.";`;
             const pluginBlob = await generateCompanionPlugin(new JSZipLib());
             setPluginZipBlob(pluginBlob);
             addLog("Companion Plugin generated (required for custom blocks)", 'info');
+        }
+        if (wordpressContentRegistry) {
+            appendWordPressContentRegistryReport(wordpressContentRegistry, {
+                warnings: qaReport.warnings,
+                emittedFiles: [
+                    'functions.php',
+                    'assets/data/content-registry.json',
+                    'assets/data/content-registry.report.json',
+                    ...(generatedFormsManifest.length > 0 ? ['assets/data/forms.json'] : []),
+                    ...(frontendEditorArtifacts ? ['assets/whipify-frontend-editor.css', 'assets/whipify-frontend-editor.js'] : []),
+                ],
+            });
+            const finalizedWordPressContentRegistry = finalizeWordPressContentRegistry(wordpressContentRegistry);
+            folder.file("assets/data/content-registry.json", JSON.stringify(finalizedWordPressContentRegistry, null, 2));
+            folder.file("assets/data/content-registry.report.json", JSON.stringify(finalizedWordPressContentRegistry.report, null, 2));
         }
 
         setConversionStats(stats); await finishBuild(newZip);
