@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import {
   bindWhipifyQuickEditorChrome,
   buildWhipifyQuickEditorDefaults,
@@ -101,6 +102,12 @@ assert.match(php, /sanitize_text_field/);
 assert.match(php, /esc_url_raw/);
 assert.match(php, /^<\?php/);
 assert.match(php, /\?>\s*$/);
+
+const dashboardSource = fs.readFileSync(new URL('../components/Dashboard.tsx', import.meta.url), 'utf8');
+assert.ok(
+  dashboardSource.includes("buildWhipifyQuickEditorPhp(quickEditorDefaults, quickEditorSlotSupport).replace(/^<\\?php\\s*/, '').replace(/\\?>\\s*$/, '')"),
+  'Expected Dashboard.tsx to strip Quick Editor PHP tags before appending to functions.php.',
+);
 
 console.log('Whipify quick editor regression');
 console.log('[PASS] Defaults, chrome rewriting, slot merging, and PHP scaffolding are stable');

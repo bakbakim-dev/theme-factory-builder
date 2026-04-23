@@ -4802,7 +4802,7 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
 ` : '';
 
         const quickEditorPhp = mode === 'gutenberg-native'
-            ? buildWhipifyQuickEditorPhp(quickEditorDefaults, quickEditorSlotSupport)
+            ? buildWhipifyQuickEditorPhp(quickEditorDefaults, quickEditorSlotSupport).replace(/^<\?php\s*/, '').replace(/\?>\s*$/, '')
             : '';
         const frontendEditorArtifacts = mode === 'gutenberg-native'
             ? buildWhipifyFrontendEditorArtifacts({

@@ -88,9 +88,66 @@ if ( ! function_exists( 'tf_frontend_editor_current_user_can_edit_post' ) ) {
     }
 }
 
+if ( ! function_exists( 'tf_frontend_editor_cookie_name' ) ) {
+    function tf_frontend_editor_cookie_name() {
+        return 'whipify_frontend_editor_enabled';
+    }
+}
+
+if ( ! function_exists( 'tf_frontend_editor_set_enabled_cookie' ) ) {
+    function tf_frontend_editor_set_enabled_cookie( $enabled ) {
+        $cookie_name = tf_frontend_editor_cookie_name();
+        $secure = is_ssl();
+        $httponly = true;
+        $path = defined( 'COOKIEPATH' ) && COOKIEPATH ? COOKIEPATH : '/';
+        $domain = defined( 'COOKIE_DOMAIN' ) ? COOKIE_DOMAIN : '';
+        $expires = $enabled ? time() + DAY_IN_SECONDS : time() - HOUR_IN_SECONDS;
+        $value = $enabled ? '1' : '0';
+
+        setcookie( $cookie_name, $value, $expires, $path, $domain, $secure, $httponly );
+        $_COOKIE[ $cookie_name ] = $value;
+    }
+}
+
+if ( ! function_exists( 'tf_frontend_editor_current_url' ) ) {
+    function tf_frontend_editor_current_url() {
+        $request_uri = isset( $_SERVER['REQUEST_URI'] ) ? wp_unslash( $_SERVER['REQUEST_URI'] ) : '/';
+        return home_url( $request_uri );
+    }
+}
+
+if ( ! function_exists( 'tf_frontend_editor_handle_toggle_request' ) ) {
+    function tf_frontend_editor_handle_toggle_request() {
+        if ( ! isset( $_GET['whipify_frontend_editor_toggle'] ) ) {
+            return;
+        }
+
+        if ( ! tf_frontend_editor_current_user_can_edit() ) {
+            return;
+        }
+
+        check_admin_referer( 'tf_frontend_editor_toggle' );
+
+        $enabled = '1' === sanitize_text_field( wp_unslash( $_GET['whipify_frontend_editor_toggle'] ) );
+        tf_frontend_editor_set_enabled_cookie( $enabled );
+
+        $redirect_url = remove_query_arg(
+            array( 'whipify_frontend_editor_toggle', '_wpnonce' ),
+            wp_get_referer() ? wp_get_referer() : tf_frontend_editor_current_url()
+        );
+
+        wp_safe_redirect( $redirect_url ? $redirect_url : home_url( '/' ) );
+        exit;
+    }
+}
+
 if ( ! function_exists( 'tf_frontend_editor_is_enabled' ) ) {
     function tf_frontend_editor_is_enabled() {
-        return tf_frontend_editor_current_user_can_edit();
+        if ( ! tf_frontend_editor_current_user_can_edit() ) {
+            return false;
+        }
+
+        return isset( $_COOKIE[ tf_frontend_editor_cookie_name() ] ) && '1' === $_COOKIE[ tf_frontend_editor_cookie_name() ];
     }
 }
 
@@ -376,6 +433,7 @@ if ( ! function_exists( 'tf_frontend_editor_bootstrap_config' ) ) {
             'ajaxUrl' => admin_url( 'admin-ajax.php' ),
             'globalChromeNonce' => wp_create_nonce( 'tf_frontend_editor_save_chrome' ),
             'pageBlockNonce' => wp_create_nonce( 'tf_frontend_editor_save_block' ),
+            'isEnabled' => tf_frontend_editor_is_enabled(),
             'editScopes' => array( 'global-chrome', 'page-block' ),
             'supportMap' => tf_frontend_editor_support_map(),
         );
@@ -384,18 +442,29 @@ if ( ! function_exists( 'tf_frontend_editor_bootstrap_config' ) ) {
 
 if ( ! function_exists( 'tf_frontend_editor_admin_bar_menu' ) ) {
     function tf_frontend_editor_admin_bar_menu( $wp_admin_bar ) {
-        if ( ! tf_frontend_editor_is_enabled() ) {
+        if ( ! tf_frontend_editor_current_user_can_edit() ) {
             return;
         }
+
+        $is_enabled = tf_frontend_editor_is_enabled();
+        $toggle_url = wp_nonce_url(
+            add_query_arg(
+                'whipify_frontend_editor_toggle',
+                $is_enabled ? '0' : '1',
+                tf_frontend_editor_current_url()
+            ),
+            'tf_frontend_editor_toggle'
+        );
 
         $wp_admin_bar->add_node( array(
             'id' => 'whipify-frontend-editor-toggle',
             'title' => 'Whipify Edit Mode',
-            'href' => '#whipify-frontend-editor',
+            'href' => $toggle_url,
         ) );
     }
 }
 
+add_action( 'init', 'tf_frontend_editor_handle_toggle_request', 20 );
 add_action( 'admin_bar_menu', 'tf_frontend_editor_admin_bar_menu', 100 );
 if ( ! function_exists( 'tf_frontend_editor_enqueue_assets' ) ) {
     function tf_frontend_editor_enqueue_assets() {
@@ -434,6 +503,7 @@ const renderJs = (defaults: WhipifyQuickEditorDefaults, supportMap: WhipifyFront
   ajaxUrl: '/wp-admin/admin-ajax.php',
   globalChromeNonce: 'global-chrome-nonce',
   pageBlockNonce: 'page-block-nonce',
+  isEnabled: false,
   editScopes: ['global-chrome', 'page-block'],
   defaults: ${JSON.stringify(defaults)},
   supportMap: ${JSON.stringify(supportMap)},
@@ -471,16 +541,6 @@ function createPanel() {
 function setEnabled(enabled, panel) {
   document.body.classList.toggle(activeClassName, enabled);
   panel.hidden = !enabled;
-}
-
-function bindAdminBarToggle(panel) {
-  const toggle = document.querySelector('#wp-admin-bar-whipify-frontend-editor-toggle a');
-  if (!toggle) return;
-
-  toggle.addEventListener('click', (event) => {
-    event.preventDefault();
-    setEnabled(!document.body.classList.contains(activeClassName), panel);
-  });
 }
 
 function getEditableTargets() {
@@ -661,7 +721,7 @@ function savePageBlock(postId, blockPath, field, value, revisionToken) {
 function boot() {
   const panel = createPanel();
   document.body.appendChild(panel);
-  bindAdminBarToggle(panel);
+  setEnabled(Boolean(whipifyFrontendEditorConfig.isEnabled), panel);
   bindPanelActions(panel);
   getEditableTargets().forEach((target) => {
     bindEditableTarget(target);
