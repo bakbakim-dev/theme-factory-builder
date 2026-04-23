@@ -19,6 +19,14 @@ const assertions = [
     message: 'Expected Dashboard.tsx to create FormData for the remote ZIP upload.',
   },
   {
+    ok: dashboardSource.includes('Remote build init request timed out.'),
+    message: 'Expected Dashboard.tsx to include the remote build init timeout message.',
+  },
+  {
+    ok: dashboardSource.includes('Remote build upload timed out before the ZIP finished uploading.'),
+    message: 'Expected Dashboard.tsx to include the remote build upload timeout message.',
+  },
+  {
     ok: /\.append\(\s*['"]zip['"]\s*,/.test(dashboardSource),
     message: 'Expected Dashboard.tsx to append the ZIP blob to FormData with the "zip" field.',
   },
