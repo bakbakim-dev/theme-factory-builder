@@ -1,22 +1,31 @@
 export type WordPressEditableEntityKind = 'page-block' | 'global-chrome';
-export type WordPressEditableEntitySource = 'wordpress-post' | 'wordpress-theme';
+export type WordPressEditableEntitySource =
+  | 'wordpress-post'
+  | 'wordpress-global'
+  | 'wordpress-shared'
+  | 'wordpress-media'
+  | 'wordpress-theme';
 
 export interface WordPressEditTargetIdentity {
   postId?: number;
   scope?: string;
   treePathKey?: string;
+  stableId?: string;
 }
 
 export interface WordPressEditTargetV2 {
   version: '2';
   entityKind: WordPressEditableEntityKind;
   entitySource: WordPressEditableEntitySource;
+  stableId: string;
   targetId: string;
   identity: WordPressEditTargetIdentity;
   blockName?: string;
   treePath?: string[];
   field: string;
   fieldType: string;
+  mediaId?: string;
+  mediaSourceHash?: string;
   revisionToken?: string;
   sourceHash?: string;
   context?: Record<string, string>;
@@ -28,6 +37,8 @@ export interface CreateWordPressPageBlockEditTargetInput {
   treePath: Array<number | string>;
   field: string;
   fieldType: string;
+  mediaId?: string;
+  mediaSourceHash?: string;
   revisionToken?: string;
   sourceHash?: string;
   context?: Record<string, string>;
@@ -120,6 +131,17 @@ const buildTargetId = (
   return `global-chrome:${identity.scope}:${field}`;
 };
 
+const buildStableId = (
+  entityKind: WordPressEditableEntityKind,
+  identity: WordPressEditTargetIdentity,
+): string => {
+  if (entityKind === 'page-block') {
+    return `page-block:${identity.postId}:${identity.treePathKey}`;
+  }
+
+  return `global-chrome:${identity.scope}`;
+};
+
 export const normalizeWordPressEditTarget = (
   input: Omit<WordPressEditTargetV2, 'version' | 'targetId'> & {
     version?: '2';
@@ -132,6 +154,7 @@ export const normalizeWordPressEditTarget = (
   const fieldType = normalizeNonEmptyString(input.fieldType, 'fieldType');
   const revisionToken = normalizeOptionalString(input.revisionToken);
   const sourceHash = normalizeOptionalString(input.sourceHash);
+  const mediaSourceHash = normalizeOptionalString(input.mediaSourceHash);
 
   if (!revisionToken && !sourceHash) {
     throw new Error('revisionToken or sourceHash is required');
@@ -154,18 +177,23 @@ export const normalizeWordPressEditTarget = (
   }
 
   const targetId = buildTargetId(entityKind, normalizedIdentity, field);
+  const stableId = buildStableId(entityKind, normalizedIdentity);
+  normalizedIdentity.stableId = stableId;
   const context = normalizeContext(input.context);
 
   return {
     version: '2',
     entityKind,
     entitySource,
+    stableId,
     targetId,
     identity: normalizedIdentity,
     ...(blockName ? { blockName } : {}),
     ...(treePath ? { treePath } : {}),
     field,
     fieldType,
+    ...(input.mediaId ? { mediaId: normalizeOptionalString(input.mediaId) } : {}),
+    ...(mediaSourceHash ? { mediaSourceHash } : {}),
     ...(revisionToken ? { revisionToken } : {}),
     ...(sourceHash ? { sourceHash } : {}),
     ...(context ? { context } : {}),
@@ -185,6 +213,8 @@ export const createWordPressPageBlockEditTarget = (
     treePath: input.treePath,
     field: input.field,
     fieldType: input.fieldType,
+    mediaId: input.mediaId,
+    mediaSourceHash: input.mediaSourceHash,
     revisionToken: input.revisionToken,
     sourceHash: input.sourceHash,
     context: input.context,
@@ -195,7 +225,7 @@ export const createWordPressGlobalChromeEditTarget = (
 ): WordPressEditTargetV2 =>
   normalizeWordPressEditTarget({
     entityKind: 'global-chrome',
-    entitySource: 'wordpress-theme',
+    entitySource: 'wordpress-global',
     identity: {
       scope: input.scope,
     },

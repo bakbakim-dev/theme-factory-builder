@@ -25,10 +25,12 @@ assert.deepEqual(pageBlockTarget, {
   version: '2',
   entityKind: 'page-block',
   entitySource: 'wordpress-post',
+  stableId: 'page-block:42:2.10.1',
   targetId: 'page-block:42:2.10.1:content',
   identity: {
     postId: 42,
     treePathKey: '2.10.1',
+    stableId: 'page-block:42:2.10.1',
   },
   blockName: 'core/heading',
   treePath: ['2', '10', '1'],
@@ -41,6 +43,23 @@ assert.deepEqual(pageBlockTarget, {
     routePath: '/pricing/',
   },
 });
+
+const imageTarget = createWordPressPageBlockEditTarget({
+  postId: 99,
+  blockName: 'core/image',
+  treePath: [0],
+  field: 'id',
+  fieldType: 'mediaId',
+  mediaId: '248',
+  mediaSourceHash: 'hash-image-media-1',
+  revisionToken: 'rev-image-1',
+  sourceHash: 'hash-image-1',
+});
+
+assert.equal(imageTarget.mediaId, '248');
+assert.equal(imageTarget.mediaSourceHash, 'hash-image-media-1');
+assert.equal(imageTarget.fieldType, 'mediaId');
+assert.equal(imageTarget.targetId, 'page-block:99:0:id');
 
 const globalChromeTarget = createWordPressGlobalChromeEditTarget({
   scope: 'header',
@@ -57,10 +76,12 @@ const globalChromeTarget = createWordPressGlobalChromeEditTarget({
 assert.deepEqual(globalChromeTarget, {
   version: '2',
   entityKind: 'global-chrome',
-  entitySource: 'wordpress-theme',
+  entitySource: 'wordpress-global',
+  stableId: 'global-chrome:header',
   targetId: 'global-chrome:header:phone',
   identity: {
     scope: 'header',
+    stableId: 'global-chrome:header',
   },
   field: 'phone',
   fieldType: 'text',
@@ -83,9 +104,11 @@ const legacyTarget = createWordPressEditTargetFromLegacyBlockLocator({
 assert.equal(legacyTarget.version, '2');
 assert.equal(legacyTarget.entityKind, 'page-block');
 assert.equal(legacyTarget.entitySource, 'wordpress-post');
+assert.equal(legacyTarget.stableId, 'page-block:91:7.2');
 assert.equal(legacyTarget.targetId, 'page-block:91:7.2:url');
 assert.equal(legacyTarget.identity.postId, 91);
 assert.equal(legacyTarget.identity.treePathKey, '7.2');
+assert.equal(legacyTarget.identity.stableId, 'page-block:91:7.2');
 assert.equal(legacyTarget.blockName, 'core/button');
 assert.deepEqual(legacyTarget.treePath, ['7', '2']);
 assert.equal(legacyTarget.field, 'url');

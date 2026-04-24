@@ -252,9 +252,12 @@ assert.deepEqual(derivedFrontendEditorSupportMap, {
   },
   pageBlocks: {
     'core/heading': ['content'],
-    'core/image': ['alt', 'url'],
+    'core/image': ['alt', 'height', 'id', 'url', 'width'],
     'core/paragraph': ['content'],
-    'core/button': ['text', 'url'],
+    'core/button': ['linkTarget', 'rel', 'text', 'url'],
+    'core/details': ['summary'],
+    'theme-factory/button': ['href', 'rel', 'target', 'text'],
+    'theme-factory/container': ['text'],
   },
 });
 assert.equal(Object.prototype.hasOwnProperty.call(derivedFrontendEditorSupportMap.pageBlocks, 'core/quote'), false);

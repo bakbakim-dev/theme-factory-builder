@@ -2085,6 +2085,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         const stickyMobileCTA = buildStickyMobileCtaPhp({
             ctaColor: seoSettings.ctaColor,
             ctaTextColor: seoSettings.ctaTextColor,
+            primaryLabel: 'Primary CTA',
+            secondaryLabel: 'Secondary CTA',
             primaryText: seoSettings.ctaText1,
             primaryUrl: seoSettings.ctaLink1,
             secondaryText: seoSettings.ctaText2,

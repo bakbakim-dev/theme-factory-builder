@@ -5,6 +5,7 @@ const pluginSource = PLUGIN_FILES['build/blocks.js'] || '';
 const pluginBootstrap = PLUGIN_FILES['theme-factory-blocks.php'] || '';
 const importerSource = PLUGIN_FILES['inc/import.php'] || '';
 const editorCurationSource = PLUGIN_FILES['inc/editor-curation.php'] || '';
+const patternsSource = PLUGIN_FILES['inc/patterns.php'] || '';
 const pageShellBlockJson = PLUGIN_FILES['blocks/page-shell/block.json'] || '';
 const containerBlockJson = PLUGIN_FILES['blocks/container/block.json'] || '';
 const buttonsBlockJson = PLUGIN_FILES['blocks/buttons/block.json'] || '';
@@ -14,8 +15,10 @@ assert.ok(pluginSource, 'Expected build/blocks.js in companion plugin templates.
 assert.ok(pluginBootstrap, 'Expected theme-factory-blocks.php in companion plugin templates.');
 assert.ok(importerSource, 'Expected inc/import.php in companion plugin templates.');
 assert.ok(editorCurationSource, 'Expected inc/editor-curation.php in companion plugin templates.');
+assert.ok(patternsSource, 'Expected inc/patterns.php in companion plugin templates.');
 
 assert.match(pluginBootstrap, /require_once TFB_PATH \. 'inc\/editor-curation\.php';/);
+assert.match(pluginBootstrap, /require_once TFB_PATH \. 'inc\/patterns\.php';/);
 
 assert.match(pluginSource, /registerBlockType\('theme-factory\/page-shell'/);
 assert.match(pluginSource, /registerBlockType\('theme-factory\/container'/);
@@ -37,6 +40,14 @@ assert.match(editorCurationSource, /canLockBlocks/);
 assert.match(editorCurationSource, /theme-factory\/page-shell/);
 assert.match(editorCurationSource, /theme-factory\/button/);
 assert.match(editorCurationSource, /core\/image/);
+assert.match(patternsSource, /class TFB_Patterns/);
+assert.match(patternsSource, /register_block_pattern_category/);
+assert.match(patternsSource, /register_block_pattern\(/);
+assert.match(patternsSource, /theme-factory\/part-header/);
+assert.match(patternsSource, /theme-factory\/part-footer/);
+assert.match(patternsSource, /theme-factory\/hero/);
+assert.match(patternsSource, /theme-factory\/cta-band/);
+assert.match(patternsSource, /get_stylesheet_directory/);
 
 const pageShellMetadata = JSON.parse(pageShellBlockJson);
 const containerMetadata = JSON.parse(containerBlockJson);

@@ -29,6 +29,7 @@ require_once TFB_PATH . 'inc/blocks.php';
 require_once TFB_PATH . 'inc/import.php';
 require_once TFB_PATH . 'inc/editor-assets.php';
 require_once TFB_PATH . 'inc/editor-curation.php';
+require_once TFB_PATH . 'inc/patterns.php';
 require_once TFB_PATH . 'inc/frontend-editor.php';
 require_once TFB_PATH . 'inc/bindings.php';
 
@@ -230,7 +231,7 @@ final class TFB_Blocks {
     }
 
     private static function sanitize_tag( $tag, $fallback = 'div' ) {
-        $allowed = array( 'div', 'section', 'article', 'main', 'aside', 'header', 'footer', 'nav', 'span', 'form' );
+        $allowed = array( 'div', 'section', 'article', 'main', 'aside', 'header', 'footer', 'nav', 'span', 'form', 'button' );
         $tag     = is_string( $tag ) ? strtolower( $tag ) : $fallback;
         return in_array( $tag, $allowed, true ) ? $tag : $fallback;
     }
@@ -419,7 +420,7 @@ final class TFB_Blocks {
 
             $is_data    = 0 === strpos( $name, 'data-' );
             $is_aria    = 0 === strpos( $name, 'aria-' );
-            $is_allowed = $is_data || $is_aria || in_array( $name, array( 'role', 'hidden', 'tabindex', 'target', 'rel' ), true );
+            $is_allowed = $is_data || $is_aria || in_array( $name, array( 'role', 'hidden', 'tabindex', 'target', 'rel', 'type' ), true );
 
             if ( ! $is_allowed ) {
                 continue;
@@ -714,9 +715,14 @@ final class TFB_Blocks {
           $extra_attributes['aria-label'] = $aria_label;
       }
 
-      if ( '' !== $style ) {
-          $extra_attributes['style'] = $style;
-      }
+        if ( '' !== $style ) {
+            $extra_attributes['style'] = $style;
+        }
+
+        $html_attributes = self::normalize_html_attributes( $attributes );
+        if ( ! empty( $html_attributes ) ) {
+            $extra_attributes = array_merge( $extra_attributes, $html_attributes );
+        }
 
       return '<' . $tag_name . self::build_attr_string( $extra_attributes ) . '>' . $text . '</' . $tag_name . '>';
   }
@@ -1508,6 +1514,142 @@ function tfb_site_content_binding_update_url() {
 
 TFB_Bindings::init();`,
 
+  'inc/patterns.php': `<?php
+/**
+ * Block patterns for Theme Factory theme sections
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
+
+if ( ! class_exists( 'TFB_Patterns' ) ) :
+
+final class TFB_Patterns {
+    const PATTERN_CATEGORY = 'theme-factory';
+
+    public static function init() {
+        add_action( 'init', array( __CLASS__, 'register_pattern_category' ) );
+        add_action( 'init', array( __CLASS__, 'register_patterns' ) );
+    }
+
+    public static function register_pattern_category() {
+        if ( ! function_exists( 'register_block_pattern_category' ) ) {
+            return;
+        }
+
+        register_block_pattern_category(
+            self::PATTERN_CATEGORY,
+            array(
+                'label' => __( 'Theme Factory', 'theme-factory-blocks' ),
+            )
+        );
+    }
+
+    public static function register_patterns() {
+        if ( ! function_exists( 'register_block_pattern' ) ) {
+            return;
+        }
+
+        $theme_directory = get_stylesheet_directory();
+        $patterns = array(
+            array(
+                'slug'        => 'theme-factory/part-header',
+                'title'       => __( 'Theme Factory Header', 'theme-factory-blocks' ),
+                'description' => __( 'Reusable header pattern generated from the active theme.', 'theme-factory-blocks' ),
+                'file'        => $theme_directory . '/assets/content/part-header.blocks.html',
+            ),
+            array(
+                'slug'        => 'theme-factory/part-footer',
+                'title'       => __( 'Theme Factory Footer', 'theme-factory-blocks' ),
+                'description' => __( 'Reusable footer pattern generated from the active theme.', 'theme-factory-blocks' ),
+                'file'        => $theme_directory . '/assets/content/part-footer.blocks.html',
+            ),
+            array(
+                'slug'        => 'theme-factory/hero',
+                'title'       => __( 'Theme Factory Hero', 'theme-factory-blocks' ),
+                'description' => __( 'A starter hero section with a headline, text, and calls to action.', 'theme-factory-blocks' ),
+                'content'     => implode( "\n", array(
+                    '<!-- wp:group {"align":"full","className":"tfb-pattern-hero","layout":{"type":"constrained"}} -->',
+                    '<div class="wp-block-group alignfull tfb-pattern-hero">',
+                    '<!-- wp:heading {"level":1} -->',
+                    '<h1>Build a stronger local landing page</h1>',
+                    '<!-- /wp:heading -->',
+                    '<!-- wp:paragraph -->',
+                    '<p>Start with a clear headline, supporting copy, and one or two high-intent actions.</p>',
+                    '<!-- /wp:paragraph -->',
+                    '<!-- wp:buttons -->',
+                    '<div class="wp-block-buttons">',
+                    '<!-- wp:button -->',
+                    '<div class="wp-block-button"><a class="wp-block-button__link wp-element-button" href="#">Primary action</a></div>',
+                    '<!-- /wp:button -->',
+                    '<!-- wp:button {"className":"is-style-outline"} -->',
+                    '<div class="wp-block-button is-style-outline"><a class="wp-block-button__link wp-element-button" href="#">Secondary action</a></div>',
+                    '<!-- /wp:button -->',
+                    '</div>',
+                    '<!-- /wp:buttons -->',
+                    '</div>',
+                    '<!-- /wp:group -->',
+                ) ),
+            ),
+            array(
+                'slug'        => 'theme-factory/cta-band',
+                'title'       => __( 'Theme Factory CTA Band', 'theme-factory-blocks' ),
+                'description' => __( 'A compact call-to-action band for high-intent sections.', 'theme-factory-blocks' ),
+                'content'     => implode( "\n", array(
+                    '<!-- wp:group {"align":"full","className":"tfb-pattern-cta-band","layout":{"type":"constrained"}} -->',
+                    '<div class="wp-block-group alignfull tfb-pattern-cta-band">',
+                    '<!-- wp:heading {"level":2} -->',
+                    '<h2>Need help turning this into a live page?</h2>',
+                    '<!-- /wp:heading -->',
+                    '<!-- wp:paragraph -->',
+                    '<p>Use this section as a conversion-focused call to action with a simple value proposition.</p>',
+                    '<!-- /wp:paragraph -->',
+                    '<!-- wp:buttons -->',
+                    '<div class="wp-block-buttons">',
+                    '<!-- wp:button -->',
+                    '<div class="wp-block-button"><a class="wp-block-button__link wp-element-button" href="#">Book a call</a></div>',
+                    '<!-- /wp:button -->',
+                    '</div>',
+                    '<!-- /wp:buttons -->',
+                    '</div>',
+                    '<!-- /wp:group -->',
+                ) ),
+            ),
+        );
+
+        foreach ( $patterns as $pattern ) {
+            if ( empty( $pattern['file'] ) || ! file_exists( $pattern['file'] ) ) {
+                if ( empty( $pattern['content'] ) ) {
+                    continue;
+                }
+            }
+
+            $content = ! empty( $pattern['file'] ) && file_exists( $pattern['file'] )
+                ? trim( (string) file_get_contents( $pattern['file'] ) )
+                : trim( (string) $pattern['content'] );
+            if ( '' === $content ) {
+                continue;
+            }
+
+            register_block_pattern(
+                $pattern['slug'],
+                array(
+                    'title'       => $pattern['title'],
+                    'description' => $pattern['description'],
+                    'categories'  => array( self::PATTERN_CATEGORY ),
+                    'content'     => $content,
+                    'inserter'    => true,
+                )
+            );
+        }
+    }
+}
+
+endif;
+
+TFB_Patterns::init();`,
+
   'inc/frontend-editor.php': `<?php
 /**
  * Frontend editor REST transport and lightweight lock integration
@@ -1638,6 +1780,12 @@ final class TFB_Frontend_Editor {
         );
     }
 
+    private static function ensure_post_lock_functions() {
+        if ( ! function_exists( 'wp_check_post_lock' ) || ! function_exists( 'wp_set_post_lock' ) ) {
+            require_once ABSPATH . 'wp-admin/includes/post.php';
+        }
+    }
+
     public static function save_chrome( WP_REST_Request $request ) {
         $payload = self::get_payload( $request );
         $scope = isset( $payload['scope'] ) ? sanitize_key( wp_unslash( $payload['scope'] ) ) : '';
@@ -1676,6 +1824,9 @@ final class TFB_Frontend_Editor {
                 'scope' => $scope,
                 'field' => $field,
                 'revisionToken' => self::chrome_revision_token( $settings ),
+                'sourceHash' => function_exists( 'tf_frontend_editor_global_chrome_source_hash' )
+                    ? tf_frontend_editor_global_chrome_source_hash( $scope, $field, $settings[ $field ] )
+                    : '',
             )
         );
     }
@@ -1686,8 +1837,19 @@ final class TFB_Frontend_Editor {
         }
 
         $payload = self::get_payload( $request );
-        $value = isset( $payload['value'] ) ? wp_unslash( $payload['value'] ) : '';
         $target = tf_frontend_editor_page_block_target_from_payload( $payload );
+        $operations = isset( $payload['operations'] ) && is_array( $payload['operations'] )
+            ? $payload['operations']
+            : array();
+        if ( empty( $operations ) ) {
+            $operations = array(
+                array(
+                    'field' => isset( $target['field'] ) ? $target['field'] : '',
+                    'value' => isset( $payload['value'] ) ? wp_unslash( $payload['value'] ) : '',
+                    'sourceHash' => isset( $target['sourceHash'] ) ? $target['sourceHash'] : '',
+                ),
+            );
+        }
         $post_id = isset( $target['identity']['postId'] ) ? absint( $target['identity']['postId'] ) : 0;
         $post = get_post( $post_id );
 
@@ -1703,6 +1865,7 @@ final class TFB_Frontend_Editor {
           return self::json_error( 'Permission denied.', 403 );
       }
 
+        self::ensure_post_lock_functions();
         $lock_owner = wp_check_post_lock( $post_id );
         if ( $lock_owner && (int) $lock_owner !== get_current_user_id() ) {
             return self::json_error(
@@ -1725,8 +1888,8 @@ final class TFB_Frontend_Editor {
         }
 
         $blocks = parse_blocks( $post->post_content );
-        $resolved_target = function_exists( 'tf_frontend_editor_resolve_page_block_target' )
-            ? tf_frontend_editor_resolve_page_block_target( $blocks, $target )
+        $resolved_target = function_exists( 'tf_frontend_editor_resolver_v2_resolve_page_block_target' )
+            ? tf_frontend_editor_resolver_v2_resolve_page_block_target( $blocks, $target )
             : null;
         if ( null === $resolved_target ) {
             return self::json_error(
@@ -1749,8 +1912,8 @@ final class TFB_Frontend_Editor {
             );
         }
 
-        $adapter_result = function_exists( 'tf_frontend_editor_apply_page_block_adapter_update' )
-            ? tf_frontend_editor_apply_page_block_adapter_update( $post, $blocks, $resolved_target, $value )
+        $adapter_result = function_exists( 'tf_frontend_editor_save_adapter_apply_page_block_operations' )
+            ? tf_frontend_editor_save_adapter_apply_page_block_operations( $blocks, $resolved_target, $operations )
             : null;
         if ( null === $adapter_result ) {
             return self::json_error(
@@ -1760,8 +1923,36 @@ final class TFB_Frontend_Editor {
             );
         }
 
+        if ( is_array( $adapter_result ) && ! empty( $adapter_result['conflict'] ) ) {
+            $conflict_target = isset( $adapter_result['target'] ) && is_array( $adapter_result['target'] )
+                ? $adapter_result['target']
+                : array();
+            return self::json_error(
+                'Page block source hash mismatch.',
+                409,
+                array(
+                    'revisionToken' => $current_revision_token,
+                    'sourceHash' => isset( $conflict_target['sourceHash'] ) ? $conflict_target['sourceHash'] : '',
+                    'target' => $conflict_target,
+                    'field' => isset( $adapter_result['field'] ) ? $adapter_result['field'] : '',
+                )
+            );
+        }
+
         if ( is_wp_error( $adapter_result ) ) {
             return self::json_error( $adapter_result->get_error_message(), 500 );
+        }
+
+        $updated_content = isset( $adapter_result['blocks'] ) ? serialize_blocks( $adapter_result['blocks'] ) : '';
+        $update_result = wp_update_post(
+            array(
+                'ID' => $post->ID,
+                'post_content' => $updated_content,
+            ),
+            true
+        );
+        if ( is_wp_error( $update_result ) ) {
+            return self::json_error( $update_result->get_error_message(), 500 );
         }
 
         $fresh_post = get_post( $post_id );
@@ -1796,6 +1987,7 @@ final class TFB_Frontend_Editor {
           return self::json_error( 'Permission denied.', 403 );
       }
 
+        self::ensure_post_lock_functions();
         $lock_owner = wp_check_post_lock( $post_id );
         if ( $lock_owner && (int) $lock_owner !== get_current_user_id() ) {
             return self::json_error(
@@ -1900,7 +2092,7 @@ function getEditorClassName(className) {
 
 function getSafeTag(rawTag) {
     var tag = rawTag || 'div';
-    var safeTags = ['div', 'section', 'article', 'main', 'aside', 'header', 'footer', 'nav', 'span', 'form'];
+var safeTags = ['div', 'section', 'article', 'main', 'aside', 'header', 'footer', 'nav', 'span', 'form', 'button'];
     return safeTags.indexOf(tag) > -1 ? tag : 'div';
 }
 

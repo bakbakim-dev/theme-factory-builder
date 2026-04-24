@@ -99,16 +99,36 @@ test('wordpress export includes frontend editor helpers and assets', async ({ pa
   const runtimeJs = await zip.file(runtimeJsPath).async('string');
   const runtimeCss = await zip.file(runtimeCssPath).async('string');
 
-  expect(functionsPhp).toContain('tf_frontend_editor_save_block');
-  expect(functionsPhp).toContain('tf_frontend_editor_save_chrome');
   expect(functionsPhp).toContain('tf_frontend_editor_enqueue_assets');
-  expect(functionsPhp).toContain('render_block');
+  expect(functionsPhp).toContain('tf_frontend_editor_target_descriptor');
+  expect(functionsPhp).toContain('tf_frontend_editor_render_chrome_text');
+  expect(functionsPhp).toContain('tf_frontend_editor_render_chrome_link_attributes');
+  expect(functionsPhp).toContain('render_block_core/heading');
+  expect(functionsPhp).toContain('render_block_core/paragraph');
+  expect(functionsPhp).toContain('render_block_core/button');
+  expect(functionsPhp).toContain('render_block_core/image');
   expect(functionsPhp).toContain('wp_add_inline_script');
+  expect(functionsPhp).toContain('data-whipify-provenance-label');
+  expect(functionsPhp).toContain('data-whipify-target-label');
+  expect(functionsPhp).toContain('data-whipify-open-target');
 
   expect(runtimeJs).toContain('Whipify Edit Mode');
   expect(runtimeJs).toContain('saveGlobalChrome');
   expect(runtimeJs).toContain('savePageBlock');
   expect(runtimeJs).toContain('Edit in Gutenberg');
+  expect(runtimeJs).toContain('data-whipify-action="edit-source"');
+  expect(runtimeJs).toContain('data-whipify-action="move-up"');
+  expect(runtimeJs).toContain('data-whipify-action="move-down"');
+  expect(runtimeJs).toContain('data-whipify-action="remove-block"');
+  expect(runtimeJs).toContain('data-whipify-provenance-label');
+  expect(runtimeJs).toContain('data-whipify-target-label');
+  expect(runtimeJs).toContain('data-whipify-open-target');
+  expect(runtimeJs).toContain('updatePanelSummary');
 
   expect(runtimeCss).toContain('.whipify-frontend-editor-panel');
+  expect(runtimeCss).toContain('.whipify-frontend-editor-panel__meta');
+  expect(runtimeCss).toContain('.whipify-frontend-editor-panel__structure');
+  expect(runtimeCss).toContain('.whipify-frontend-editor-panel__badge');
+  expect(runtimeCss).toContain('[data-whipify-editable="true"][data-whipify-surface-kind="page-block"]');
+  expect(runtimeCss).toContain('[data-whipify-editable="true"][data-whipify-surface-kind="global-chrome"]');
 });

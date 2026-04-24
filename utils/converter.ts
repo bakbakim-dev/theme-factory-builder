@@ -76,7 +76,7 @@ export interface ConversionContext {
 
 const SKIP_TAGS = new Set(['script', 'style', 'noscript', 'meta', 'link', 'head', 'template']);
 const STRUCTURAL_TAGS = new Set(['div', 'article', 'main', 'header', 'footer', 'aside', 'nav', 'section']);
-const DYNAMIC_CONTAINER_SAFE_TAGS = new Set(['div', 'section', 'article', 'main', 'aside', 'header', 'footer', 'nav', 'span', 'form']);
+const DYNAMIC_CONTAINER_SAFE_TAGS = new Set(['div', 'section', 'article', 'main', 'aside', 'header', 'footer', 'nav', 'span', 'form', 'button']);
 const HTML_IDREF_ATTRIBUTES = new Set(['aria-controls', 'aria-labelledby', 'aria-describedby', 'aria-owns', 'aria-details', 'aria-flowto', 'aria-activedescendant']);
 const WP_RESERVED_FIELD_NAMES = new Set([
   'name', 'day', 'month', 'year', 'hour', 'minute', 'second',
@@ -1912,7 +1912,7 @@ function createContainer(el: HTMLElement, ctx: ConversionContext, supportInterac
             for (let i = 0; i < el.attributes.length; i++) {
                 const attr = el.attributes[i];
                 const name = attr.name;
-                if (name.startsWith('data-') || name.startsWith('aria-') || name === 'role' || name === 'hidden' || name === 'tabindex') {
+                if (name.startsWith('data-') || name.startsWith('aria-') || name === 'role' || name === 'hidden' || name === 'tabindex' || name === 'type') {
                     const rawValue = name === 'hidden' ? true : attr.value;
                     if (rawValue === true) {
                         htmlAttributes[name] = true;

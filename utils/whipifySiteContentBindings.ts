@@ -19,6 +19,8 @@ export type WhipifyBlockBindingMap = Partial<Record<string, WhipifySiteContentFi
 interface StickyMobileCtaPhpInput {
   ctaColor: string;
   ctaTextColor: string;
+  primaryLabel: string;
+  secondaryLabel: string;
   primaryText: string;
   primaryUrl: string;
   secondaryText: string;
@@ -35,6 +37,13 @@ const escapeHtml = (value: string): string =>
 
 const escapeHtmlAttribute = (value: string): string => escapeHtml(value);
 const escapePhpSingleQuoted = (value: string): string => (value || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+const humanizeSiteContentLabel = (value: string): string =>
+  (value || '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+
 const buildQuickEditorAccessor = (
   key: WhipifySiteContentFieldKey,
   fallback: string,
@@ -122,18 +131,51 @@ export const buildWhipifySiteContentPhpTelHref = (
 ): string => `tel:<?php echo preg_replace( '/[^0-9+]/', '', ${buildQuickEditorAccessor(key, fallback)} ); ?>`;
 
 const buildStickyMobileCtaButtonBlock = (
+  label: string,
   text: string,
   url: string,
   buttonClassName: string,
   customStyle: Record<string, string>,
+  sourceScope: 'header' | 'footer' | 'social',
   bindings: WhipifyBlockBindingMap,
 ): string => {
+  const sourceKey = bindings.text || '';
+  const secondarySourceKey = bindings.href || '';
   const attributes = applyWhipifySiteContentBindings(
     {
       text,
       href: url,
       className: buttonClassName,
       customStyle,
+      htmlAttributes: {
+        'data-whipify-editable': 'true',
+        'data-whipify-edit-scope': 'shared-content',
+        'data-whipify-entity-kind': 'shared-content',
+        'data-whipify-entity-source': 'wordpress-global',
+        'data-whipify-surface-kind': 'shared-content',
+        'data-whipify-provenance-label': 'Shared content',
+        'data-whipify-target-label': label,
+        'data-whipify-open-target': 'quick-editor',
+        'data-whipify-source-scope': sourceScope,
+        'data-whipify-source-key': sourceKey,
+        'data-whipify-secondary-source-key': secondarySourceKey,
+        'data-whipify-target': JSON.stringify({
+          version: '2',
+          entityKind: 'shared-content',
+          entitySource: 'wordpress-global',
+          surfaceKind: 'shared-content',
+          provenanceLabel: 'Shared content',
+          targetLabel: label,
+          openTarget: 'quick-editor',
+          sourceScope,
+          sourceKey,
+          secondarySourceKey,
+          field: 'text',
+          secondaryField: 'url',
+          fieldType: 'plainText',
+          secondaryFieldType: 'url',
+        }),
+      },
     },
     bindings,
   );
@@ -143,6 +185,7 @@ const buildStickyMobileCtaButtonBlock = (
 
 export const buildStickyMobileCtaPhp = (input: StickyMobileCtaPhpInput): string => {
   const primaryButton = buildStickyMobileCtaButtonBlock(
+    input.primaryLabel || humanizeSiteContentLabel('primary_cta_text'),
     input.primaryText,
     input.primaryUrl,
     'tf-sticky-mobile-cta__button text-center py-4 font-bold text-lg hover:opacity-80 transition-opacity border-r tf-sticky-mobile-cta__link',
@@ -153,6 +196,7 @@ export const buildStickyMobileCtaPhp = (input: StickyMobileCtaPhpInput): string 
       flex: '1 1 0',
       margin: '0',
     },
+    'header',
     {
       text: 'primary_cta_text',
       href: 'primary_cta_url',
@@ -160,6 +204,7 @@ export const buildStickyMobileCtaPhp = (input: StickyMobileCtaPhpInput): string 
   );
 
   const secondaryButton = buildStickyMobileCtaButtonBlock(
+    input.secondaryLabel || humanizeSiteContentLabel('secondary_cta_text'),
     input.secondaryText,
     input.secondaryUrl,
     'tf-sticky-mobile-cta__button text-center py-4 font-bold text-lg hover:opacity-80 transition-opacity tf-sticky-mobile-cta__link',
@@ -169,6 +214,7 @@ export const buildStickyMobileCtaPhp = (input: StickyMobileCtaPhpInput): string 
       flex: '1 1 0',
       margin: '0',
     },
+    'header',
     {
       text: 'secondary_cta_text',
       href: 'secondary_cta_url',
