@@ -1,6 +1,6 @@
 ﻿/**
  * Theme Factory Blocks - Plugin Templates
- * Version: 2.6.1
+ * Version: 2.7.0
  * 
  * This file contains the PHP code for the companion plugin.
  * IMPORTANT: All PHP code must use straight quotes (', ") not curly quotes.
@@ -11,7 +11,7 @@ export const PLUGIN_FILES: Record<string, string> = {
 /**
  * Plu` + `gin Name: Theme Factory Blocks
  * Description: Custom Gutenberg blocks and editor parity for Theme Factory themes.
- * Version: 2.6.1
+ * Version: 2.7.0
  * Author: Theme Factory AI
  * Text Domain: theme-factory-blocks
  * Requires at least: 6.0
@@ -20,7 +20,7 @@ export const PLUGIN_FILES: Record<string, string> = {
 
 if (!defined('ABSPATH')) exit;
 
-define('TFB_VERSION', '2.6.1');
+define('TFB_VERSION', '2.7.0');
 define('TFB_PATH', plugin_dir_path(__FILE__));
 define('TFB_URL', plugin_dir_url(__FILE__));
 
@@ -1039,6 +1039,10 @@ class TFB_Import {
     }
 
     private static function apply_curated_block_locks($blocks) {
+        return self::strip_curated_block_locks($blocks);
+    }
+
+    private static function strip_curated_block_locks($blocks) {
         $lockable_blocks = array(
             'theme-factory/page-shell',
             'theme-factory/container',
@@ -1053,26 +1057,47 @@ class TFB_Import {
                     $block['attrs'] = array();
                 }
 
-                $existing_lock = isset($block['attrs']['lock']) && is_array($block['attrs']['lock'])
-                    ? $block['attrs']['lock']
-                    : array();
-
-                $block['attrs']['lock'] = array_merge(
-                    $existing_lock,
-                    array(
-                        'move' => true,
-                        'remove' => true,
-                    )
-                );
+                if (isset($block['attrs']['lock'])) {
+                    unset($block['attrs']['lock']);
+                }
             }
 
             if (isset($block['innerBlocks']) && is_array($block['innerBlocks']) && !empty($block['innerBlocks'])) {
-                $block['innerBlocks'] = self::apply_curated_block_locks($block['innerBlocks']);
+                $block['innerBlocks'] = self::strip_curated_block_locks($block['innerBlocks']);
             }
         }
         unset($block);
 
         return $blocks;
+    }
+
+    private static function migrate_existing_curated_block_locks() {
+        global $wpdb;
+
+        $post_ids = $wpdb->get_col($wpdb->prepare(
+            "SELECT ID FROM {$wpdb->posts} WHERE post_type = %s AND post_content LIKE %s",
+            'page',
+            '%wp:theme-factory/page-shell%'
+        ));
+
+        if (empty($post_ids)) {
+            return;
+        }
+
+        foreach ($post_ids as $post_id) {
+            $post = get_post($post_id);
+            if (!$post || empty($post->post_content) || false === strpos($post->post_content, 'wp:theme-factory/page-shell')) {
+                continue;
+            }
+
+            $updated_content = serialize_blocks(self::strip_curated_block_locks(parse_blocks($post->post_content)));
+            if ($updated_content && $updated_content !== $post->post_content) {
+                wp_update_post(array(
+                    'ID' => $post_id,
+                    'post_content' => $updated_content,
+                ));
+            }
+        }
     }
 
     private static function import_menus($routes) {
@@ -1221,14 +1246,35 @@ final class TFB_Editor_Curation {
             'core/heading',
             'core/paragraph',
             'core/button',
+            'core/buttons',
             'core/image',
+            'core/gallery',
+            'core/cover',
+            'core/media-text',
+            'core/audio',
+            'core/video',
+            'core/file',
             'core/list',
             'core/list-item',
+            'core/quote',
+            'core/pullquote',
+            'core/table',
+            'core/details',
             'core/group',
+            'core/row',
+            'core/stack',
+            'core/grid',
             'core/columns',
             'core/column',
             'core/spacer',
             'core/separator',
+            'core/social-links',
+            'core/social-link',
+            'core/navigation',
+            'core/navigation-link',
+            'core/site-title',
+            'core/site-logo',
+            'core/page-list',
             'theme-factory/page-shell',
             'theme-factory/container',
             'theme-factory/buttons',
@@ -1266,7 +1312,7 @@ final class TFB_Editor_Curation {
             return $settings;
         }
 
-        $settings['canLockBlocks'] = false;
+        $settings['canLockBlocks'] = true;
         $settings['allowedBlockTypes'] = self::get_allowed_blocks();
 
         return $settings;
@@ -2036,7 +2082,7 @@ return array(
         'wp-data',
         'wp-compose',
     ),
-    'version' => '2.6.1'
+    'version' => '2.7.0'
 );`,
 
   'build/blocks.js': `(function(wp) {
@@ -2058,10 +2104,11 @@ var InspectorControls = wp.blockEditor.InspectorControls;
 var PanelBody = wp.components.PanelBody;
 var TextControl = wp.components.TextControl;
 var SelectControl = wp.components.SelectControl;
+var ToggleControl = wp.components.ToggleControl;
 var Button = wp.components.Button;
 var MediaUpload = wp.blockEditor.MediaUpload;
 var __ = wp.i18n.__;
-var CONTENT_ONLY_TEMPLATE_LOCK = 'contentOnly';
+var VISUAL_EDITOR_TEMPLATE_LOCK = false;
 
 var CONTAINER_TAG_OPTIONS = [
     { label: 'div', value: 'div' },
@@ -2073,7 +2120,8 @@ var CONTAINER_TAG_OPTIONS = [
     { label: 'footer', value: 'footer' },
     { label: 'nav', value: 'nav' },
     { label: 'span', value: 'span' },
-    { label: 'form', value: 'form' }
+    { label: 'form', value: 'form' },
+    { label: 'button', value: 'button' }
 ];
 
 function getEditorClassName(className) {
@@ -2538,7 +2586,7 @@ function renderContainerEditor(props, extraClassName) {
             )
         ),
         el(Tag, blockProps, el(InnerBlocks, {
-            templateLock: CONTENT_ONLY_TEMPLATE_LOCK,
+            templateLock: VISUAL_EDITOR_TEMPLATE_LOCK,
             renderAppender: InnerBlocks.ButtonBlockAppender
         }))
     );
@@ -2555,17 +2603,17 @@ registerBlockType('theme-factory/page-shell', {
     supports: {
         align: ['full', 'wide'],
         html: false,
-        lock: false,
-        color: { background: true, text: true, gradients: true },
+        lock: true,
+        color: { background: true, text: true, link: true, gradients: true },
         spacing: { margin: true, padding: true, blockGap: true },
-        typography: { fontSize: true, lineHeight: true },
+        typography: { fontSize: true, lineHeight: true, fontWeight: true, fontStyle: true, letterSpacing: true, textDecoration: true, textTransform: true },
         border: { color: true, radius: true, style: true, width: true },
-        dimensions: { minHeight: true }
+        dimensions: { minHeight: true, aspectRatio: true }
     },
     edit: function(props) {
         var blockProps = useBlockProps({ className: ['tf-page-shell-editor', getEditorClassName(props.attributes.className)].filter(Boolean).join(' ').trim() });
         return el('div', blockProps, el(InnerBlocks, {
-            templateLock: CONTENT_ONLY_TEMPLATE_LOCK,
+            templateLock: VISUAL_EDITOR_TEMPLATE_LOCK,
             renderAppender: InnerBlocks.ButtonBlockAppender
         }));
     },
@@ -2594,10 +2642,10 @@ registerBlockType('theme-factory/container', {
     supports: {
         align: ['full', 'wide'],
         html: false,
-        lock: false,
-        color: { background: true, text: true, gradients: true },
+        lock: true,
+        color: { background: true, text: true, link: true, gradients: true },
         spacing: { margin: true, padding: true, blockGap: true },
-        typography: { fontSize: true, lineHeight: true },
+        typography: { fontSize: true, lineHeight: true, fontWeight: true, fontStyle: true, letterSpacing: true, textDecoration: true, textTransform: true },
         border: { color: true, radius: true, style: true, width: true },
         dimensions: { minHeight: true, aspectRatio: true }
     },
@@ -2631,7 +2679,7 @@ registerBlockType('theme-factory/buttons', {
     },
     supports: {
         html: false,
-        lock: false,
+        lock: true,
         spacing: { margin: true, padding: true, blockGap: true }
     },
     edit: function(props) {
@@ -2639,7 +2687,7 @@ registerBlockType('theme-factory/buttons', {
         return el('div', blockProps, el(InnerBlocks, {
             allowedBlocks: ['core/button', 'theme-factory/button'],
             orientation: 'horizontal',
-            templateLock: CONTENT_ONLY_TEMPLATE_LOCK,
+            templateLock: VISUAL_EDITOR_TEMPLATE_LOCK,
             renderAppender: InnerBlocks.ButtonBlockAppender
         }));
     },
@@ -2796,12 +2844,13 @@ registerBlockType('theme-factory/button', {
         buttonType: { type: 'string', default: 'button' }
     },
     supports: {
+        align: ['full', 'wide'],
         html: false,
-        color: { background: true, text: true, gradients: true },
-        spacing: { margin: true, padding: true },
-        typography: { fontSize: true, lineHeight: true },
+        color: { background: true, text: true, link: true, gradients: true },
+        spacing: { margin: true, padding: true, blockGap: true },
+        typography: { fontSize: true, lineHeight: true, fontWeight: true, fontStyle: true, letterSpacing: true, textDecoration: true, textTransform: true },
         border: { color: true, radius: true, style: true, width: true },
-        dimensions: { minHeight: true }
+        dimensions: { minHeight: true, aspectRatio: true }
     },
     edit: function(props) {
         var attributes = props.attributes;
@@ -2828,20 +2877,46 @@ registerBlockType('theme-factory/button', {
         return el(Fragment, null,
             el(InspectorControls, null,
                 el(PanelBody, { title: __('Button Settings', 'theme-factory-blocks'), initialOpen: true },
+                    el(SelectControl, {
+                        label: __('Button / Link Type', 'theme-factory-blocks'),
+                        value: attributes.tagName === 'button' ? 'button' : 'a',
+                        options: [
+                            { label: __('Link', 'theme-factory-blocks'), value: 'a' },
+                            { label: __('Button', 'theme-factory-blocks'), value: 'button' }
+                        ],
+                        onChange: function(value) {
+                            props.setAttributes({ tagName: value === 'button' ? 'button' : 'a' });
+                        }
+                    }),
                     previewTag === 'a' ? el(TextControl, {
                         label: __('URL', 'theme-factory-blocks'),
                         value: attributes.href || '',
                         onChange: function(value) { props.setAttributes({ href: value }); }
                     }) : null,
-                    previewTag === 'a' ? el(TextControl, {
-                        label: __('Target', 'theme-factory-blocks'),
-                        value: attributes.target || '',
-                        onChange: function(value) { props.setAttributes({ target: value }); }
+                    previewTag === 'a' && ToggleControl ? el(ToggleControl, {
+                        label: __('Open in new tab', 'theme-factory-blocks'),
+                        checked: attributes.target === '_blank',
+                        onChange: function(value) {
+                            props.setAttributes({
+                                target: value ? '_blank' : '',
+                                rel: value && !attributes.rel ? 'noopener noreferrer' : attributes.rel
+                            });
+                        }
                     }) : null,
                     previewTag === 'a' ? el(TextControl, {
                         label: __('Rel', 'theme-factory-blocks'),
                         value: attributes.rel || '',
                         onChange: function(value) { props.setAttributes({ rel: value }); }
+                    }) : null,
+                    previewTag === 'button' ? el(SelectControl, {
+                        label: __('Button Type', 'theme-factory-blocks'),
+                        value: attributes.buttonType || 'button',
+                        options: [
+                            { label: __('Button', 'theme-factory-blocks'), value: 'button' },
+                            { label: __('Submit', 'theme-factory-blocks'), value: 'submit' },
+                            { label: __('Reset', 'theme-factory-blocks'), value: 'reset' }
+                        ],
+                        onChange: function(value) { props.setAttributes({ buttonType: value || 'button' }); }
                     }) : null,
                     el(TextControl, {
                         label: __('ARIA Label', 'theme-factory-blocks'),
@@ -3170,7 +3245,7 @@ console.log('Theme Factory Blocks: All blocks registered successfully');
     "supports": { 
       "align": ["full", "wide"], 
       "html": false,
-      "lock": false,
+      "lock": true,
       "color": { "text": true, "background": true, "link": true, "gradients": true },
       "spacing": { "margin": true, "padding": true, "blockGap": true },
       "typography": { "fontSize": true, "lineHeight": true, "fontWeight": true, "fontStyle": true, "letterSpacing": true, "textDecoration": true, "textTransform": true },
@@ -3199,7 +3274,7 @@ console.log('Theme Factory Blocks: All blocks registered successfully');
     "supports": { 
       "align": ["full", "wide"], 
       "html": false,
-      "lock": false,
+      "lock": true,
       "color": { "text": true, "background": true, "link": true, "gradients": true },
       "spacing": { "margin": true, "padding": true, "blockGap": true },
       "typography": { "fontSize": true, "lineHeight": true, "fontWeight": true, "fontStyle": true, "letterSpacing": true, "textDecoration": true, "textTransform": true },
@@ -3222,7 +3297,7 @@ console.log('Theme Factory Blocks: All blocks registered successfully');
     },
     "supports": {
       "html": false,
-      "lock": false,
+      "lock": true,
       "spacing": { "margin": true, "padding": true, "blockGap": true }
     },
     "textdomain": "theme-factory-blocks"
