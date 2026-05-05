@@ -4,10 +4,78 @@ import { io, Socket } from 'socket.io-client';
 import { useJSZip } from '../hooks/useJSZip';
 import { LogEntry, RouteInfo, ConversionRecord, ConversionStats } from '../types';
 import { STEPS, PLATFORMS } from '../constants';
-import { convertToGutenbergBlocks, createPlaceholder, extractElementHtml, AuditLog, ConversionResult, ThemeTokenSuggestion } from '../utils/converter';
+import { convertToGutenbergBlocks, createPlaceholder, extractElementHtml, AuditLog, ConversionResult, GeneratedFormManifestEntry, ThemeTokenSuggestion } from '../utils/converter';
 import { PLUGIN_FILES } from '../utils/plugintemplates';
+import { convertHtmlToElementorDocument } from '../utils/elementorConverter';
+import { ELEMENTOR_IMPORTER_PLUGIN_FILES, WHIPIFY_ELEMENTOR_WIDGET_RUNTIME_PHP } from '../utils/elementorPluginTemplates';
+import { WHIPIFY_FORMS_PLUGIN_FILES, WHIPIFY_FORMS_README } from '../utils/whipifyFormsTemplates';
+import { buildStaticSiteFromArtifactZip } from '../utils/static-artifact';
+import { createStaticSiteOutput, StaticSiteSettings } from '../utils/static-output';
+import type { StaticBuildReport } from '../utils/static-types';
+import { createDefaultUrlCaptureSettings } from '../utils/url-capture-common';
+import type { UrlCaptureCertificationResult, UrlCaptureCertificationStatus, UrlCaptureReport, UrlCaptureSettings } from '../utils/url-capture-types';
+import { bindWhipifyQuickEditorChrome, buildWhipifyQuickEditorDefaults, buildWhipifyQuickEditorPhp, extractTelCtaCandidate, mergeWhipifyQuickEditorSlotSupport } from '../utils/whipifyQuickEditor';
+import { buildWhipifyFrontendEditorArtifacts, buildWhipifyFrontendEditorSupportMap } from '../utils/whipifyFrontendEditor';
+import {
+  buildStickyMobileCtaPhp,
+  buildWhipifySiteContentPhpEditableLinkAttributes,
+  buildWhipifySiteContentPhpTelHref,
+  buildWhipifySiteContentPhpTextEcho,
+} from '../utils/whipifySiteContentBindings';
+import { buildWordPressChromeContextPlan, buildWordPressChromeSelectorPhp, buildWordPressTemplateChromeBootstrap, localizeWordPressChromePaths } from '../utils/wordpress-chrome-context';
+import {
+    appendWordPressContentRegistryChrome,
+    appendWordPressContentRegistryEditor,
+    appendWordPressContentRegistryFrontendEditorTargets,
+    appendWordPressContentRegistryForm,
+    appendWordPressContentRegistryReport,
+    appendWordPressContentRegistryRoute,
+    appendWordPressContentRegistrySharedContentTargets,
+    buildWhipifyFrontendEditorSupportMapFromWordPressContentRegistry,
+    createEmptyWordPressContentRegistry,
+    deriveWhipifyQuickEditorSlotSupportFromWordPressContentRegistry,
+    finalizeWordPressContentRegistry,
+} from '../utils/wordpress-content-registry';
 
 interface DashboardProps { onConversionComplete: (record: ConversionRecord, zipBlob: Blob) => void; }
+type ConversionMode = 'gutenberg-native' | 'wordpress-elementor' | 'react-spa' | 'static-site';
+type StaticSiteInputMode = 'artifact-zip' | 'public-url-certified';
+
+interface UrlCaptureTransportResponse {
+    artifact: {
+        siteSlug: string;
+        routes: RouteInfo[];
+        routeManifest: Array<{ path: string; outputPath: string; canonicalUrl: string }>;
+        assetManifest: Array<{ sourcePath: string; outputPath: string }>;
+        captureMetadata: Record<string, unknown>;
+    };
+    certification: UrlCaptureCertificationResult;
+    report: UrlCaptureReport;
+    staticResult: {
+        files: Record<string, string>;
+        report: StaticBuildReport;
+        assetFilesBase64: Record<string, string>;
+        assetCounts: {
+            css: number;
+            js: number;
+            assets: number;
+            other: number;
+        };
+    };
+}
+
+const DEFAULT_STATIC_SITE_SETTINGS: StaticSiteSettings = {
+    baseUrl: 'https://',
+    formsProvider: 'web3forms',
+    formsEndpoint: '',
+    web3FormsAccessKey: '',
+    latitude: '',
+    longitude: '',
+    serviceAreas: '',
+    enableAiCrawlerAllowances: true,
+    enableLlmsTxt: true,
+    enableIndexNow: true,
+};
 
 const sanitizeForPhp = (str: string): string => str.replace(/['"\\]/g, '').replace(/[^a-zA-Z0-9_\-./]/g, '_');
 const decodeLooseUnicodeEscapes = (str: string): string => (str || '').replace(/u([0-9a-fA-F]{4})/g, (match, hex) => {
@@ -32,15 +100,41 @@ const serializeWpBlock = (blockName: string, attributes: Record<string, any> | u
     const normalizedAttributes = attributes && Object.keys(attributes).length > 0 ? ` ${JSON.stringify(attributes)}` : '';
     return `<!-- wp:${toWpCommentBlockName(blockName)}${normalizedAttributes} -->\n${innerContent}\n<!-- /wp:${toWpCommentBlockName(blockName)} -->`;
 };
-const REMOTE_BUILD_REQUEST_TIMEOUT_MS = 60 * 60 * 1000;
+const REMOTE_BUILD_INIT_TIMEOUT_MS = 30 * 1000;
+const REMOTE_BUILD_UPLOAD_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+const OUTPUT_MODES: Array<{ id: ConversionMode; title: string; description: string; badge?: string }> = [
+    {
+        id: 'gutenberg-native',
+        title: 'WordPress / Platinum',
+        description: 'Editable WordPress theme export with the current Platinum workflow.',
+        badge: 'Editor Workflow',
+    },
+    {
+        id: 'wordpress-elementor',
+        title: 'WordPress / Elementor',
+        description: 'Elementor-native page export with generated importer plugin.',
+        badge: 'Elementor Native',
+    },
+    {
+        id: 'static-site',
+        title: 'Static Site',
+        description: 'Pure static export for speed, local SEO, and AI discoverability.',
+        badge: 'SEO First',
+    },
+    {
+        id: 'react-spa',
+        title: 'React SPA',
+        description: 'Legacy SPA packaging path.',
+    },
+];
 
 const InfoTooltip: React.FC<{ title: string, content: React.ReactNode, link?: string }> = ({ title, content, link }) => {
     const [isOpen, setIsOpen] = useState(false);
     return (
         <div className="relative inline-block ml-2 align-middle">
-            <button 
-                type="button" 
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsOpen(!isOpen); }} 
+            <button
+                type="button"
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setIsOpen(!isOpen); }}
                 className="text-slate-400 hover:text-blue-400 focus:outline-none transition-colors"
                 title={title}
             >
@@ -70,12 +164,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     const [finalZipBlob, setFinalZipBlob] = useState<Blob | null>(null);
     const [previewImage, setPreviewImage] = useState<string | null>(null);
     const [pluginZipBlob, setPluginZipBlob] = useState<Blob | null>(null);
+    const [formsPluginZipBlob, setFormsPluginZipBlob] = useState<Blob | null>(null);
     const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
     const [pluginDownloadUrl, setPluginDownloadUrl] = useState<string | null>(null);
+    const [formsPluginDownloadUrl, setFormsPluginDownloadUrl] = useState<string | null>(null);
     const [thumbnails, setThumbnails] = useState<string[]>([]);
     const [selectedPlatform, setSelectedPlatform] = useState('lovable');
-    const [conversionMode, setConversionMode] = useState<'gutenberg-native' | 'react-spa'>('gutenberg-native');
+    const [conversionMode, setConversionMode] = useState<ConversionMode>('gutenberg-native');
     const [conversionStats, setConversionStats] = useState<ConversionStats | null>(null);
+    const [staticExportReport, setStaticExportReport] = useState<StaticBuildReport | null>(null);
     const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
     const [sourceFile, setSourceFile] = useState<File | null>(null);
     const [detectedRoutes, setDetectedRoutes] = useState<RouteInfo[]>([]);
@@ -86,7 +183,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     const [showMapModal, setShowMapModal] = useState<boolean>(false);
     const [showLlmsModal, setShowLlmsModal] = useState<boolean>(false);
     const [isScrapingLiveUrl, setIsScrapingLiveUrl] = useState<boolean>(false);
-    
+
     // SEO & CRO Configuration
     const [seoSettings, setSeoSettings] = useState({
         companyName: 'My Company',
@@ -126,6 +223,455 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         enableSemanticLinks: false
     });
     const [showSeoConfig, setShowSeoConfig] = useState(false);
+    const [showStaticSeoConfig, setShowStaticSeoConfig] = useState(false);
+    const [staticSiteSettings, setStaticSiteSettings] = useState<StaticSiteSettings>(DEFAULT_STATIC_SITE_SETTINGS);
+    const [staticSiteInputMode, setStaticSiteInputMode] = useState<StaticSiteInputMode>('artifact-zip');
+    const [urlCaptureSettings, setUrlCaptureSettings] = useState<UrlCaptureSettings>(createDefaultUrlCaptureSettings());
+    const [urlCaptureStatus, setUrlCaptureStatus] = useState<UrlCaptureCertificationStatus | 'idle'>('idle');
+    const [urlCaptureReport, setUrlCaptureReport] = useState<UrlCaptureReport | null>(null);
+
+    const updateStaticSiteSetting = <K extends keyof StaticSiteSettings>(key: K, value: StaticSiteSettings[K]) => {
+        setStaticSiteSettings(prev => ({ ...prev, [key]: value }));
+    };
+
+    const updateUrlCaptureSetting = <K extends keyof UrlCaptureSettings>(key: K, value: UrlCaptureSettings[K]) => {
+        setUrlCaptureSettings(prev => ({ ...prev, [key]: value }));
+    };
+
+    const decodeBase64Asset = (value: string): Uint8Array => {
+        const binary = atob(value);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) {
+            bytes[index] = binary.charCodeAt(index);
+        }
+        return bytes;
+    };
+
+    const renderOutputModeSelector = () => (
+        <div className="space-y-3">
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-300">
+                <Sparkles className="w-4 h-4 text-cyan-400" />
+                Output Mode
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                {OUTPUT_MODES.map((modeOption) => {
+                    const active = conversionMode === modeOption.id;
+                    return (
+                        <button
+                            key={modeOption.id}
+                            type="button"
+                            onClick={() => setConversionMode(modeOption.id)}
+                            className={`text-left rounded-xl border p-4 transition-all ${active
+                                ? 'border-blue-500 bg-blue-600/10 text-white shadow-lg shadow-blue-950/30'
+                                : 'border-slate-800 bg-slate-900/50 text-slate-400 hover:border-slate-700'
+                                }`}
+                        >
+                            <div className="flex items-start justify-between gap-3">
+                                <div>
+                                    <div className="font-semibold">{modeOption.title}</div>
+                                    <div className="text-xs mt-1 opacity-80 leading-relaxed">{modeOption.description}</div>
+                                </div>
+                                {modeOption.badge && (
+                                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${active ? 'bg-blue-500/20 text-blue-100' : 'bg-slate-800 text-slate-400'}`}>
+                                        {modeOption.badge}
+                                    </span>
+                                )}
+                            </div>
+                        </button>
+                    );
+                })}
+            </div>
+        </div>
+    );
+
+    const renderStaticSignalsPanel = () => {
+        if (conversionMode !== 'static-site') return null;
+        return (
+            <div className="bg-slate-900/50 rounded-lg border border-slate-800 p-4 space-y-4">
+                <button
+                    type="button"
+                    onClick={() => setShowStaticSeoConfig(!showStaticSeoConfig)}
+                    className="w-full flex items-center justify-between text-left group"
+                >
+                    <div>
+                        <h3 className="text-sm font-semibold text-slate-300 flex items-center gap-2">
+                            <Sparkles className="w-4 h-4 text-cyan-400" />
+                            Local SEO & AI Signals
+                            <span className="text-xs font-normal text-slate-500 bg-slate-800 px-2 py-0.5 rounded-full">Static Mode</span>
+                        </h3>
+                        <p className="text-xs text-slate-500 mt-1 ml-6">
+                            Base URL, static forms, geo coordinates, service areas, crawler access, and AI-facing files.
+                        </p>
+                    </div>
+                    <svg
+                        className={`w-4 h-4 text-slate-500 transition-transform ${showStaticSeoConfig ? 'rotate-180' : ''}`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                    >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                </button>
+                {showStaticSeoConfig && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-800">
+                        <div className="md:col-span-2 rounded-lg border border-slate-800 bg-slate-950/60 p-4 space-y-3">
+                            <div>
+                                <h4 className="text-sm font-semibold text-slate-200">Core Local Entity Details</h4>
+                                <p className="text-[11px] text-slate-500 mt-1">These drive LocalBusiness, Service, OpenGraph, llms.txt, and other static SEO outputs even when you upload an already-built artifact.</p>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="space-y-1">
+                                    <label className="text-xs text-slate-500">Website URL</label>
+                                    <input
+                                        type="text"
+                                        value={seoSettings.url}
+                                        onChange={e => setSeoSettings({ ...seoSettings, url: e.target.value })}
+                                        placeholder="https://example.com"
+                                        className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-xs text-slate-500">Company Name</label>
+                                    <input
+                                        type="text"
+                                        value={seoSettings.companyName}
+                                        onChange={e => setSeoSettings({ ...seoSettings, companyName: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-xs text-slate-500">Phone Number</label>
+                                    <input
+                                        type="text"
+                                        value={seoSettings.telephone}
+                                        onChange={e => setSeoSettings({ ...seoSettings, telephone: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-xs text-slate-500">City</label>
+                                    <input
+                                        type="text"
+                                        value={seoSettings.addressLocality}
+                                        onChange={e => setSeoSettings({ ...seoSettings, addressLocality: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-xs text-slate-500">State/Prov</label>
+                                    <input
+                                        type="text"
+                                        value={seoSettings.addressRegion}
+                                        onChange={e => setSeoSettings({ ...seoSettings, addressRegion: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                                    />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-xs text-slate-500">Country</label>
+                                    <input
+                                        type="text"
+                                        value={seoSettings.addressCountry}
+                                        onChange={e => setSeoSettings({ ...seoSettings, addressCountry: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                                    />
+                                </div>
+                                <div className="space-y-1 md:col-span-2">
+                                    <label className="text-xs text-slate-500">SEO Meta Description</label>
+                                    <input
+                                        type="text"
+                                        value={seoSettings.description}
+                                        onChange={e => setSeoSettings({ ...seoSettings, description: e.target.value })}
+                                        className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="space-y-1 md:col-span-2">
+                            <label className="text-xs text-slate-500">Static Site Base URL</label>
+                            <input
+                                type="text"
+                                value={staticSiteSettings.baseUrl}
+                                onChange={e => updateStaticSiteSetting('baseUrl', e.target.value)}
+                                placeholder="https://example.com"
+                                className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                            />
+                            <p className="text-[11px] text-slate-600">Used for canonical tags, hreflang, absolute media URLs, schema, llms.txt, and sitemap output.</p>
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-xs text-slate-500">Static Forms Provider</label>
+                            <select
+                                value={staticSiteSettings.formsProvider}
+                                onChange={e => updateStaticSiteSetting('formsProvider', e.target.value as StaticSiteSettings['formsProvider'])}
+                                className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                            >
+                                <option value="web3forms">Web3Forms</option>
+                                <option value="formspree">Formspree</option>
+                                <option value="custom-endpoint">Custom Endpoint</option>
+                            </select>
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-xs text-slate-500">Web3Forms Access Key</label>
+                            <input
+                                type="text"
+                                value={staticSiteSettings.web3FormsAccessKey}
+                                onChange={e => updateStaticSiteSetting('web3FormsAccessKey', e.target.value)}
+                                placeholder="Your Web3Forms key"
+                                className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                            />
+                        </div>
+
+                        <div className="space-y-1 md:col-span-2">
+                            <label className="text-xs text-slate-500">Form Endpoint Override</label>
+                            <input
+                                type="text"
+                                value={staticSiteSettings.formsEndpoint}
+                                onChange={e => updateStaticSiteSetting('formsEndpoint', e.target.value)}
+                                placeholder="https://api.example.com/form-endpoint"
+                                className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                            />
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-xs text-slate-500">Latitude</label>
+                            <input
+                                type="text"
+                                value={staticSiteSettings.latitude}
+                                onChange={e => updateStaticSiteSetting('latitude', e.target.value)}
+                                placeholder="53.5461"
+                                className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                            />
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-xs text-slate-500">Longitude</label>
+                            <input
+                                type="text"
+                                value={staticSiteSettings.longitude}
+                                onChange={e => updateStaticSiteSetting('longitude', e.target.value)}
+                                placeholder="-113.4938"
+                                className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                            />
+                        </div>
+
+                        <div className="space-y-1 md:col-span-2">
+                            <label className="text-xs text-slate-500">Service Areas</label>
+                            <input
+                                type="text"
+                                value={staticSiteSettings.serviceAreas}
+                                onChange={e => updateStaticSiteSetting('serviceAreas', e.target.value)}
+                                placeholder="Edmonton, St. Albert, Sherwood Park"
+                                className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                            />
+                            <p className="text-[11px] text-slate-600">Comma-separated list used for local schema and llms.txt entity context.</p>
+                        </div>
+
+                        <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <label className="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 cursor-pointer">
+                                <span className="text-sm text-slate-300">Allow AI crawler access</span>
+                                <input
+                                    type="checkbox"
+                                    checked={staticSiteSettings.enableAiCrawlerAllowances}
+                                    onChange={e => updateStaticSiteSetting('enableAiCrawlerAllowances', e.target.checked)}
+                                    className="rounded text-blue-600 bg-slate-900 border-slate-700"
+                                />
+                            </label>
+                            <label className="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 cursor-pointer">
+                                <span className="text-sm text-slate-300">Generate llms.txt</span>
+                                <input
+                                    type="checkbox"
+                                    checked={staticSiteSettings.enableLlmsTxt}
+                                    onChange={e => updateStaticSiteSetting('enableLlmsTxt', e.target.checked)}
+                                    className="rounded text-blue-600 bg-slate-900 border-slate-700"
+                                />
+                            </label>
+                            <label className="flex items-center justify-between gap-3 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 cursor-pointer">
+                                <span className="text-sm text-slate-300">Generate IndexNow key</span>
+                                <input
+                                    type="checkbox"
+                                    checked={staticSiteSettings.enableIndexNow}
+                                    onChange={e => updateStaticSiteSetting('enableIndexNow', e.target.checked)}
+                                    className="rounded text-blue-600 bg-slate-900 border-slate-700"
+                                />
+                            </label>
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    const renderStaticInputPanel = () => {
+        if (conversionMode !== 'static-site') return null;
+
+        return (
+            <div className="bg-slate-900/50 rounded-lg border border-slate-800 p-4 space-y-4">
+                <div>
+                    <h3 className="text-sm font-semibold text-slate-300">Static Site Input</h3>
+                    <p className="text-xs text-slate-500 mt-1">Choose whether this static export starts from a build artifact ZIP or a live public React URL.</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <label className={`rounded-lg border px-3 py-3 cursor-pointer transition-colors ${staticSiteInputMode === 'artifact-zip' ? 'border-cyan-500 bg-cyan-500/10' : 'border-slate-800 bg-slate-950/60'}`}>
+                        <div className="flex items-center gap-3">
+                            <input
+                                type="radio"
+                                name="static-site-input-mode"
+                                checked={staticSiteInputMode === 'artifact-zip'}
+                                onChange={() => setStaticSiteInputMode('artifact-zip')}
+                                className="text-cyan-500 bg-slate-900 border-slate-700"
+                            />
+                            <div>
+                                <div className="text-sm font-medium text-slate-200">Build Artifact ZIP</div>
+                                <div className="text-xs text-slate-500 mt-1">Use the existing static export path from a built project archive.</div>
+                            </div>
+                        </div>
+                    </label>
+
+                    <label className={`rounded-lg border px-3 py-3 cursor-pointer transition-colors ${staticSiteInputMode === 'public-url-certified' ? 'border-cyan-500 bg-cyan-500/10' : 'border-slate-800 bg-slate-950/60'}`}>
+                        <div className="flex items-center gap-3">
+                            <input
+                                type="radio"
+                                name="static-site-input-mode"
+                                checked={staticSiteInputMode === 'public-url-certified'}
+                                onChange={() => setStaticSiteInputMode('public-url-certified')}
+                                className="text-cyan-500 bg-slate-900 border-slate-700"
+                            />
+                            <div>
+                                <div className="text-sm font-medium text-slate-200">Public React URL (Certified Capture)</div>
+                                <div className="text-xs text-slate-500 mt-1">Capture a live site and route it through the new certified synthetic-artifact workflow.</div>
+                            </div>
+                        </div>
+                    </label>
+                </div>
+
+                {staticSiteInputMode === 'public-url-certified' && (
+                    <>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-1 md:col-span-2">
+                                <label htmlFor="url-capture-public-url" className="text-xs text-slate-500">Public URL</label>
+                                <input
+                                    id="url-capture-public-url"
+                                    type="text"
+                                    value={urlCaptureSettings.sourceUrl}
+                                    onChange={e => updateUrlCaptureSetting('sourceUrl', e.target.value)}
+                                    placeholder="https://example.com"
+                                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                                />
+                            </div>
+
+                            <div className="space-y-1 md:col-span-2">
+                                <label htmlFor="url-capture-sitemap-url" className="text-xs text-slate-500">Optional sitemap URL</label>
+                                <input
+                                    id="url-capture-sitemap-url"
+                                    type="text"
+                                    value={urlCaptureSettings.sitemapUrl}
+                                    onChange={e => updateUrlCaptureSetting('sitemapUrl', e.target.value)}
+                                    placeholder="https://example.com/sitemap.xml"
+                                    className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-sm"
+                                />
+                            </div>
+
+                            <div className="space-y-1">
+                                <label htmlFor="url-capture-route-seeds" className="text-xs text-slate-500">Optional route seeds</label>
+                                <textarea
+                                    id="url-capture-route-seeds"
+                                    value={urlCaptureSettings.routeSeeds}
+                                    onChange={e => updateUrlCaptureSetting('routeSeeds', e.target.value)}
+                                    placeholder="/pricing/&#10;/contact/"
+                                    className="w-full min-h-[92px] bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm"
+                                />
+                            </div>
+
+                            <div className="space-y-1">
+                                <label htmlFor="url-capture-auth-cookies" className="text-xs text-slate-500">Optional auth cookies JSON</label>
+                                <textarea
+                                    id="url-capture-auth-cookies"
+                                    value={urlCaptureSettings.authCookiesJson}
+                                    onChange={e => updateUrlCaptureSetting('authCookiesJson', e.target.value)}
+                                    placeholder='[{"name":"session","value":"..."}]'
+                                    className="w-full min-h-[92px] bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-950/60 border border-slate-800 rounded-lg p-4">
+                            <div className="text-sm font-semibold text-slate-300">Certification Status</div>
+                            <div className="mt-2 text-sm text-slate-400">
+                                {urlCaptureStatus === 'idle' && 'Waiting to run URL capture.'}
+                                {urlCaptureStatus === 'certified' && 'Certified artifact-equivalent for Static Site export.'}
+                                {urlCaptureStatus === 'needs-input' && 'More input is required before certification is possible.'}
+                                {urlCaptureStatus === 'uncertified' && 'Best-effort output only. Certification was not possible.'}
+                            </div>
+                            {urlCaptureReport && (
+                                <div className="mt-3 space-y-3 text-xs text-slate-400">
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div className="bg-slate-900/60 rounded-lg px-3 py-2">
+                                            <div className="text-slate-500">Routes discovered</div>
+                                            <div className="text-slate-200 font-semibold">{urlCaptureReport.routesDiscovered}</div>
+                                        </div>
+                                        <div className="bg-slate-900/60 rounded-lg px-3 py-2">
+                                            <div className="text-slate-500">Routes captured</div>
+                                            <div className="text-slate-200 font-semibold">{urlCaptureReport.routesCaptured}</div>
+                                        </div>
+                                    </div>
+                                    {urlCaptureReport.recommendations.length > 0 && (
+                                        <div>
+                                            <div className="text-cyan-300 font-semibold mb-1">Recommendations</div>
+                                            <ul className="space-y-1 list-disc pl-4">
+                                                {urlCaptureReport.recommendations.map((item, index) => (
+                                                    <li key={`url-capture-recommendation-${index}`}>{item}</li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    )}
+                                    {urlCaptureReport.blockers.length > 0 && (
+                                        <div>
+                                            <div className="text-amber-300 font-semibold mb-1">Blockers</div>
+                                            <ul className="space-y-1 list-disc pl-4">
+                                                {urlCaptureReport.blockers.map((item, index) => (
+                                                    <li key={`url-capture-blocker-${index}`}>{item}</li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    </>
+                )}
+            </div>
+        );
+    };
+
+    const isCertifiedUrlMode = conversionMode === 'static-site' && staticSiteInputMode === 'public-url-certified';
+    const sourceDetectedMessage = isCertifiedUrlMode
+        ? 'Public URL capture is active. Uploaded route selection will be ignored and routes will be discovered from the live site.'
+        : conversionMode === 'static-site'
+            ? 'Source code detected. Select pages to include in the static export.'
+        : conversionMode === 'wordpress-elementor'
+            ? 'Source code detected. Select pages to include in the Elementor-native WordPress export.'
+        : 'Source code detected. Select pages to include in the WordPress theme.';
+
+    const primaryBuildLabel = isCertifiedUrlMode
+        ? 'Run Certified URL Capture'
+        : conversionMode === 'static-site'
+            ? (connectionStatus === 'success' ? 'Remote Build & Export Static Site' : 'Local Simulation Build & Export Static Site')
+        : conversionMode === 'wordpress-elementor'
+            ? (connectionStatus === 'success' ? 'Remote Build & Export Elementor' : 'Local Simulation Build & Export Elementor')
+        : (connectionStatus === 'success' ? 'Remote Build & Convert' : 'Local Simulation Build');
+
+    const packagingStepLabel = conversionMode === 'static-site' ? 'Step 4: Packaging Static Site' : conversionMode === 'wordpress-elementor' ? 'Step 4: Packaging Elementor Theme' : 'Step 4: Packaging Theme';
+    const packagingStatusLabel = conversionMode === 'static-site' ? 'Generating static SEO files...' : conversionMode === 'wordpress-elementor' ? 'Writing Elementor manifest and WordPress theme...' : 'Writing WordPress functions...';
+    const previewHeading = conversionMode === 'static-site' ? 'Preview Your Static Site' : conversionMode === 'wordpress-elementor' ? 'Preview Your Elementor Theme' : 'Preview Your New Theme';
+    const downloadPrimaryLabel = conversionMode === 'static-site' ? 'Download Static Site' : conversionMode === 'wordpress-elementor' ? 'Download Elementor Theme' : 'Download Theme';
+    const downloadPrimaryDescription = conversionMode === 'static-site' ? 'Deployable Static ZIP' : conversionMode === 'wordpress-elementor' ? 'WordPress Theme ZIP + Elementor Manifest' : 'WordPress Theme ZIP';
+    const primaryDownloadName = conversionMode === 'static-site' ? `${themeSlug}-static-site.zip` : conversionMode === 'wordpress-elementor' ? `${themeSlug}-elementor-theme.zip` : `${themeSlug}-theme.zip`;
+    const companionPluginDownloadName = conversionMode === 'wordpress-elementor' ? 'whipify-elementor-importer.zip' : 'theme-factory-blocks.zip';
+    const companionPluginTitle = conversionMode === 'wordpress-elementor' ? 'Elementor Importer Plugin' : 'Companion Plugin';
+    const companionPluginDescription = conversionMode === 'wordpress-elementor' ? 'Imports native Elementor pages' : 'Required for Custom Blocks';
 
     // Audit State
     const [missingLinks, setMissingLinks] = useState<string[]>([]);
@@ -137,7 +683,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         rootPath: string;
         platform: string;
         routes: RouteInfo[];
-        mode: 'gutenberg-native' | 'react-spa';
+        mode: ConversionMode;
         logs: AuditLog[];
     } | null>(null);
 
@@ -157,7 +703,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
 
     const [isAdmin, setIsAdmin] = useState(false);
     const [socket, setSocket] = useState<Socket | null>(null);
-    
+
     useEffect(() => {
         if (typeof window !== 'undefined') {
             const params = new URLSearchParams(window.location.search);
@@ -176,10 +722,28 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs]);
     useEffect(() => { if (!finalZipBlob) return; const url = window.URL.createObjectURL(finalZipBlob); setDownloadUrl(url); return () => { window.URL.revokeObjectURL(url); }; }, [finalZipBlob]);
     useEffect(() => { if (!pluginZipBlob) return; const url = window.URL.createObjectURL(pluginZipBlob); setPluginDownloadUrl(url); return () => { window.URL.revokeObjectURL(url); }; }, [pluginZipBlob]);
-    useEffect(() => { if (finalZipBlob && step === STEPS.COMPLETE) { const record: ConversionRecord = { id: crypto.randomUUID(), projectName: themeSlug || 'untitled-project', type: PLATFORMS[selectedPlatform.toUpperCase() as keyof typeof PLATFORMS]?.label || selectedPlatform, date: new Date().toISOString(), status: 'Completed', logs: logs, stats: conversionStats }; onConversionComplete(record, finalZipBlob); } }, [finalZipBlob, step]);
+    useEffect(() => { if (!formsPluginZipBlob) return; const url = window.URL.createObjectURL(formsPluginZipBlob); setFormsPluginDownloadUrl(url); return () => { window.URL.revokeObjectURL(url); }; }, [formsPluginZipBlob]);
+    useEffect(() => {
+        if (finalZipBlob && step === STEPS.COMPLETE) {
+            const record: ConversionRecord = {
+                id: crypto.randomUUID(),
+                projectName: themeSlug || 'untitled-project',
+                type: conversionMode === 'static-site'
+                    ? 'Static Site'
+                    : conversionMode === 'wordpress-elementor'
+                    ? 'WordPress Elementor'
+                    : PLATFORMS[selectedPlatform.toUpperCase() as keyof typeof PLATFORMS]?.label || selectedPlatform,
+                date: new Date().toISOString(),
+                status: 'Completed',
+                logs: logs,
+                stats: conversionStats,
+            };
+            onConversionComplete(record, finalZipBlob);
+        }
+    }, [finalZipBlob, step]);
     useEffect(() => { return () => { abortControllerRef.current?.abort(); if (socket) socket.disconnect(); }; }, [socket]);
     useEffect(() => { if (remoteConfig.url && typeof window !== 'undefined') { localStorage.setItem('buildServerUrl', remoteConfig.url); } }, [remoteConfig.url]);
-    
+
     useEffect(() => {
         if (step === STEPS.COMPLETE || step === STEPS.ERROR) {
             if (socket) {
@@ -211,10 +775,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
 
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]; if (!file) return;
+        const derivedThemeSlug = file.name.replace('.zip', '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase();
         setSourceFile(file);
         if (!JSZipLib) { addLog("Engine not ready. Please wait...", 'error'); return; }
-        setStep(STEPS.ANALYZING); setLogs([]); setProgress(5); setConversionStats(null); setFinalZipBlob(null); setPluginZipBlob(null); setThumbnails([]); setRedirectsData(null); setLlmsData(null);
-        setThemeSlug(file.name.replace('.zip', '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase());
+        setStep(STEPS.ANALYZING); setLogs([]); setProgress(5); setConversionStats(null); setStaticExportReport(null); setUrlCaptureReport(null); setUrlCaptureStatus('idle'); setFinalZipBlob(null); setPluginZipBlob(null); setFormsPluginZipBlob(null); setThumbnails([]); setRedirectsData(null); setLlmsData(null);
+        setThemeSlug(derivedThemeSlug);
         addLog(`Initiating analysis for: ${file.name}`);
         try {
             const zip = new JSZipLib(); const content = await zip.loadAsync(file);
@@ -227,14 +792,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             let detectedPlatformID = selectedPlatform;
             if (hasFile('lovable.config') || hasFile('lovable.json')) { detectedPlatformID = 'lovable'; setSelectedPlatform('lovable'); addLog("Confirmed Lovable Project Structure", 'success'); }
             const routes = await scanForRoutes(content, rootPath); setDetectedRoutes(routes); setSelectedRoutes(new Set(routes.map(r => r.path)));
-            
+
             // SAAS FEATURE: Auto-extract SEO settings from the project files
             await scanForSeoSettings(content, rootPath);
 
             const hasPackageJson = hasFile('package.json'); const hasSrcDir = validFiles.some(f => f.includes('/src/') || f.startsWith('src/'));
             const isSourceProject = hasPackageJson && (hasSrcDir || hasFile('vite.config.ts'));
             if (isSourceProject && !options.forceBuild) { addLog(`⚠ Source Code Detected. Found ${routes.length} potential routes.`, 'warning'); setStep(STEPS.SOURCE_DETECTED); return; }
-            setStep(STEPS.PROCESSING); await processConversion(content, rootPath, detectedPlatformID, routes, conversionMode);
+            setStep(STEPS.PROCESSING); await processConversion(content, rootPath, detectedPlatformID, routes, conversionMode, false, undefined, derivedThemeSlug);
         } catch (err: unknown) { setStep(STEPS.ERROR); addLog((err as Error).message, 'error'); }
     };
 
@@ -242,7 +807,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         try {
             const files = Object.keys(zipContent.files);
             const normalize = (p: string) => p.startsWith(rootPath) ? p.slice(rootPath.length) : p;
-            
+
             let htmlContent = "";
             const indexFile = files.find(f => normalize(f).match(/^index\.html$/i));
             if (indexFile) htmlContent = await zipContent.files[indexFile].async("string");
@@ -260,10 +825,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             const updates: Partial<typeof seoSettings> = {};
 
             // Extract Company Name (from Title, Helmet, Package.json, or navbar brands)
-            const titleMatch = htmlContent.match(/<title>(.*?)<\/title>/i) 
+            const titleMatch = htmlContent.match(/<title>(.*?)<\/title>/i)
                              || allSrcText.match(/<title>([^<]+)<\/title>/i)
                              || allSrcText.match(/title=["']([^"']+)["']/i);
-            
+
             if (titleMatch && titleMatch[1] && !titleMatch[1].includes('$')) {
                 // Strip out standard separators like ' | ', ' - ' to get pure brand name
                 updates.companyName = titleMatch[1].split('|')[0].split('-')[0].trim();
@@ -284,7 +849,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             }
 
             // Extract Meta Description (from HTML or Helmet meta tags)
-            const descMatch = htmlContent.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["'][^>]*>/i) 
+            const descMatch = htmlContent.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["'][^>]*>/i)
                            || htmlContent.match(/<meta[^>]*content=["']([^"']+)["'][^>]*name=["']description["'][^>]*>/i)
                            || allSrcText.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["'][^>]*>/i);
             if (descMatch && descMatch[1] && !descMatch[1].includes('$')) updates.description = descMatch[1].trim();
@@ -299,7 +864,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             // Extract Phone Number (Look for formats like 123-456-7890, (123) 456-7890, or bare strings in hrefs)
             const phoneMatch = allSrcText.match(/(?:\+?1\s*(?:[.-]\s*)?)?(?:\(\s*([2-9]1[02-9]|[2-9][02-8]1|[2-9][02-8][02-9])\s*\)|([2-9]1[02-9]|[2-9][02-8]1|[2-9][02-8][02-9]))\s*(?:[.-]\s*)?([2-9]1[02-9]|[2-9][02-9]1|[2-9][02-9]{2})\s*(?:[.-]\s*)?([0-9]{4})(?:\s*(?:#|x\.?|ext\.?|extension)\s*(\d+))?/i)
                             || allSrcText.match(/href=["']tel:([^"']+)["']/i);
-            
+
             if (phoneMatch) {
                 const number = phoneMatch[0].replace(/href=["']tel:/i, '').replace(/["']/g, '');
                 updates.telephone = number.trim();
@@ -312,19 +877,18 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                 const text = contactHref[2] && !contactHref[2].startsWith('/') ? contactHref[2] : contactHref[1];
                 if (text && text.length > 2 && text.length < 30 && !text.includes('/')) updates.ctaText1 = text.trim();
             }
-            
-            const telHref = allSrcText.match(/>([^<]+)<\/a>[^<]*href=["'](tel:[^"']+)["']/i) || allSrcText.match(/href=["'](tel:[^"']+)["'][^>]*>([^<]+)<\/a>/i);
-            if (telHref) {
-                updates.ctaLink2 = telHref[1].startsWith('tel:') ? telHref[1] : (telHref[2] ? telHref[2] : '');
-                const text = telHref[2] && !telHref[2].startsWith('tel:') ? telHref[2] : telHref[1];
-                if (text && text.length > 2 && text.length < 30 && !text.includes('tel:')) updates.ctaText2 = text.trim();
+
+            const telCta = extractTelCtaCandidate(allSrcText, updates.telephone || seoSettings.telephone);
+            if (telCta) {
+                updates.ctaLink2 = telCta.link;
+                if (telCta.text.length > 2 && telCta.text.length < 30) updates.ctaText2 = telCta.text.trim();
             }
 
             // Detect Color Palette (Primary button colors)
             // Look for common Tailwind classes or inline styles
             const bgMatch = allSrcText.match(/bg-\[(#[0-9a-fA-F]{3,6})\]/i) || allSrcText.match(/background-color:\s*(#[0-9a-fA-F]{3,6})/i);
             if (bgMatch) updates.ctaColor = bgMatch[1];
-            
+
             const textMatch = allSrcText.match(/text-\[(#[0-9a-fA-F]{3,6})\]/i) || allSrcText.match(/color:\s*(#[0-9a-fA-F]{3,6})/i);
             if (textMatch) updates.ctaTextColor = textMatch[1];
 
@@ -340,13 +904,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             // Extract Social Links
             const fbMatch = allSrcText.match(/href=["'](https?:\/\/(?:www\.)?facebook\.com\/[^"']+)["']/i);
             if (fbMatch) updates.socialFacebook = fbMatch[1];
-            
+
             const igMatch = allSrcText.match(/href=["'](https?:\/\/(?:www\.)?instagram\.com\/[^"']+)["']/i);
             if (igMatch) updates.socialInstagram = igMatch[1];
-            
+
             const twMatch = allSrcText.match(/href=["'](https?:\/\/(?:www\.)?(?:twitter|x)\.com\/[^"']+)["']/i);
             if (twMatch) updates.socialTwitter = twMatch[1];
-            
+
             const liMatch = allSrcText.match(/href=["'](https?:\/\/(?:www\.)?linkedin\.com\/[^"']+)["']/i);
             if (liMatch) updates.socialLinkedIn = liMatch[1];
 
@@ -364,11 +928,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                 const mostFrequent = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b);
                 if (counts[mostFrequent] > 2) updates.addressRegion = mostFrequent; // Require at least 3 occurrences to be confident
             }
-            
+
             // Extract AggregateRating (e.g. "4.9/5", "4.9 out of 5", "120 reviews")
             const ratingValueMatch = allSrcText.match(/(?:(?:rated|rating|average\s*rating)\s*(?:of|is)?\s*)?([4-5](?:\.\d+)?)\s*\/\s*5|([4-5](?:\.\d+)?)\s*(?:out\s*of|\\\/)\s*5(?:\s*stars?)?/i);
             const reviewCountMatch = allSrcText.match(/(?:based\s*on\s*|over\s*)?([\d,]+)\s*(?:(?:five|5)[\s-]*star|customer)?\s*reviews?/i);
-            
+
             if (ratingValueMatch) updates.reviewRating = (ratingValueMatch[1] || ratingValueMatch[2]).trim();
             if (reviewCountMatch) updates.reviewCount = reviewCountMatch[1].replace(/,/g, '').trim();
 
@@ -412,10 +976,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     };
 
     const scanForRoutes = async (zipContent: any, rootPath: string): Promise<RouteInfo[]> => {
-        const normalize = (p: string) => p.startsWith(rootPath) ? p.slice(rootPath.length) : p;
+        const normalizedRootPath = rootPath.replace(/\\/g, '/');
+        const normalize = (p: string) => {
+            const normalizedPath = p.replace(/\\/g, '/');
+            return normalizedPath.startsWith(normalizedRootPath) ? normalizedPath.slice(normalizedRootPath.length) : normalizedPath;
+        };
         const files = Object.keys(zipContent.files);
         const routerFile = files.find(f => normalize(f).match(/^(src\/App\.(tsx|jsx|js)|src\/routes\.(tsx|jsx|js)|src\/main\.(tsx|jsx|js))$/i));
         const routes: RouteInfo[] = [{ path: '/', slug: 'home', title: 'Home' }];
+        const addRoute = (path: string) => {
+            const slug = path.replace(/^\/+|\/+$/g, '').replace(/\/+/g, '-').replace(/[^a-z0-9-]/gi, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+            const title = slug.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+            if (!routes.some(r => r.path === path)) {
+                routes.push({ path, slug, title });
+                addLog(`  â€¢ Found Route: ${path} -> ${title}`);
+            }
+        };
 
         if (routerFile) {
             try {
@@ -436,7 +1012,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                     }
                 }
                 function addRoute(path: string) {
-                    const slug = path.replace(/^\/+/, '').replace(/\/+/g, '-').replace(/[^a-z0-9-]/gi, '-').toLowerCase();
+                    const slug = path.replace(/^\/+|\/+$/g, '').replace(/\/+/g, '-').replace(/[^a-z0-9-]/gi, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
                     const title = slug.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
                     if (!routes.some(r => r.path === path)) {
                         routes.push({ path, slug, title });
@@ -445,7 +1021,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                 }
                 addLog(`Scanner: Discovered ${routes.length} routes in ${normalize(routerFile)}`, 'success');
             } catch { addLog("Scanner: Failed to parse router file.", 'warning'); }
-        } else { addLog("Scanner: No router file found. Defaulting to single page.", 'info'); }
+        } else {
+            const prerenderedHtmlFiles = files
+                .map(normalize)
+                .filter(file => /^prerendered\/(?!thumb-).+\.html$/i.test(file));
+
+            if (prerenderedHtmlFiles.length > 0) {
+                prerenderedHtmlFiles.forEach((file) => {
+                    const slug = file.replace(/^prerendered\//i, '').replace(/\.html$/i, '').trim();
+                    if (!slug || slug.toLowerCase() === 'home') return;
+                    addRoute(`/${slug}/`);
+                });
+                addLog(`Scanner: Discovered ${routes.length} prerendered routes from build artifact`, 'success');
+            } else {
+                addLog("Scanner: No router file found. Defaulting to single page.", 'info');
+            }
+        }
         return routes;
     };
 
@@ -523,7 +1114,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             setProgress(30);
             routesToProcess.forEach(route => { if (route.path === '/') return; const cleanPath = route.path.replace(/^\/+/, '').replace(/\/+$/, ''); const depth = cleanPath.split('/').filter(p => p).length; const prefix = depth > 0 ? '../'.repeat(depth) : './'; const routeHtml = indexHtml.replace(/href="\/assets\//g, `href="${prefix}assets/`).replace(/src="\/assets\//g, `src="${prefix}assets/`); distZip.file(`${cleanPath}/index.html`, routeHtml); });
             setProgress(50); distZip.file("assets/style.css", "/* Compiled CSS Placeholder */ body { font-family: sans-serif; }"); distZip.file("assets/app.js", "console.log('Theme Factory: Local Build Mode');");
-            addLog("Local Build Complete. Converting...", 'success'); setStep(STEPS.PROCESSING); await processConversion(distZip, "", "lovable", routesToProcess, conversionMode, false, sourceFaqData);
+            addLog("Local Build Complete. Converting...", 'success'); setStep(STEPS.PROCESSING); await processConversion(distZip, "", "lovable", routesToProcess, conversionMode, false, sourceFaqData, themeSlug || sourceFile?.name.replace('.zip', '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase());
         } catch (err: unknown) { setStep(STEPS.ERROR); addLog(`Local Build Failed: ${(err as Error).message}`, 'error'); }
     };
 
@@ -539,44 +1130,104 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             // Pre-extract FAQ data from source before it's sent to the remote builder
             const sourceFaqData = await preExtractFaqFromSource(cleanZip);
             const cleanBlob = await cleanZip.generateAsync({ type: 'blob', compression: "DEFLATE" });
-            const formData = new FormData(); formData.append('zip', cleanBlob, "source.zip"); formData.append('platform', selectedPlatform);
-            const routePaths = routesToProcess.map(r => r.path); formData.append('routes', JSON.stringify(routePaths));
-            formData.append('render_wait_time', renderDelay.toString());
+            const routePaths = routesToProcess.map(r => r.path);
+            const buildBaseUrl = remoteConfig.url.replace(/\/build\/?$/, '');
+            const initUrl = `${buildBaseUrl}/build/init`;
+            const initBody = new URLSearchParams({
+                platform: selectedPlatform,
+                routes: JSON.stringify(routePaths),
+                render_wait_time: renderDelay.toString(),
+            });
             addLog(`Sending ${routePaths.length} routes for build + prerendering...`, 'info'); setStep(STEPS.WAKING_UP); setProgress(10);
             await waitForHealth(remoteConfig.url); setStep(STEPS.UPLOADING_REMOTE); addLog(`Uploading to ${remoteConfig.url}...`);
-            abortControllerRef.current = new AbortController(); const uploadTimeout = setTimeout(() => abortControllerRef.current?.abort(), REMOTE_BUILD_REQUEST_TIMEOUT_MS);
-            let response;
-            try { response = await fetch(remoteConfig.url, { method: 'POST', headers: { 'Authorization': `Bearer ${remoteConfig.apiKey}`, 'ngrok-skip-browser-warning': 'true' }, body: formData, signal: abortControllerRef.current.signal }); clearTimeout(uploadTimeout); }
-            catch (e: unknown) { const err = e as Error; if (err.name === 'AbortError') throw new Error("Remote build request timed out before the server acknowledged the job (60m)."); throw e; }
-            if (!response.ok) { const errText = await response.text(); throw new Error(`Remote Build Failed (${response.status}): ${errText}`); }
-            if (response.status === 202) { 
-                const jobData = await response.json(); 
-                addLog(`Job Queued: ${jobData.jobId}`, 'success'); 
-                
-                if (isAdmin) {
-                    const socketUrl = remoteConfig.url.replace(/\/build\/?$/, '');
-                    const newSocket = io(socketUrl);
-                    
-                    newSocket.on('connect', () => {
-                        newSocket.emit('join_job', jobData.jobId || jobData.id);
-                        addLog(`Socket Connected: Streaming Live Logs...`, 'info');
-                    });
-                    
-                    newSocket.on('log', (data) => {
-                        addLog(data.msg, data.type);
-                    });
-                    
-                    newSocket.on('progress', (val) => {
-                        setProgress(val);
-                    });
-                    
-                    setSocket(newSocket);
-                }
-
-                try { await pollJobStatus(jobData.jobId || jobData.id, routesToProcess, sourceFaqData); } 
-                catch (pollErr: unknown) { setStep(STEPS.ERROR); addLog((pollErr as Error).message, 'error'); } 
+            abortControllerRef.current = new AbortController();
+            const initTimeout = setTimeout(() => abortControllerRef.current?.abort(), REMOTE_BUILD_INIT_TIMEOUT_MS);
+            let initResponse;
+            try {
+                initResponse = await fetch(initUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${remoteConfig.apiKey}`,
+                        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                        'ngrok-skip-browser-warning': 'true',
+                    },
+                    body: initBody.toString(),
+                    signal: abortControllerRef.current.signal,
+                });
+            } catch (e: unknown) {
+                const err = e as Error;
+                if (err.name === 'AbortError') throw new Error("Remote build init request timed out.");
+                throw e;
+            } finally {
+                clearTimeout(initTimeout);
             }
-            else { setStep(STEPS.DOWNLOADING_ARTIFACT); const distBlob = await response.blob(); await handleBuildArtifact(distBlob, routesToProcess, sourceFaqData); }
+            if (!initResponse.ok) {
+                const errText = await initResponse.text();
+                throw new Error(`Remote build init failed (${initResponse.status}): ${errText}`);
+            }
+
+            const initData = await initResponse.json();
+            const jobId = initData.jobId || initData.id;
+            if (!jobId) throw new Error("Remote build init did not return a job ID.");
+            const initStatus = typeof initData.status === 'string' ? initData.status : '';
+            addLog(
+                initStatus === 'awaiting_upload'
+                    ? `Upload slot ready: ${jobId}`
+                    : `Remote build initialized: ${jobId}`,
+                'success',
+            );
+
+            const uploadUrl = `${buildBaseUrl}/build/${jobId}/upload`;
+            const uploadFormData = new FormData();
+            uploadFormData.append('zip', cleanBlob, file.name);
+            abortControllerRef.current = new AbortController();
+            const uploadTimeout = setTimeout(() => abortControllerRef.current?.abort(), REMOTE_BUILD_UPLOAD_TIMEOUT_MS);
+            let uploadResponse;
+            try {
+                uploadResponse = await fetch(uploadUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${remoteConfig.apiKey}`,
+                        'ngrok-skip-browser-warning': 'true',
+                    },
+                    body: uploadFormData,
+                    signal: abortControllerRef.current.signal,
+                });
+            } catch (e: unknown) {
+                const err = e as Error;
+                if (err.name === 'AbortError') throw new Error("Remote build upload timed out before the ZIP finished uploading.");
+                throw e;
+            } finally {
+                clearTimeout(uploadTimeout);
+            }
+            if (!uploadResponse.ok) {
+                const errText = await uploadResponse.text();
+                throw new Error(`Remote build upload failed (${uploadResponse.status}): ${errText}`);
+            }
+            addLog(`Job Queued: ${jobId}`, 'success');
+
+            if (isAdmin) {
+                const socketUrl = remoteConfig.url.replace(/\/build\/?$/, '');
+                const newSocket = io(socketUrl);
+
+                newSocket.on('connect', () => {
+                    newSocket.emit('join_job', jobId);
+                    addLog(`Socket Connected: Streaming Live Logs...`, 'info');
+                });
+
+                newSocket.on('log', (data) => {
+                    addLog(data.msg, data.type);
+                });
+
+                newSocket.on('progress', (val) => {
+                    setProgress(val);
+                });
+
+                setSocket(newSocket);
+            }
+
+            try { await pollJobStatus(jobId, routesToProcess, sourceFaqData); }
+            catch (pollErr: unknown) { setStep(STEPS.ERROR); addLog((pollErr as Error).message, 'error'); }
         } catch (err: unknown) { setStep(STEPS.ERROR); addLog(`Remote Error: ${(err as Error).message}`, 'error'); }
     };
 
@@ -604,8 +1255,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                 const data = await res.json();
                 if (data.status === 'completed' || data.status === 'success') { addLog("Build successful!", 'success'); let downloadLink = data.downloadUrl; if (downloadLink && !downloadLink.startsWith('http')) { downloadLink = `${baseUrl}${downloadLink}`; } if (downloadLink) await downloadArtifact(downloadLink, routesToProcess, preExtractedFaq); return; }
                 else if (data.status === 'failed' || data.status === 'error') { throw new Error(`Build failed: ${data.error || 'Unknown error'}`); }
-                else { 
-                    if (attempts % 5 === 0 && !isAdmin) { addLog(`Building... (${attempts * 3}s elapsed)`); } 
+                else {
+                    if (attempts % 5 === 0 && !isAdmin) { addLog(`Building... (${attempts * 3}s elapsed)`); }
                     if (!isAdmin) { setProgress(Math.min(90, 30 + Math.floor(attempts / 2))); }
                 }
             } catch (e: unknown) { const err = e as Error; if (err.message.includes('Job ID not found') || err.message.includes('Build failed')) throw err; }
@@ -615,7 +1266,106 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     };
 
     const downloadArtifact = async (url: string, routesToProcess: RouteInfo[], preExtractedFaq?: {q: string, a: string}[]) => { setStep(STEPS.DOWNLOADING_ARTIFACT); addLog("Downloading build artifact..."); const res = await fetch(url, { headers: { 'ngrok-skip-browser-warning': 'true' } }); if (!res.ok) throw new Error("Failed to download artifact."); const blob = await res.blob(); await handleBuildArtifact(blob, routesToProcess, preExtractedFaq); };
-    const handleBuildArtifact = async (blob: Blob, routesToProcess: RouteInfo[], preExtractedFaq?: {q: string, a: string}[]) => { if (!JSZipLib) throw new Error("JSZip utility missing."); setStep(STEPS.PROCESSING); addLog("Artifact received. Processing...", 'info'); const distZip = new JSZipLib(); const distContent = await distZip.loadAsync(blob); await processConversion(distContent, "", selectedPlatform, routesToProcess, conversionMode, false, preExtractedFaq); };
+    const handleBuildArtifact = async (blob: Blob, routesToProcess: RouteInfo[], preExtractedFaq?: {q: string, a: string}[]) => { if (!JSZipLib) throw new Error("JSZip utility missing."); setStep(STEPS.PROCESSING); addLog("Artifact received. Processing...", 'info'); const distZip = new JSZipLib(); const distContent = await distZip.loadAsync(blob); await processConversion(distContent, "", selectedPlatform, routesToProcess, conversionMode, false, preExtractedFaq, themeSlug || sourceFile?.name.replace('.zip', '').replace(/[^a-z0-9-_]/gi, '-').toLowerCase()); };
+    const handleCertifiedUrlCaptureBuild = async () => {
+        if (!JSZipLib) throw new Error("JSZip utility missing.");
+
+        const trimmedUrl = urlCaptureSettings.sourceUrl.trim();
+        if (!trimmedUrl) {
+            alert('Please enter a Public URL before running certified capture.');
+            return;
+        }
+
+        setStep(STEPS.PROCESSING);
+        setProgress(5);
+        setStaticExportReport(null);
+        setUrlCaptureReport(null);
+        setUrlCaptureStatus('idle');
+        setFinalZipBlob(null);
+        setPluginZipBlob(null);
+        setFormsPluginZipBlob(null);
+        setRedirectsData(null);
+        setLlmsData(null);
+        addLog(`Starting certified URL capture for ${trimmedUrl}...`, 'info');
+
+        try {
+            await waitForHealth(remoteConfig.url);
+
+            const response = await fetch(remoteConfig.url.replace(/\/build\/?$/, '/capture-url-static'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${remoteConfig.apiKey}`,
+                    'ngrok-skip-browser-warning': 'true',
+                },
+                body: JSON.stringify({
+                    ...urlCaptureSettings,
+                    seoSettings: {
+                        companyName: seoSettings.companyName,
+                        url: seoSettings.url,
+                        description: seoSettings.description,
+                        telephone: seoSettings.telephone,
+                        addressLocality: seoSettings.addressLocality,
+                        addressRegion: seoSettings.addressRegion,
+                        addressCountry: seoSettings.addressCountry,
+                        priceRange: seoSettings.priceRange,
+                        ogImage: seoSettings.ogImage,
+                        socialFacebook: seoSettings.socialFacebook,
+                        socialInstagram: seoSettings.socialInstagram,
+                        socialTwitter: seoSettings.socialTwitter,
+                        socialLinkedIn: seoSettings.socialLinkedIn,
+                        primaryLocale: seoSettings.primaryLocale,
+                        alternateLocales: seoSettings.alternateLocales,
+                    },
+                    staticSiteSettings,
+                    siteSlug: themeSlug || '',
+                }),
+            });
+
+            if (!response.ok) {
+                throw new Error(`Certified URL capture failed (${response.status}): ${await response.text()}`);
+            }
+
+            const result = await response.json() as UrlCaptureTransportResponse;
+            const resolvedThemeSlug = result.artifact.siteSlug || themeSlug || 'captured-site';
+            setThemeSlug(resolvedThemeSlug);
+            setUrlCaptureStatus(result.certification.status);
+            setUrlCaptureReport(result.report);
+            setStaticExportReport(result.staticResult.report);
+            setRedirectsData(result.staticResult.files['_redirects'] || null);
+            setLlmsData(result.staticResult.files['llms.txt'] || null);
+
+            result.report.recommendations.forEach((item) => addLog(`URL capture recommendation: ${item}`, 'warning'));
+            result.report.blockers.forEach((item) => addLog(`URL capture blocker: ${item}`, result.certification.status === 'uncertified' ? 'error' : 'warning'));
+
+            const archiveRootName = `${resolvedThemeSlug}-static-site`;
+            const newZip = new JSZipLib();
+            const folder = newZip.folder(archiveRootName);
+            if (!folder) throw new Error("Could not create folder in zip");
+
+            Object.entries(result.staticResult.assetFilesBase64).forEach(([filePath, content]) => {
+                folder.file(filePath, decodeBase64Asset(content));
+            });
+            Object.entries(result.staticResult.files).forEach(([filePath, content]) => {
+                folder.file(filePath, content);
+            });
+
+            setConversionStats({
+                php: 0,
+                js: result.staticResult.assetCounts.js,
+                css: result.staticResult.assetCounts.css,
+                images: result.staticResult.assetCounts.assets,
+                routes: result.report.routesCaptured,
+                patterns: 0,
+            });
+
+            addLog(`Certified URL capture finished with status: ${result.certification.status}`, result.certification.status === 'certified' ? 'success' : 'warning');
+            await finishBuild(newZip);
+        } catch (err: unknown) {
+            setStep(STEPS.ERROR);
+            addLog(`Certified URL capture failed: ${(err as Error).message}`, 'error');
+        }
+    };
 
     const generateCompanionPlugin = async (zipInstance: any): Promise<Blob> => {
         const folder = zipInstance.folder('theme-factory-blocks');
@@ -628,11 +1378,31 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         return await zipInstance.generateAsync({ type: 'blob', compression: 'DEFLATE' });
     };
 
+    const generateWhipifyFormsPlugin = async (zipInstance: any): Promise<Blob> => {
+        const folder = zipInstance.folder('whipify-forms-plugin');
+
+        Object.entries(WHIPIFY_FORMS_PLUGIN_FILES).forEach(([path, content]) => {
+            folder.file(path, content);
+        });
+
+        return await zipInstance.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+    };
+
+    const generateElementorImporterPlugin = async (zipInstance: any): Promise<Blob> => {
+        const folder = zipInstance.folder('whipify-elementor-importer');
+
+        Object.entries(ELEMENTOR_IMPORTER_PLUGIN_FILES).forEach(([path, content]) => {
+            folder.file(path, content);
+        });
+
+        return await zipInstance.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+    };
+
     const finishBuild = async (zipInstance: any) => {
         try {
             const blob = await zipInstance.generateAsync({ type: 'blob' });
             setFinalZipBlob(blob);
-            
+
             // Save debug info to state for the console UI
             if ((window as any).__debugOutput) {
                 setDebugConsoleText((window as any).__debugOutput);
@@ -662,7 +1432,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                 // If path starts with / or ./ AND has a valid extension OR contains 'assets/'
                 if ((value.match(/^(\.\/|\/)/) && validExtensions.test(value)) || value.includes('assets/')) {
                     let cleanPath = value.replace(/^(\.\/|\/)+/, ''); // strip leading / or ./
-                    
+
                     // Don't double add assets if replacement base already has it
                     return `${attr}="${replacementBase}${cleanPath}"`;
                 }
@@ -689,13 +1459,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             });
     };
 
-    const processConversion = async (zipContent: any, _rootPath: string, _platform: string, routes: RouteInfo[], mode: 'gutenberg-native' | 'react-spa', auditBypassed = false, preExtractedFaqData?: {q: string, a: string}[]) => {
+    const processConversion = async (zipContent: any, _rootPath: string, _platform: string, routes: RouteInfo[], mode: ConversionMode, auditBypassed = false, preExtractedFaqData?: {q: string, a: string}[], themeSlugOverride?: string) => {
         if (!JSZipLib) return;
 
-        const themeFnPrefix = (themeSlug || 'ai-theme').replace(/[^a-z0-9]/gi, '_');
-        const themeName = (themeSlug || 'AI Theme').split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+        const resolvedThemeSlug = themeSlugOverride || themeSlug || 'ai-theme';
+        const archiveRootName = mode === 'static-site' ? `${resolvedThemeSlug}-static-site` : resolvedThemeSlug;
+        const themeFnPrefix = resolvedThemeSlug.replace(/[^a-z0-9]/gi, '_');
+        const themeName = resolvedThemeSlug.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
 
-        const routesToProcess = routes.filter(r => selectedRoutes.has(r.path));
+        const routesToProcess = selectedRoutes.size > 0
+            ? routes.filter(r => selectedRoutes.has(r.path))
+            : routes;
 
         // Array to hold all audit logs across all pages (Lifted from line 2897)
         const allAuditLogs: AuditLog[] = [];
@@ -713,7 +1487,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         }
 
         addLog(`Converting ${routesToProcess.length} pages...`, 'info'); setProgress(5);
-        const newZip = new JSZipLib(); const folder = newZip.folder(themeSlug || 'ai-theme'); if (!folder) throw new Error("Could not create folder in zip");
+        const newZip = new JSZipLib(); const folder = newZip.folder(archiveRootName); if (!folder) throw new Error("Could not create folder in zip");
 
         const filesToProcess = allFiles.filter(name => effectiveRoot ? name.startsWith(effectiveRoot) : true);
 
@@ -727,6 +1501,29 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         setThumbnails(thumbUrls);
 
         const stats: ConversionStats = { php: 0, js: 0, css: 0, images: 0, routes: routesToProcess.length, patterns: 0 };
+        const generatedFormsManifest: GeneratedFormManifestEntry[] = [];
+        const elementorPagesManifest: Array<{
+            path: string;
+            slug: string;
+            title: string;
+            templateType: 'wp-page';
+            pageTemplate: 'default';
+            elementorData: any[];
+            pageSettings: Record<string, any> | any[];
+           stats: { nativeWidgets: number; customWidgets: number; fallbackHtmlWidgets: number; containers: number };
+            warnings: string[];
+        }> = [];
+        const elementorTemplatesManifest: Array<{
+            title: string;
+            slug: string;
+            templateType: 'section';
+            sourceId: string;
+            elementorData: any[];
+            pageSettings: Record<string, any> | any[];
+        }> = [];
+        const wordpressContentRegistry = mode === 'gutenberg-native'
+            ? createEmptyWordPressContentRegistry()
+            : null;
         let mainHtml = "";
         const foundCssFiles: string[] = [];
         const cssFiles: string[] = []; const jsFiles: string[] = []; const assetFiles: string[] = []; const otherFiles: string[] = [];
@@ -751,16 +1548,87 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             } catch { return null; }
         };
 
-        const pickShellHtml = async (): Promise<{ html: string; source: string }> => {
-            const homeRoute = routesToProcess.find(r => r.path === '/') || routesToProcess[0];
-            const homeSlug = homeRoute?.slug || 'home';
-            const candidates = [
-                `${effectiveRoot}prerendered/_shell.html`,
-                `prerendered/_shell.html`,
-                `${effectiveRoot}prerendered/${homeSlug}.html`,
-                `prerendered/${homeSlug}.html`,
-                actualIndexFile
-            ];
+        if (mode === 'static-site') {
+            addLog(`Generating static export for ${routesToProcess.length} routes...`, 'info');
+            setProgress(15);
+
+            const staticOutput = await buildStaticSiteFromArtifactZip({
+                zipContent,
+                routes: routesToProcess,
+                siteSlug: resolvedThemeSlug,
+                seoSettings: {
+                    companyName: seoSettings.companyName,
+                    url: seoSettings.url,
+                    description: seoSettings.description,
+                    telephone: seoSettings.telephone,
+                    addressLocality: seoSettings.addressLocality,
+                    addressRegion: seoSettings.addressRegion,
+                    addressCountry: seoSettings.addressCountry,
+                    priceRange: seoSettings.priceRange,
+                    ogImage: seoSettings.ogImage,
+                    socialFacebook: seoSettings.socialFacebook,
+                    socialInstagram: seoSettings.socialInstagram,
+                    socialTwitter: seoSettings.socialTwitter,
+                    socialLinkedIn: seoSettings.socialLinkedIn,
+                    primaryLocale: seoSettings.primaryLocale,
+                    alternateLocales: seoSettings.alternateLocales,
+                },
+                staticSiteSettings,
+            });
+
+            Object.entries(staticOutput.assetFiles).forEach(([filePath, data]) => {
+                folder.file(filePath, data);
+            });
+            Object.entries(staticOutput.files).forEach(([filePath, content]) => {
+                folder.file(filePath, content);
+            });
+
+            staticOutput.report.warnings.forEach((warning) => {
+                addLog(`Static export warning [${warning.code}]: ${warning.message}`, 'warning');
+            });
+            if (staticOutput.report.warnings.length === 0) {
+                addLog('Static export checks passed: forms, entity data, geo signals, and AI files look ready.', 'success');
+            }
+
+            setStaticExportReport(staticOutput.report);
+        setPluginZipBlob(null);
+        setFormsPluginZipBlob(null);
+            setRedirectsData(staticOutput.files['_redirects'] || null);
+            setLlmsData(staticOutput.files['llms.txt'] || null);
+            setConversionStats({
+                php: 0,
+                js: staticOutput.assetCounts.js,
+                css: staticOutput.assetCounts.css,
+                images: staticOutput.assetCounts.assets,
+                routes: routesToProcess.length,
+                patterns: 0,
+            });
+            addLog(`Static site export generated for ${routesToProcess.length} routes.`, 'success');
+            await finishBuild(newZip);
+            return;
+        }
+
+        const chromeContextPlan = buildWordPressChromeContextPlan(routesToProcess);
+        addLog(`WordPress chrome contexts: ${chromeContextPlan.contexts.join(', ')}`, 'info');
+
+        const getRouteShellCandidates = (route?: RouteInfo | null, includeGlobalShell = false): string[] => {
+            const normalizedPath = route?.path === '/' ? '/' : `/${(route?.path || '').replace(/^\/+|\/+$/g, '')}/`;
+            const cleanRoute = normalizedPath.replace(/^\/|\/$/g, '');
+            const routeSlug = route?.slug || 'home';
+
+            return [
+                includeGlobalShell ? `${effectiveRoot}prerendered/_shell.html` : '',
+                includeGlobalShell ? `prerendered/_shell.html` : '',
+                `${effectiveRoot}prerendered/${routeSlug}.html`,
+                `prerendered/${routeSlug}.html`,
+                normalizedPath === '/' ? `${effectiveRoot}index.html` : `${effectiveRoot}${cleanRoute}/index.html`,
+                normalizedPath === '/' ? actualIndexFile : `${effectiveRoot}${cleanRoute}.html`,
+                actualIndexFile,
+            ].filter(Boolean) as string[];
+        };
+
+        const pickShellHtmlForRoute = async (route?: RouteInfo | null, includeGlobalShell = false): Promise<{ html: string; source: string }> => {
+            const candidates = getRouteShellCandidates(route, includeGlobalShell);
             for (const candidate of candidates) {
                 if (!candidate) continue;
                 const html = await readHtmlFromZip(candidate);
@@ -770,6 +1638,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                 }
             }
             return { html: mainHtml, source: actualIndexFile || 'mainHtml' };
+        };
+
+        const pickShellHtml = async (): Promise<{ html: string; source: string }> => {
+            const homeRoute = routesToProcess.find(r => r.path === '/') || routesToProcess[0];
+            return pickShellHtmlForRoute(homeRoute, true);
         };
 
         const { html: shellHtml, source: shellSource } = await pickShellHtml();
@@ -939,6 +1812,64 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             return wrap.innerHTML;
         };
 
+        const rewriteWordPressRouteLinks = (html: string, context: string = 'global'): string => {
+            let rewritten = localizeWordPressChromePaths(html, context, routesToProcess, chromeContextPlan.routeContextByPath);
+            for (const route of routesToProcess) {
+                if (route.path === '/') continue;
+                const reactPath = route.path;
+                const wpSlug = route.slug;
+                const escapedPath = reactPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                rewritten = rewritten
+                    .replace(new RegExp(`href=["']${escapedPath}/?["']`, 'g'), `href="/${wpSlug}/"`)
+                    .replace(new RegExp(`href=["']${escapedPath}#`, 'g'), `href="/${wpSlug}/#`)
+                    .replace(new RegExp(`data-href=["']${escapedPath}/?["']`, 'g'), `data-href="/${wpSlug}/"`);
+            }
+            return rewritten;
+        };
+
+        const extractChromeFromShell = (html: string): { headerHtml: string; footerHtml: string } => {
+            if (!html) return { headerHtml: '', footerHtml: '' };
+            const shellDoc = new DOMParser().parseFromString(html, 'text/html');
+            const shellRoot = shellDoc.getElementById('root') || shellDoc.body;
+            if (!shellRoot) return { headerHtml: '', footerHtml: '' };
+
+            let headerHtml = '';
+            let footerHtml = '';
+
+            const headerEl = shellRoot.querySelector('header');
+            if (headerEl) {
+                headerHtml = headerEl.outerHTML;
+            } else {
+                const navEl = shellRoot.querySelector('nav');
+                if (navEl) headerHtml = navEl.outerHTML;
+            }
+
+            const footerEl = shellRoot.querySelector('footer');
+            if (footerEl) {
+                footerHtml = footerEl.outerHTML;
+            }
+
+            if (headerHtml) {
+                headerHtml = normalizeHeaderDropdowns(headerHtml);
+            }
+
+            return { headerHtml, footerHtml };
+        };
+
+        const chromeVariants: Record<string, { headerHtml: string; footerHtml: string; source: string }> = {};
+        for (const context of chromeContextPlan.contexts) {
+            const representativeRoute = chromeContextPlan.representativeRouteByContext[context];
+            const variantShell = context === 'global'
+                ? { html: shellHtml, source: shellSource }
+                : await pickShellHtmlForRoute(representativeRoute, false);
+            const extractedChrome = extractChromeFromShell(variantShell.html);
+            chromeVariants[context] = {
+                ...extractedChrome,
+                source: variantShell.source,
+            };
+            addLog(`Chrome variant "${context}" source: ${variantShell.source}`, 'info');
+        }
+
         // PATTERN EXTRACTION LOGIC
         const globalPatterns: { headerPattern?: string, footerPattern?: string } = {};
         try {
@@ -981,12 +1912,69 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             setProgress(15 + Math.floor((i / allFilesToCopy.length) * 25));
         }
         stats.css = cssFiles.length; stats.js = jsFiles.length; stats.images = assetFiles.length;
-        addLog(`Copied ${allFilesToCopy.length} files`, 'success'); setProgress(40);
+       addLog(`Copied ${allFilesToCopy.length} files`, 'success'); setProgress(40);
+
+       const quickEditorDefaults = buildWhipifyQuickEditorDefaults(seoSettings);
+       let quickEditorSlotSupport = mergeWhipifyQuickEditorSlotSupport();
+       if (wordpressContentRegistry) {
+           appendWordPressContentRegistrySharedContentTargets(wordpressContentRegistry, {
+               sourcePath: 'functions.php',
+           });
+           appendWordPressContentRegistryFrontendEditorTargets(wordpressContentRegistry, {
+               sourcePath: 'functions.php',
+           });
+       }
+
+       Object.entries(chromeVariants).forEach(([context, variant]) => {
+            if (variant.headerHtml) {
+                const processedHeaderVariant = rewriteWordPressRouteLinks(
+                    replaceAssetPaths(variant.headerHtml, '<?php echo esc_url(get_template_directory_uri()); ?>/'),
+                    context,
+                );
+                if (mode === 'gutenberg-native') {
+                    const boundHeader = bindWhipifyQuickEditorChrome('header', processedHeaderVariant, quickEditorDefaults);
+                    quickEditorSlotSupport = mergeWhipifyQuickEditorSlotSupport(quickEditorSlotSupport, boundHeader.slotSupport);
+                    if (wordpressContentRegistry) {
+                        appendWordPressContentRegistryChrome(wordpressContentRegistry, {
+                            context,
+                            sourceRoutePath: chromeContextPlan.representativeRouteByContext[context]?.path,
+                            headerFile: `partials/header-${context}.php`,
+                            support: boundHeader.slotSupport,
+                        });
+                    }
+                    folder.file(`partials/header-${context}.php`, boundHeader.html);
+                } else {
+                    folder.file(`partials/header-${context}.php`, processedHeaderVariant);
+                }
+            }
+            if (variant.footerHtml) {
+                const processedFooterVariant = rewriteWordPressRouteLinks(
+                    replaceAssetPaths(variant.footerHtml, '<?php echo esc_url(get_template_directory_uri()); ?>/'),
+                    context,
+                );
+                if (mode === 'gutenberg-native') {
+                    const boundFooter = bindWhipifyQuickEditorChrome('footer', processedFooterVariant, quickEditorDefaults);
+                    quickEditorSlotSupport = mergeWhipifyQuickEditorSlotSupport(quickEditorSlotSupport, boundFooter.slotSupport);
+                    if (wordpressContentRegistry) {
+                        appendWordPressContentRegistryChrome(wordpressContentRegistry, {
+                            context,
+                            sourceRoutePath: chromeContextPlan.representativeRouteByContext[context]?.path,
+                            footerFile: `partials/footer-${context}.php`,
+                            support: boundFooter.slotSupport,
+                        });
+                    }
+                    folder.file(`partials/footer-${context}.php`, boundFooter.html);
+                } else {
+                    folder.file(`partials/footer-${context}.php`, processedFooterVariant);
+                }
+            }
+        });
+        addLog(`Generated ${chromeContextPlan.contexts.length} localized header/footer variant sets`, 'success');
 
         const parser = new DOMParser();
         const doc = parser.parseFromString(shellHtml, 'text/html');
 
-        // FIX: Inject root marker to split header and footer correctly. 
+        // FIX: Inject root marker to split header and footer correctly.
         // This prevents duplicating the body/html tags in the header.php and footer.php
         let rootEl = doc.getElementById('root');
         let extractedHeader = '';
@@ -1034,6 +2022,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         // Define rootClasses for fallback in route processing
         // Reuse the rootEl we found/modified above to get classes
         const rootClasses = rootEl instanceof HTMLElement ? rootEl.className : '';
+        const shouldUseWordPressContentPipeline = mode === 'gutenberg-native' || mode === 'wordpress-elementor';
+        const shouldInjectPlatinumSharedFooter = mode === 'gutenberg-native';
 
         // Update main HTML resource paths for PHP (header.php/footer.php)
         const fullShell = "<!DOCTYPE html>\n" + doc.documentElement.outerHTML;
@@ -1044,7 +2034,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
 
         // FIX: In Gutenberg Native Mode, we MUST violently strip the Vite React JS bundle.
         // Otherwise, React mounts over <div id="root"> and erases the WordPress PHP page generation.
-        if (mode === 'gutenberg-native') {
+        if (shouldUseWordPressContentPipeline) {
             processedShell = processedShell.replace(/<script[^>]*src=["'][^"']*assets\/[^"']*\.js["'][^>]*><\/script>/gi, '');
             // Also strip any route-guard scripts
             processedShell = processedShell.replace(/<script[^>]*><\/script>/gi, '');
@@ -1065,14 +2055,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             // LCP Preloader for massive PageSpeed boost
             globalHeadInjection += `<!-- LCP Auto-Preload -->\n<link rel="preload" as="image" href="${ogImage}" />\n`;
         }
-        
+
         if (seoSettings.googleSiteVerification) {
             globalHeadInjection += `<meta name="google-site-verification" content="${seoSettings.googleSiteVerification}" />\n`;
         }
         if (seoSettings.bingSiteVerification) {
             globalHeadInjection += `<meta name="msvalidate.01" content="${seoSettings.bingSiteVerification}" />\n`;
         }
-        
+
         let trackingScripts = '';
         if (seoSettings.gaId) {
             trackingScripts += `\n<!-- Google Analytics -->\n<script async src="https://www.googletagmanager.com/gtag/js?id=${seoSettings.gaId}"></script>\n<script>\n  window.dataLayer = window.dataLayer || [];\n  function gtag(){dataLayer.push(arguments);}\n  gtag('js', new Date());\n  gtag('config', '${seoSettings.gaId}');\n  if(window.location.search.includes('utm_source=chatgpt.com')){gtag('event','ai_referral',{source:'chatgpt'});}\n</script>\n`;
@@ -1093,38 +2083,26 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         finalHeaderContent = finalHeaderContent.replace(/<\/head>/i, `${globalHeadInjection}${trackingScripts}${faviconHtml}</head>`);
 
         // CRITICAL: Inject extracted header/nav into header.php and footer into footer.php
-        if (mode === 'gutenberg-native') {
+        if (shouldUseWordPressContentPipeline) {
             // Strip React scripts from templates to prevent content overwriting
             finalFooterContent = finalFooterContent.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
             finalFooterContent = finalFooterContent.replace(/<script\b[^>]*\/>/gi, '');
             finalHeaderContent = finalHeaderContent.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
             finalHeaderContent = finalHeaderContent.replace(/<script\b[^>]*\/>/gi, '');
 
-            if (extractedHeader) {
-                // DEDUPE: headerPart from shell already contains a <header>/<nav>
-                // Strip them before appending the clean extractedHeader
-                addLog(`headerPart header count before dedupe: ${(finalHeaderContent.match(/<header\b/gi) || []).length}`, 'info');
-                finalHeaderContent = finalHeaderContent
-                    .replace(/<header\b[\s\S]*?<\/header>\s*/gi, '')
-                    .replace(/<nav\b[\s\S]*?<\/nav>\s*/gi, '');
+            addLog(`headerPart header count before dedupe: ${(finalHeaderContent.match(/<header\b/gi) || []).length}`, 'info');
+            finalHeaderContent = finalHeaderContent
+                .replace(/<header\b[\s\S]*?<\/header>\s*/gi, '')
+                .replace(/<nav\b[\s\S]*?<\/nav>\s*/gi, '');
+            finalFooterContent = finalFooterContent
+                .replace(/<footer\b[\s\S]*?<\/footer>\s*/gi, '');
 
-                const processedHeader = replaceAssetPaths(extractedHeader, '<?php echo esc_url(get_template_directory_uri()); ?>/');
-                finalHeaderContent = finalHeaderContent + '\n' + processedHeader;
-                addLog(`finalHeaderContent header count after dedupe: ${(finalHeaderContent.match(/<header\b/gi) || []).length}`, 'info');
-                addLog("Injected deduped navigation HTML into header.php", 'success');
-            }
+            finalHeaderContent = finalHeaderContent + '\n' + buildWordPressChromeSelectorPhp('header');
+            finalFooterContent = buildWordPressChromeSelectorPhp('footer') + '\n' + finalFooterContent;
+            addLog(`finalHeaderContent header count after dedupe: ${(finalHeaderContent.match(/<header\b/gi) || []).length}`, 'info');
+            addLog("Injected localized header/footer selectors into theme chrome", 'success');
 
-            if (extractedFooter) {
-                // DEDUPE: footerPart from shell already contains a <footer>
-                finalFooterContent = finalFooterContent
-                    .replace(/<footer\b[\s\S]*?<\/footer>\s*/gi, '');
-
-                const processedFooter = replaceAssetPaths(extractedFooter, '<?php echo esc_url(get_template_directory_uri()); ?>/');
-                finalFooterContent = processedFooter + '\n' + finalFooterContent;
-                addLog("Injected deduped footer HTML into footer.php", 'success');
-            }
-
-            addLog("Stripped React scripts from header.php and footer.php", 'info');
+            addLog("Stripped React scripts from WordPress content pipeline theme chrome", 'info');
         }
 
         (window as any).__debugOutput = `--- HEADER.PHP DEBUG ---\n`;
@@ -1152,11 +2130,26 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         }
         addLog(`  Rewrote internal links in header.php and footer.php (${routes.length - 1} routes)`, 'success');
 
-        const stickyMobileCTA = `\n<!-- Sticky Mobile CTA -->
-<div class="fixed bottom-0 left-0 w-full z-[9999] md:hidden shadow-[0_-4px_10px_rgba(0,0,0,0.1)] flex" style="background-color: ${seoSettings.ctaColor};">
-    <a href="${seoSettings.ctaLink1}" class="flex-1 text-center py-4 font-bold text-lg hover:opacity-80 transition-opacity border-r" style="color: ${seoSettings.ctaTextColor}; border-color: color-mix(in srgb, ${seoSettings.ctaTextColor} 20%, transparent);">${seoSettings.ctaText1}</a>
-    <a href="${seoSettings.ctaLink2}" class="flex-1 text-center py-4 font-bold text-lg hover:opacity-80 transition-opacity" style="color: ${seoSettings.ctaTextColor};">${seoSettings.ctaText2}</a>
-</div>\n`;
+        const stickyMobileCTA = buildStickyMobileCtaPhp({
+            ctaColor: seoSettings.ctaColor,
+            ctaTextColor: seoSettings.ctaTextColor,
+            primaryLabel: 'Primary CTA',
+            secondaryLabel: 'Secondary CTA',
+            primaryText: seoSettings.ctaText1,
+            primaryUrl: seoSettings.ctaLink1,
+            secondaryText: seoSettings.ctaText2,
+            secondaryUrl: seoSettings.ctaLink2,
+        });
+        const boundBusinessName = buildWhipifySiteContentPhpTextEcho('business_name', seoSettings.companyName);
+        const boundPhoneText = buildWhipifySiteContentPhpTextEcho('phone', seoSettings.telephone);
+        const boundPhoneHref = buildWhipifySiteContentPhpTelHref('phone', seoSettings.telephone);
+        const boundAddressLine1 = buildWhipifySiteContentPhpTextEcho('address_line_1', `${seoSettings.addressLocality}, ${seoSettings.addressRegion}`);
+        const boundAddressLine2 = buildWhipifySiteContentPhpTextEcho('address_line_2', seoSettings.addressCountry);
+        const boundContactLine = buildWhipifySiteContentPhpTextEcho('contact_line', `Website: ${seoSettings.url}`);
+       const boundFacebookLinkAttrs = buildWhipifySiteContentPhpEditableLinkAttributes('facebook', seoSettings.socialFacebook);
+       const boundInstagramLinkAttrs = buildWhipifySiteContentPhpEditableLinkAttributes('instagram', seoSettings.socialInstagram);
+       const boundLinkedInLinkAttrs = buildWhipifySiteContentPhpEditableLinkAttributes('linkedin', seoSettings.socialLinkedIn);
+       const boundXLinkAttrs = buildWhipifySiteContentPhpEditableLinkAttributes('x', seoSettings.socialTwitter);
 
         // VISIBLE ENTITY FACTS: Render highly semantic business info matching LocalBusiness schema directly into the visible footer
         const visibleEntityFacts = `
@@ -1165,18 +2158,25 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     <div style="max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 2rem;">
         <div style="display: flex; flex-wrap: wrap; gap: 2rem; width: 100%;">
             <div style="flex: 1 1 300px;">
-                <h3 style="font-size: 1.125rem; font-weight: 700; color: #0f172a; margin-bottom: 1rem;">About ${seoSettings.companyName}</h3>
-                <p style="margin-bottom: 1rem; font-size: 0.875rem; color: #475569;">${seoSettings.companyName} is a verified local business located in ${seoSettings.addressLocality}, ${seoSettings.addressRegion}. ${seoSettings.description}</p>
+                <h3 style="font-size: 1.125rem; font-weight: 700; color: #0f172a; margin-bottom: 1rem;">About ${boundBusinessName}</h3>
+                <p style="margin-bottom: 1rem; font-size: 0.875rem; color: #475569;">${boundBusinessName} is a verified local business located in ${seoSettings.addressLocality}, ${seoSettings.addressRegion}. ${seoSettings.description}</p>
                 <p style="font-size: 0.875rem; color: #475569;"><strong>Pricing:</strong> ${seoSettings.priceRange}</p>
             </div>
             <div style="flex: 1 1 300px;">
                 <h3 style="font-size: 1.125rem; font-weight: 700; color: #0f172a; margin-bottom: 1rem;">Contact &amp; Location</h3>
                 <address style="font-style: normal; line-height: 1.6; font-size: 0.875rem; color: #475569;">
-                    <strong>${seoSettings.companyName}</strong><br>
-                    ${seoSettings.addressLocality}, ${seoSettings.addressRegion}, ${seoSettings.addressCountry}<br>
-                    Phone: <a href="tel:${seoSettings.telephone}" style="color: #2563eb; text-decoration: underline;">${seoSettings.telephone}</a><br>
-                    Website: <a href="${seoSettings.url}" style="color: #2563eb; text-decoration: underline;">${seoSettings.url}</a>
+                    <strong>${boundBusinessName}</strong><br>
+                    ${boundAddressLine1}<br>
+                    ${boundAddressLine2}<br>
+                    Phone: <a href="${boundPhoneHref}" style="color: #2563eb; text-decoration: underline;">${boundPhoneText}</a><br>
+                    ${boundContactLine}
                 </address>
+                <p style="margin-top: 1rem; font-size: 0.875rem; color: #475569; display: flex; flex-wrap: wrap; gap: 0.75rem 1rem;">
+                    <a ${boundFacebookLinkAttrs} style="color: #2563eb; text-decoration: underline;">Facebook</a>
+                    <a ${boundInstagramLinkAttrs} style="color: #2563eb; text-decoration: underline;">Instagram</a>
+                    <a ${boundLinkedInLinkAttrs} style="color: #2563eb; text-decoration: underline;">LinkedIn</a>
+                    <a ${boundXLinkAttrs} style="color: #2563eb; text-decoration: underline;">X</a>
+                </p>
             </div>
             ${(seoSettings.reviewRating && seoSettings.reviewCount && parseFloat(seoSettings.reviewRating) > 0) ? `
             <div style="flex: 1 1 300px;">
@@ -1194,7 +2194,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
 `;
 
         // Note: LocalBusiness schema was moved to the intelligent Schema Router in the route loop
-        finalFooterContent = stickyMobileCTA + visibleEntityFacts + finalFooterContent;
+        if (shouldInjectPlatinumSharedFooter) {
+            finalFooterContent = stickyMobileCTA + visibleEntityFacts + finalFooterContent;
+        }
 
         // Avoid mutating saved block HTML with loading attributes here.
         // WordPress core image blocks do not round-trip custom loading attributes reliably.
@@ -1208,7 +2210,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
 
         folder.file("assets/js/route-guard.js", `(function(){if(window.TF_BLOCKED){var r=document.getElementById('root');if(r&&r.innerHTML.indexOf('404')===-1)r.innerHTML='<div style="text-align:center;padding:50px"><h1>404</h1></div>';}})();`);
 
-    
+
     // Interactive components JavaScript - enables accordion/carousel functionality WITH content injection
     // V8.7 - Improved FAQ matching with keyword scoring and topic synonyms
     folder.file("assets/js/interactive-components-v9.0.js", `/**
@@ -1218,7 +2220,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
  */
 (function() {
   'use strict';
-  
+
 
   function decodeLooseUnicodeEscapes(str) {
     return (str || '').replace(/u([0-9a-fA-F]{4})/g, function(match, hex) {
@@ -1285,7 +2287,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       });
     });
   }
-  
+
   // Remove MUI ghost elements that appear when logged into WP admin
   // Also removes extension-injected iframes containing MUI demo content
   function removeMuiGhostElements() {
@@ -1295,7 +2297,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       var title = iframe.getAttribute('title') || '';
       var src = iframe.getAttribute('src') || '';
       // Remove iframes with suspicious demo/MUI-related titles or sources
-      if (title.indexOf('demo') !== -1 || 
+      if (title.indexOf('demo') !== -1 ||
           title.indexOf('iframe-demo') !== -1 ||
           title.indexOf('extension') !== -1 ||
           src.indexOf('demo') !== -1) {
@@ -1319,17 +2321,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         }
       }
     });
-    
+
     // Remove all MUI Paper elements (React UI framework artifacts)
     document.querySelectorAll('[class*="MuiPaper"]').forEach(function(el) {
       el.remove();
     });
-    
+
     // Remove iframe-demo elements (MUI demo/preview artifacts)
     document.querySelectorAll('[class*="iframe-demo"]').forEach(function(el) {
       el.remove();
     });
-    
+
     // Remove empty MUI Typography elements
     document.querySelectorAll('[class*="MuiTypography"]').forEach(function(el) {
       if (!el.textContent || !el.textContent.trim()) {
@@ -1337,7 +2339,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       }
     });
   }
-  
+
   // MutationObserver to catch ghost elements injected after page load (admin bar, plugins, etc.)
   function observeMuiGhostElements() {
     if (!window.MutationObserver) return;
@@ -1366,30 +2368,30 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
 
     obs.observe(document.documentElement, { childList: true, subtree: true });
   }
-  
+
   // Inject content into empty accordion content regions
   function injectAccordionContent() {
     // Find all accordion content regions
     var contentRegions = document.querySelectorAll('[role="region"][data-state]');
-    
+
     contentRegions.forEach(function(region) {
       // Check if content is empty OR is placeholder text
       var t = (region.textContent || '').trim().toLowerCase();
-      var isPlaceholder = !t || t.length < 10 || 
-          t.indexOf('please contact us') !== -1 || 
+      var isPlaceholder = !t || t.length < 10 ||
+          t.indexOf('please contact us') !== -1 ||
           t.indexOf('contact us for more') !== -1 ||
           t.indexOf('more information') !== -1;
       if (!isPlaceholder) return;
-      
+
       // Find the associated button by aria-labelledby
       var labelId = region.getAttribute('aria-labelledby');
       if (!labelId) return;
-      
+
       var button = document.getElementById(labelId);
       if (!button) return;
-      
+
       var questionText = button.textContent.trim();
-      
+
       // Look up answer from FAQ data
       var answer = findAnswerForQuestion(questionText);
       if (answer) {
@@ -1398,7 +2400,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       }
     });
   }
-  
+
   function findAnswerForQuestion(q) {
     var faq = window.FAQ_DATA || [];
     q = normalizeLooseText(q || '');
@@ -1441,7 +2443,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     console.log('[FAQ] No match for: ' + q);
     return null;
   }
-  
+
   // NEW v8.8: Replace placeholder text in .accordion-content-injected divs
   function replaceFaqPlaceholders() {
     var nodes = document.querySelectorAll('.accordion-content-injected');
@@ -1556,7 +2558,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
 
     return document.getElementById(normalizedId);
   }
-  
+
   // v8.8: Inject content into empty Radix panels by aria-controls
   // This handles panels that have Radix IDs like radix-:r0:
   function injectRadixPanelContent() {
@@ -1589,7 +2591,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
 
       // CRITICAL: Remove hidden attribute so CSS can control visibility
       panel.removeAttribute('hidden');
-      
+
       // Set up animation styles
       panel.style.overflow = 'hidden';
       panel.style.transition = 'max-height 0.3s ease, height 0.3s ease';
@@ -1609,7 +2611,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       });
     });
   }
-  
+
   // FIX: FAQ items that became non-functional after conversion.
   // Source React buttons (button[data-state]) get converted to either:
   //   - <button class="wp-block-theme-factory-container ..."> (when caught by processElement data-state check)
@@ -1618,15 +2620,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
   function initButtonFaqAccordions() {
     // Look for ANY container with space-y class (FAQ groups use space-y-4)
     var spaceContainers = document.querySelectorAll('[class*="space-y"]');
-    
+
     spaceContainers.forEach(function(container) {
       // Skip if already initialized
       if (container.getAttribute('data-tf-faq-init')) return;
       if (!containerHasFaqContext(container)) return;
-      
+
       var kids = Array.from(container.children).filter(function(k) { return k instanceof HTMLElement; });
       if (kids.length < 3) return;
-      
+
       // For each child, try to find a "trigger" element that looks like a FAQ question.
       // The trigger can be:
       //   - The child itself if it's a <button> or <a href="#">
@@ -1662,7 +2664,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         }
         return null;
       }
-      
+
       // Count how many children look like FAQ questions with a known answer.
       var faqPairs = [];
       for (var i = 0; i < kids.length; i++) {
@@ -1674,7 +2676,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           faqPairs.push({ item: kids[i], trigger: trigger, question: text, answer: answer });
         }
       }
-      
+
       // Need at least 3 resolvable FAQ items.
       // If nearly all children look like questions, allow sparse answer coverage
       // so sections still initialize when faq-data extraction is incomplete.
@@ -1689,19 +2691,19 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       if (faqPairs.length < 3) return;
       var mostlyQuestionRows = questionLikeCount >= 3 && questionLikeCount >= kids.length * 0.8;
       if (!mostlyQuestionRows && faqPairs.length < kids.length * 0.5) return;
-      
+
       // Skip details-based accordions (already working natively)
       if (container.querySelector('details, summary')) return;
-      
+
       container.setAttribute('data-tf-faq-init', 'true');
-      
+
       faqPairs.forEach(function(pair) {
         var trigger = pair.trigger;
         var item = pair.item;
-        
+
         if (trigger.__tfFaqBound) return;
         trigger.__tfFaqBound = true;
-        
+
         // Create answer panel
         var answerPanel = document.createElement('div');
         answerPanel.className = 'tf-faq-answer';
@@ -1709,9 +2711,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         answerPanel.style.maxHeight = '0px';
         answerPanel.style.transition = 'max-height 0.3s ease-out';
         answerPanel.style.padding = '0 1.5rem';
-        
+
         answerPanel.innerHTML = '<div style="padding: 0 0 1.5rem 0; color: hsl(var(--muted-foreground, 215 16% 47%)); font-size: 0.875rem; line-height: 1.6;">' + pair.answer + '</div>';
-        
+
         // Insert answer. If trigger IS the item (direct child), insert after it.
         // If trigger is inside a wrapper, insert inside the wrapper after the trigger.
         if (trigger === item) {
@@ -1731,7 +2733,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           // Trigger is inside a wrapper div — insert answer after trigger inside wrapper
           trigger.insertAdjacentElement('afterend', answerPanel);
         }
-        
+
         // Style the trigger for accordion-like appearance
         if (trigger.tagName !== 'BUTTON' && trigger.tagName !== 'A') {
           trigger.setAttribute('role', 'button');
@@ -1751,7 +2753,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         trigger.style.padding = '1.5rem';
         trigger.style.fontSize = '1rem';
         trigger.style.fontWeight = '500';
-        
+
         // Find or add chevron
         var existingSvg = trigger.querySelector('svg');
         if (existingSvg) {
@@ -1763,27 +2765,27 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           chevSpan.innerHTML = '<svg style="width:1rem;height:1rem;transition:transform 0.2s;flex-shrink:0;margin-left:auto;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>';
           trigger.appendChild(chevSpan.firstChild);
         }
-        
+
         // Bind click handler
         function toggleFaq(e) {
           e.preventDefault();
           e.stopPropagation();
-          
+
           var isOpen = answerPanel.style.maxHeight !== '0px' && answerPanel.style.maxHeight !== '';
-          
+
           if (isOpen) {
             answerPanel.style.maxHeight = '0px';
           } else {
             answerPanel.style.maxHeight = answerPanel.scrollHeight + 'px';
           }
           trigger.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
-          
+
           // Rotate chevron
           var svg = trigger.querySelector('svg');
           if (svg) {
             svg.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
           }
-          
+
           // Highlight active item border
           var itemContainer = trigger.closest('.tf-faq-item') || trigger.parentElement;
           if (itemContainer && itemContainer !== container) {
@@ -1800,7 +2802,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       });
     });
   }
-  
+
   function initAccordions() {
     // Radix-style triggers are the most reliable anchor
     var triggers = document.querySelectorAll(
@@ -1841,7 +2843,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
 
       // CRITICAL: Always remove hidden attribute - we control visibility with height
       content.removeAttribute('hidden');
-      
+
       // Make content collapsible
       content.style.overflow = 'hidden';
       content.style.transition = 'max-height 0.25s ease';
@@ -1885,7 +2887,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     // ALWAYS run wp-block-button FAQ fallback in addition to Radix triggers
     // Previously gated by: if (triggers.length > 0) return; — this was WRONG
     // because pages can have BOTH Radix triggers AND wp-block-button FAQ items
-    
+
     // Method 2: Find FAQ sections with wp-block-button items
     var faqSections = [];
     document.querySelectorAll('h2, h3, .wp-block-group h3').forEach(function(heading) {
@@ -1897,23 +2899,23 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         }
       }
     });
-    
+
     faqSections.forEach(function(section) {
       var questionButtons = section.querySelectorAll('.wp-block-button a, .wp-block-button button, .wp-block-button__link.w-full, [class*="wp-block-button__link"][class*="w-full"]');
-      
+
       questionButtons.forEach(function(btn) {
         var questionText = btn.textContent.trim();
         if (!questionText || questionText.length < 5) return;
-        
+
         // CRITICAL FIX: Skip links that are actual navigation links (not FAQ questions)
         // Check for href pointing to a page (not just # or javascript:)
         var href = btn.getAttribute('href') || '';
-        if (href && href !== '#' && !href.startsWith('javascript:') && 
+        if (href && href !== '#' && !href.startsWith('javascript:') &&
             (href.startsWith('/') || href.startsWith('http'))) {
           // This is a navigation link like /contact, not an FAQ question - skip it
           return;
         }
-        
+
         btn.style.color = 'hsl(var(--foreground))';
         btn.style.backgroundColor = 'white';
         btn.style.border = '1px solid hsl(var(--border))';
@@ -1926,37 +2928,37 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         btn.style.textAlign = 'left';
         btn.style.fontWeight = '500';
         btn.style.borderRadius = '0.5rem';
-        
+
         if (!btn.querySelector('svg')) {
           btn.insertAdjacentHTML('beforeend', '<svg class="accordion-chevron" style="width: 1rem; height: 1rem; transition: transform 0.2s; flex-shrink: 0; margin-left: 0.5rem;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>');
         }
-        
+
         var answer = findAnswerForQuestion(questionText);
         var wrapper = btn.closest('.wp-block-button') || btn.parentElement;
         var existingContent = wrapper.querySelector('.accordion-content-injected');
-        
+
         if (!existingContent) {
           var contentDiv = document.createElement('div');
           contentDiv.className = 'accordion-content-injected';
           contentDiv.style.cssText = 'max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out, padding 0.3s ease-out; padding: 0 1rem; background: white; border: 1px solid hsl(var(--border)); border-top: none; border-radius: 0 0 0.5rem 0.5rem; margin-top: -0.5rem;';
-          
+
           if (answer) {
             contentDiv.innerHTML = '<div style="padding: 1rem 0; color: hsl(var(--muted-foreground)); font-size: 0.875rem; line-height: 1.5;">' + answer + '</div>';
           } else {
             contentDiv.innerHTML = '<div style="padding: 1rem 0; color: hsl(var(--muted-foreground)); font-size: 0.875rem; line-height: 1.5;">Please contact us for more information about this topic.</div>';
           }
-          
+
           wrapper.appendChild(contentDiv);
         }
-        
+
         btn.addEventListener('click', function(e) {
           e.preventDefault();
           e.stopPropagation();
-          
+
           var content = wrapper.querySelector('.accordion-content-injected');
           var chevron = btn.querySelector('svg');
           var isOpen = content && content.style.maxHeight !== '0px' && content.style.maxHeight !== '';
-          
+
           if (content) {
             if (isOpen) {
               content.style.maxHeight = '0';
@@ -1968,14 +2970,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
               content.style.paddingBottom = '1rem';
             }
           }
-          
+
           if (chevron) {
             chevron.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
           }
         });
       });
     });
-    
+
     // Resize fix for open Radix panels
     window.addEventListener('resize', function() {
       document.querySelectorAll('button[aria-controls][aria-expanded="true"]').forEach(function(btn) {
@@ -1985,35 +2987,35 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       });
     });
   }
-  
+
   // ============================================
-  // RADIX TABS - Handle Radix UI tab components  
+  // RADIX TABS - Handle Radix UI tab components
   // Critical for pricing tables with multiple tabs
   // ============================================
   function initRadixTabs() {
     // Find all tab triggers (buttons with role="tab")
     var tabTriggers = document.querySelectorAll('button[role="tab"]');
     if (!tabTriggers.length) return;
-    
+
     // Group tabs by their container (tablist)
     var tabGroups = {};
     tabTriggers.forEach(function(trigger) {
       var tablist = trigger.closest('[role="tablist"]');
       if (!tablist) return;
-      
+
       var groupId = tablist.getAttribute('aria-orientation') + '-' + Array.from(document.querySelectorAll('[role="tablist"]')).indexOf(tablist);
       if (!tabGroups[groupId]) {
         tabGroups[groupId] = { tablist: tablist, triggers: [] };
       }
       tabGroups[groupId].triggers.push(trigger);
     });
-    
+
     // Process each tab group
     Object.keys(tabGroups).forEach(function(groupId) {
       var group = tabGroups[groupId];
       var activeTrigger = null;
       var activePanel = null;
-      
+
       // Find active tab and its content
       group.triggers.forEach(function(trigger) {
         if (trigger.getAttribute('data-state') === 'active') {
@@ -2024,7 +3026,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           }
         }
       });
-      
+
       // Clone active panel content into EMPTY inactive panels (generic, no hardcoded values)
       // Only clones structure - does NOT modify any text/prices/labels
       if (activePanel && activePanel.innerHTML && activePanel.innerHTML.trim().length > 50) {
@@ -2039,21 +3041,21 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           panel.innerHTML = activePanel.innerHTML;
         });
       }
-      
+
       // Add click handlers for tab switching
       group.triggers.forEach(function(trigger) {
         trigger.addEventListener('click', function(e) {
           e.preventDefault();
-          
+
           var targetPanelId = trigger.getAttribute('aria-controls');
           if (!targetPanelId) return;
-          
+
           // Deactivate all tabs in group
           group.triggers.forEach(function(t) {
             t.setAttribute('data-state', 'inactive');
             t.setAttribute('aria-selected', 'false');
             t.setAttribute('tabindex', '-1');
-            
+
             var pId = t.getAttribute('aria-controls');
             if (pId) {
               var p = resolveControlledElement(pId);
@@ -2063,12 +3065,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
               }
             }
           });
-          
+
           // Activate clicked tab
           trigger.setAttribute('data-state', 'active');
           trigger.setAttribute('aria-selected', 'true');
           trigger.setAttribute('tabindex', '0');
-          
+
           var targetPanel = resolveControlledElement(targetPanelId);
           if (targetPanel) {
             targetPanel.setAttribute('data-state', 'active');
@@ -2082,16 +3084,16 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       });
     });
   }
-  
+
   function initCarousels() {
     // Find all carousel slider containers - multiple detection methods
     var sliders = [];
-    
+
     // Method 1: Elements with translateX transform
     document.querySelectorAll('[style*="translateX"]').forEach(function(el) {
       sliders.push(el);
     });
-    
+
     // Method 2: Flex containers with transition-transform inside overflow-hidden (common pattern)
     document.querySelectorAll('.overflow-hidden').forEach(function(wrapper) {
       var flexTransition = wrapper.querySelector('.flex.transition-transform, .flex[class*="transition"]');
@@ -2099,7 +3101,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         sliders.push(flexTransition);
       }
     });
-    
+
     // Method 3: Find by Google Reviews section context
     var reviewsSection = null;
     document.querySelectorAll('section, div').forEach(function(el) {
@@ -2108,30 +3110,30 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         reviewsSection = el;
       }
     });
-    
+
     if (reviewsSection) {
       var reviewsSlider = reviewsSection.querySelector('.flex.gap-6.transition-transform, .flex[class*="gap"][class*="transition"]');
       if (reviewsSlider && sliders.indexOf(reviewsSlider) === -1) {
         sliders.push(reviewsSlider);
       }
     }
-    
+
     sliders.forEach(function(slider) {
       var parent = slider.closest('.overflow-hidden');
       if (!parent) {
         parent = slider.parentElement;
       }
-      
+
       // Look for the carousel's outer container (with relative positioning)
-      var container = parent.closest('.relative.max-w-6xl') || 
-                      parent.closest('.relative') || 
+      var container = parent.closest('.relative.max-w-6xl') ||
+                      parent.closest('.relative') ||
                       parent.closest('section') ||
                       parent.parentElement;
       if (!container) return;
-      
+
       var slides = slider.children.length;
       if (slides === 0) return;
-      
+
       // Detect visible slides based on child width class
       var firstChild = slider.children[0];
       var visibleSlides = 3; // Default for desktop
@@ -2140,15 +3142,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         if (firstChild.classList.contains('md:w-1/2') || firstChild.className.indexOf('md:w-1/2') !== -1) visibleSlides = 2;
       }
       if (window.innerWidth < 768) visibleSlides = 1; // Mobile
-      
+
       var currentIndex = 0;
       var maxIndex = Math.max(0, slides - visibleSlides);
       var autoPlayInterval = null;
-      
+
       // INJECT NAVIGATION BUTTONS IF MISSING
       var prevBtn = container.querySelector('button[class*="left-0"], .carousel-prev');
       var nextBtn = container.querySelector('button[class*="right-0"], .carousel-next');
-      
+
       if (!prevBtn || !nextBtn) {
         // Create and inject navigation buttons
         var btnContainerClass = 'carousel-nav-injected';
@@ -2157,34 +3159,34 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           var prevBtnHTML = '<button class="carousel-prev absolute left-0 top-1/2 -translate-y-1/2 -translate-x-4 z-10 bg-white shadow-lg hidden md:flex items-center justify-center w-10 h-10 rounded-full border border-border hover:bg-gray-50" style="left: -1rem;">' +
             '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 18l-6-6 6-6"></path></svg>' +
           '</button>';
-          
+
           // Create next button
           var nextBtnHTML = '<button class="carousel-next absolute right-0 top-1/2 -translate-y-1/2 translate-x-4 z-10 bg-white shadow-lg hidden md:flex items-center justify-center w-10 h-10 rounded-full border border-border hover:bg-gray-50" style="right: -1rem;">' +
             '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 18l6-6-6-6"></path></svg>' +
           '</button>';
-          
+
           // Find proper injection point (the relative container around overflow-hidden)
           var navParent = parent.closest('.relative') || container;
           navParent.style.position = 'relative';
           navParent.insertAdjacentHTML('beforeend', prevBtnHTML + nextBtnHTML);
           navParent.classList.add(btnContainerClass);
-          
+
           prevBtn = navParent.querySelector('.carousel-prev');
           nextBtn = navParent.querySelector('.carousel-next');
         }
       }
-      
+
       function updateSlider() {
         var percent = currentIndex * (100 / visibleSlides);
         slider.style.transform = 'translateX(-' + percent + '%)';
         slider.style.transition = 'transform 0.5s ease-out';
         updateDots();
       }
-      
+
       // Find dot indicators - look for small rounded buttons
       var dotsContainer = container.querySelector('.flex.justify-center.gap-2, .flex.justify-center.mt-8, [class*="flex"][class*="justify-center"][class*="gap-2"]');
       var dots = [];
-      
+
       if (dotsContainer) {
         // Look for rounded elements that look like dots
         var allRounded = dotsContainer.querySelectorAll('[class*="rounded-full"]');
@@ -2196,7 +3198,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             dots.push(el);
           }
         });
-        
+
         // Fallback: any buttons in the dots container
         if (dots.length === 0) {
           dotsContainer.querySelectorAll('button, .wp-block-button a, div[role="button"]').forEach(function(el) {
@@ -2204,7 +3206,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           });
         }
       }
-      
+
       function updateDots() {
         dots.forEach(function(dot, i) {
           var classes = dot.className || '';
@@ -2215,7 +3217,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             } else if (classes.indexOf('bg-gray-300') !== -1) {
                 dot.className = classes.replace('bg-gray-300', 'bg-primary');
             }
-            
+
             if (dot.className.indexOf('bg-primary') === -1) {
               dot.classList.add('bg-primary');
             }
@@ -2224,36 +3226,36 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           }
         });
       }
-      
+
       function goToSlide(index) {
         currentIndex = Math.max(0, Math.min(maxIndex, index));
         updateSlider();
       }
-      
+
       function nextSlide() {
         currentIndex = (currentIndex + 1) % (maxIndex + 1);
         updateSlider();
       }
-      
+
       function prevSlide() {
         currentIndex = (currentIndex - 1 + maxIndex + 1) % (maxIndex + 1);
         updateSlider();
       }
-      
+
       function startAutoPlay() {
         if (autoPlayInterval) return;
         autoPlayInterval = setInterval(function() {
           nextSlide();
         }, 5000); // 5 second intervals like original React
       }
-      
+
       function stopAutoPlay() {
         if (autoPlayInterval) {
           clearInterval(autoPlayInterval);
           autoPlayInterval = null;
         }
       }
-      
+
       // Attach navigation button handlers
       if (prevBtn) {
         prevBtn.addEventListener('click', function(e) {
@@ -2263,7 +3265,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           prevSlide();
         });
       }
-      
+
       if (nextBtn) {
         nextBtn.addEventListener('click', function(e) {
           e.preventDefault();
@@ -2272,7 +3274,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           nextSlide();
         });
       }
-      
+
       // Attach dot indicator handlers
       dots.forEach(function(dot, i) {
         var dotText = (dot.textContent || '').replace(/\s+/g, ' ').trim();
@@ -2289,18 +3291,18 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           goToSlide(i);
         });
       });
-      
+
       // Start auto-play and pause on hover
       container.addEventListener('mouseenter', stopAutoPlay);
       container.addEventListener('mouseleave', startAutoPlay);
-      
+
       // Reset to first slide and start
       currentIndex = 0;
       updateSlider();
       startAutoPlay();
     });
   }
-  
+
   // Mobile menu toggle functionality
   function initMobileMenu() {
     // Find mobile menu button - search by attribute substring to avoid CSS colon escaping issues
@@ -2313,7 +3315,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       }
     }
     if (!mobileMenuBtn) return;
-    
+
     // Find or create mobile menu container
     var mobileMenu = null;
     var allNavDivs = document.querySelectorAll('nav div, nav ul');
@@ -2326,7 +3328,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     if (!mobileMenu) mobileMenu = document.querySelector('.mobile-menu');
     var nav = mobileMenuBtn.closest('nav') || mobileMenuBtn.closest('header');
     var isOpen = false;
-    
+
     // Create mobile menu from desktop menu if it doesn't exist
     if (!mobileMenu && nav) {
       var desktopMenu = null;
@@ -2341,25 +3343,25 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         mobileMenu = desktopMenu.cloneNode(true);
         mobileMenu.className = 'mobile-menu py-4 space-y-4 border-t hidden';
         mobileMenu.style.cssText = 'display: none; flex-direction: column;';
-        
+
         // Style mobile menu links
         var links = mobileMenu.querySelectorAll('.wp-block-button');
         links.forEach(function(link) {
           link.style.display = 'block';
           link.style.marginLeft = '0';
         });
-        
+
         nav.querySelector('.container')?.appendChild(mobileMenu);
       }
     }
-    
+
     if (!mobileMenu) return;
-    
+
     mobileMenuBtn.addEventListener('click', function(e) {
       e.preventDefault();
       isOpen = !isOpen;
       mobileMenu.style.display = isOpen ? 'flex' : 'none';
-      
+
       // Toggle icon if SVG icons present
       var svg = mobileMenuBtn.querySelector('svg');
       if (svg) {
@@ -2368,7 +3370,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       }
     });
   }
-  
+
   // Strip React animation classes that hide content in static view
   // CRITICAL: Exempts nav dropdown panels so their hidden state is preserved
   function isHeaderNavElement(el) {
@@ -2599,21 +3601,21 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       });
     }
   }
-  
+
   // CRITICAL FIX: Handle clicks on div[data-href] containers
   // Used for complex cards that were originally <a> tags but had to be converted
   // to <div> tags to avoid HTML5 nested <a> tag layout destruction
   function initDataHrefClicks() {
     if (document.__tfDataHrefBound) return;
     document.__tfDataHrefBound = true;
-    
+
     document.addEventListener('click', function(e) {
       if (!e.target || !(e.target instanceof Element)) return;
-      
+
       // Find closest container with data-href
       var hrefContainer = e.target.closest('[data-href]');
       if (!hrefContainer) return;
-      
+
       // If the user clicked on an actual <a> tag with a REAL href (not just "#"), let the browser handle it
       var clickedLink = e.target.closest('a[href]');
       if (clickedLink) {
@@ -2624,7 +3626,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         // For href="#" placeholder links (like "View Services"), fall through to data-href
         e.preventDefault();
       }
-      
+
       // Only bail on buttons that are interactive controls (accordion/tab triggers, form submits)
       // Decorative buttons inside link-group cards (like "View Services") should fall through
       var clickedBtn = e.target.closest('button');
@@ -2634,11 +3636,11 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                             clickedBtn.getAttribute('type') === 'submit';
         if (isInteractive) return;
       }
-      
+
       // Otherwise, navigate to the container's href
       var url = hrefContainer.getAttribute('data-href');
       var target = hrefContainer.getAttribute('data-target');
-      
+
       if (url) {
         if (target === '_blank') {
           window.open(url, '_blank');
@@ -2654,44 +3656,44 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
   function initInjectedAccordions() {
     // Find all pre-existing accordion content divs
     var injectedContents = document.querySelectorAll('.accordion-content-injected');
-    
+
     injectedContents.forEach(function(content) {
       // Avoid double-binding
       if (content.__tfBound) return;
       content.__tfBound = true;
-      
+
       // Find the trigger - could be previous sibling or parent's child
       var trigger = content.previousElementSibling;
-      
+
       // If trigger is a wp-block-button wrapper, get the actual link inside
       if (trigger && trigger.classList.contains('wp-block-button')) {
         trigger = trigger.querySelector('.wp-block-button__link') || trigger.querySelector('a') || trigger;
       }
-      
+
       // Also check if trigger is an <a> tag
       if (!trigger || (trigger.tagName !== 'A' && trigger.tagName !== 'BUTTON')) {
         // Try parent's first child
         var parent = content.parentElement;
         if (parent) {
-          trigger = parent.querySelector('.wp-block-button__link') || 
+          trigger = parent.querySelector('.wp-block-button__link') ||
                    parent.querySelector('a[href="#"]') ||
                    parent.querySelector('button');
         }
       }
-      
+
       if (!trigger) return;
-      
+
       // Ensure content has transition styles
       content.style.overflow = 'hidden';
       content.style.transition = 'max-height 0.3s ease-out, padding 0.3s ease-out';
-      
+
       // Bind click handler
       trigger.addEventListener('click', function(e) {
         e.preventDefault();
         e.stopPropagation();
-        
+
         var isOpen = content.style.maxHeight !== '0px' && content.style.maxHeight !== '';
-        
+
         if (isOpen) {
           content.style.maxHeight = '0px';
           content.style.paddingTop = '0';
@@ -2703,7 +3705,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           content.style.paddingBottom = '1rem';
           trigger.setAttribute('aria-expanded', 'true');
         }
-        
+
         // Animate chevron if present
         var chevron = trigger.querySelector('svg');
         if (chevron) {
@@ -2712,7 +3714,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         }
       });
     });
-    
+
     // Also handle window resize to keep open panels sized correctly
     window.addEventListener('resize', function() {
       document.querySelectorAll('.accordion-content-injected').forEach(function(content) {
@@ -2764,7 +3766,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         }
       });
     }
-    
+
     tabLists.forEach(function(tabList) {
       if (tabList.getAttribute('data-tf-tabs-init')) return;
       tabList.setAttribute('data-tf-tabs-init', 'true');
@@ -2783,7 +3785,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       if (!activeTrigger) activeTrigger = triggers[0];
 
       applyTabState(triggers, activeTrigger);
-      
+
       triggers.forEach(function(trigger) {
         if (trigger.__tfTabBound) return;
         trigger.__tfTabBound = true;
@@ -2802,7 +3804,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         });
       });
     });
-    
+
     console.log('TABS: Initialized', tabLists.length, 'tablists');
   }
 
@@ -2812,34 +3814,34 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
   // Works with Radix, Headless UI, custom implementations
   // ============================================
   function initGenericTabs() {
-    
+
     // PATTERN 1: Radix/Headless UI tabs with role="tablist" and role="tab"
     // These use aria-controls to link tabs to panels
     var radixTabLists = document.querySelectorAll('[role="tablist"]');
-    
+
     radixTabLists.forEach(function(tabList) {
       var tabs = tabList.querySelectorAll('[role="tab"]');
       if (tabs.length < 2) return; // Need at least 2 tabs
-      
+
       // Skip if already initialized
       if (tabList.getAttribute('data-tf-init') || tabList.getAttribute('data-tf-tabs-init')) return;
       tabList.setAttribute('data-tf-init', 'true');
-      
+
       console.log('GENERIC TABS: Found tablist with', tabs.length, 'tabs');
-      
+
       tabs.forEach(function(tab) {
         tab.addEventListener('click', function(e) {
           e.preventDefault();
-          
+
           var panelId = tab.getAttribute('aria-controls');
           var panel = panelId ? resolveControlledElement(panelId) : null;
-          
+
           // Deactivate all tabs in this tablist
           tabs.forEach(function(t) {
             t.setAttribute('data-state', 'inactive');
             t.setAttribute('aria-selected', 'false');
             t.setAttribute('tabindex', '-1');
-            
+
             // Hide corresponding panel
             var tPanelId = t.getAttribute('aria-controls');
             if (tPanelId) {
@@ -2851,65 +3853,65 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
               }
             }
           });
-          
+
           // Activate clicked tab
           tab.setAttribute('data-state', 'active');
           tab.setAttribute('aria-selected', 'true');
           tab.setAttribute('tabindex', '0');
-          
+
           // Show corresponding panel
           if (panel) {
             panel.setAttribute('data-state', 'active');
             panel.removeAttribute('hidden');
             panel.style.display = '';
           }
-          
+
           console.log('GENERIC TABS: Switched to panel', panelId);
         });
       });
     });
-    
+
     // PATTERN 2: Button groups with data-state inside containers
     // Common in shadcn/ui and Tailwind component libraries
     var allDataStateButtons = document.querySelectorAll('button[data-state]');
     var processedContainers = {};
-    
+
     allDataStateButtons.forEach(function(btn) {
       var container = btn.parentElement;
       if (!container) return;
-      
+
       // Create unique key for container
       var containerId = container.id || container.className || 'container';
       if (processedContainers[containerId]) return;
-      
+
       var buttons = container.querySelectorAll('button[data-state]');
       if (buttons.length < 2) return;
-      
+
       processedContainers[containerId] = true;
-      
+
       console.log('GENERIC TABS: Found button group with', buttons.length, 'buttons');
-      
+
       // Find associated content panels in parent section
       var parentSection = container.parentElement;
       while (parentSection && !parentSection.matches('section, .wp-block-group, [class*="py-"]')) {
         parentSection = parentSection.parentElement;
       }
       if (!parentSection) parentSection = container.parentElement;
-      
+
       var panels = parentSection ? parentSection.querySelectorAll('[role="tabpanel"]') : [];
-      
+
       buttons.forEach(function(b, index) {
         b.addEventListener('click', function(e) {
           e.preventDefault();
-          
+
           // Deactivate all buttons
           buttons.forEach(function(btn2) {
             btn2.setAttribute('data-state', 'inactive');
           });
-          
+
           // Activate clicked button
           b.setAttribute('data-state', 'active');
-          
+
           // Show/hide panels based on index
           if (panels.length > 0) {
             panels.forEach(function(panel, pIndex) {
@@ -2924,48 +3926,48 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
               }
             });
           }
-          
+
           console.log('GENERIC TABS: Activated button index', index);
         });
       });
     });
-    
+
     // PATTERN 3: Segmented controls in bg-muted containers
     var mutedContainers = document.querySelectorAll('.bg-muted, [class*="bg-muted"]');
-    
+
     mutedContainers.forEach(function(control) {
       var buttons = control.querySelectorAll('button');
       if (buttons.length < 2) return;
       if (control.getAttribute('data-tf-init')) return;
       control.setAttribute('data-tf-init', 'true');
-      
+
       console.log('GENERIC TABS: Found segmented control with', buttons.length, 'buttons');
-      
+
       // Find content panels in parent
       var parentSection = control.parentElement;
       while (parentSection && !parentSection.matches('section, .wp-block-group')) {
         parentSection = parentSection.parentElement;
       }
       var panels = parentSection ? parentSection.querySelectorAll('[role="tabpanel"]') : [];
-      
+
       buttons.forEach(function(btn, index) {
         btn.addEventListener('click', function(e) {
           e.preventDefault();
-          
+
           // Deactivate all
           buttons.forEach(function(b) {
             b.setAttribute('data-state', 'inactive');
           });
-          
+
           // Activate clicked
           btn.setAttribute('data-state', 'active');
-          
+
           // Switch panels by index
           panels.forEach(function(panel, pIndex) {
             panel.style.display = pIndex === index ? '' : 'none';
             panel.setAttribute('data-state', pIndex === index ? 'active' : 'inactive');
           });
-          
+
           console.log('GENERIC TABS: Segmented control index', index);
         });
       });
@@ -3022,7 +4024,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
     // where processConversion receives a dist-only ZIP with no source TSX files)
     let faqData: {q: string, a: string}[] = preExtractedFaqData ? [...preExtractedFaqData] : [];
     if (faqData.length > 0) addLog(`Seeded faqData with ${faqData.length} pre-extracted FAQ items from source`, 'success');
-    
+
     // Helper to read text from ZIP
     const readZipText = async (zc: any, path: string): Promise<string | null> => {
       try {
@@ -3033,7 +4035,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         return null;
       }
     };
-    
+
     // Extract Q/A from build artifacts (compiled JS/HTML)
     const normalizeExtractedJsString = (value: string): string =>
       (value || '')
@@ -3049,13 +4051,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
 
     const extractFaqFromBuildText = (text: string): {q: string, a: string}[] => {
       const out: {q: string, a: string}[] = [];
-      
+
       // Pattern A: explicit trigger/content tags preserved in build (SSR HTML)
       const tagRe = /<AccordionTrigger\b[^>]*>([\s\S]*?)<\/AccordionTrigger>[\s\S]*?<AccordionContent\b[^>]*>([\s\S]*?)<\/AccordionContent>/g;
-      
+
       // Pattern B: common "q:" "a:" object literals in built JS
       const inlineRe = /\{\s*q\s*:\s*(['"`])((?:\\.|(?!\1)[\s\S])*?)\1\s*,\s*a\s*:\s*(['"`])((?:\\.|(?!\3)[\s\S])*?)\3\s*\}/g;
-      
+
       // Small cleaner for both
       const clean = (s: string) =>
         (s || '')
@@ -3063,27 +4065,27 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           .replace(/\\n/g, ' ')
           .replace(/\s+/g, ' ')
           .trim();
-      
+
       let m: RegExpExecArray | null;
-      
+
       while ((m = tagRe.exec(text)) !== null) {
         const q = clean(m[1]);
         const a = clean(m[2]);
         if (q && a && a.length > 10) out.push({ q, a });
       }
-      
+
       while ((m = inlineRe.exec(text)) !== null) {
         const q = clean(normalizeExtractedJsString(m[2] || ''));
         const a = clean(normalizeExtractedJsString(m[4] || ''));
         if (q && a && a.length > 10) out.push({ q, a });
       }
-      
+
       return out;
     };
-    
+
     // Normalize path for reliable TSX discovery (handles Windows paths, case-sensitivity)
     const norm = (p: string) => p.replace(/\\/g, '/').toLowerCase();
-    
+
     // Search ALL TSX/JSX files for accordion content with normalized path matching
     const sourceTsxFiles = allFiles.filter(f => {
       const n = norm(f);
@@ -3103,22 +4105,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
         )
       );
     });
-    
+
     // DEBUG: Check if FAQ.tsx specifically exists in ZIP
     const faqCandidates = allFiles.filter(f => norm(f).includes('src/pages/faq.tsx') || norm(f).endsWith('/faq.tsx'));
     addLog(`FAQ candidates in ZIP: ${faqCandidates.length}`, 'info');
     if (faqCandidates.length) addLog(`Example FAQ path: ${faqCandidates[0]}`, 'info');
-    
+
     // DEBUG: Check if FAQ.tsx is included in scan set
     const inScan = sourceTsxFiles.some(f => norm(f).includes('src/pages/faq.tsx') || norm(f).endsWith('/faq.tsx'));
     addLog(`FAQ.tsx included in scan set? ${inScan}`, 'info');
-    
+
     if (sourceTsxFiles.length === 0) {
       addLog(`No source FAQ files found in ZIP. Will fallback to scanning JS/HTML build artifacts...`, 'warning');
     } else {
       addLog(`Scanning ${sourceTsxFiles.length} source files for FAQ/Accordion content...`, 'info');
     }
-    
+
     // CRITICAL: Prioritize FAQ.tsx files first - process them before city pages
     // This ensures the main FAQ page content is extracted before city-specific FAQs
     const sortedTsxFiles = [...sourceTsxFiles].sort((a, b) => {
@@ -3128,41 +4130,41 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
       if (!aIsFaq && bIsFaq) return 1;
       return 0;
     });
-    
+
     addLog(`Prioritized file order: ${sortedTsxFiles.slice(0, 5).map(f => f.split('/').pop()).join(', ')}...`, 'info');
-    
+
     for (const filePath of sortedTsxFiles) {
         try {
             const content = await zipContent.files[filePath].async('string');
             let foundInFile = 0;
             let match;
-            
+
             // DEBUG: Log file being processed
             const fileName = filePath.split('/').pop() || filePath;
             const isFaqFile = norm(filePath).includes('/faq.tsx') || norm(filePath).includes('/faq/');
             if (isFaqFile) {
               addLog(`Processing FAQ file: ${fileName} (${content.length} chars)`, 'info');
             }
-            
+
             // Pattern 1: Standard AccordionTrigger/AccordionContent pairs
             const accordionRegex = /<AccordionTrigger[^>]*>([\s\S]*?)<\/AccordionTrigger>[\s\S]*?<AccordionContent[^>]*>([\s\S]*?)<\/AccordionContent>/g;
-            
+
             // DEBUG: Check if file contains accordion components
             if (isFaqFile) {
               const hasTrigger = content.includes('<AccordionTrigger');
               const hasContent = content.includes('<AccordionContent');
               addLog(`  Has AccordionTrigger: ${hasTrigger}, Has AccordionContent: ${hasContent}`, 'info');
             }
-            
+
             while ((match = accordionRegex.exec(content)) !== null) {
                 const question = match[1].replace(/<[^>]+>/g, '').replace(/\{[^}]+\}/g, '').replace(/\s+/g, ' ').trim();
                 const answer = match[2].replace(/<[^>]+>/g, '').replace(/\{[^}]+\}/g, '').replace(/\s+/g, ' ').trim();
-                
+
                 // DEBUG: Log each match found
                 if (isFaqFile && question) {
                   addLog(`  Pattern 1 matched: "${question.substring(0, 50)}..." (answer ${answer.length} chars)`, 'info');
                 }
-                
+
                 if (question && answer && answer.length > 10) {
                     if (!faqData.some(item => item.q.toLowerCase() === question.toLowerCase())) {
                         faqData.push({ q: question, a: answer });
@@ -3170,7 +4172,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                     }
                 }
             }
-            
+
             // Pattern 2: AccordionItem wrapper pattern (variant)
             const accordionRegex2 = /<AccordionItem[^>]*>[\s\S]*?<AccordionTrigger[^>]*>([\s\S]*?)<\/AccordionTrigger>[\s\S]*?<AccordionContent[^>]*>([\s\S]*?)<\/AccordionContent>[\s\S]*?<\/AccordionItem>/g;
              while ((match = accordionRegex2.exec(content)) !== null) {
@@ -3183,15 +4185,15 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                     }
                 }
             }
-            
+
             // Pattern 3: Inline FAQ arrays used in city pages: { q: "...", a: "..." }
             // Handles escaped quotes/apostrophes and template literal strings.
             const inlineFaqRegex = /\{\s*q\s*:\s*(['"`])((?:\\.|(?!\1)[\s\S])*?)\1\s*,\s*a\s*:\s*(['"`])((?:\\.|(?!\3)[\s\S])*?)\3\s*\}/g;
-            
+
             while ((match = inlineFaqRegex.exec(content)) !== null) {
                 const question = normalizeExtractedJsString(match[2]).trim();
                 const answer = normalizeExtractedJsString(match[4]).trim();
-                
+
                 if (question && answer && question.length > 5 && answer.length > 10) {
                     if (!faqData.some(item => item.q.toLowerCase() === question.toLowerCase())) {
                         faqData.push({ q: question, a: answer });
@@ -3199,14 +4201,14 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                     }
                 }
             }
-            
+
             // Pattern 4: Schema.org FAQPage mainEntity structure
             const schemaFaqRegex = /"name":\s*["']([^"']+)["'][\s\S]*?"text":\s*["']([^"']+)["']/g;
-            
+
             while ((match = schemaFaqRegex.exec(content)) !== null) {
                 const question = match[1].trim();
                 const answer = match[2].trim();
-                
+
                 if (question && answer && question.length > 5 && answer.length > 10) {
                     if (!faqData.some(item => item.q.toLowerCase() === question.toLowerCase())) {
                         faqData.push({ q: question, a: answer });
@@ -3214,18 +4216,18 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                     }
                 }
             }
-            
+
             if (foundInFile > 0) {
                 addLog(`  Found ${foundInFile} FAQ items in ${filePath.split('/').pop()}`, 'success');
             }
-            
+
             // Pattern 5: Common alternative key names (question/answer, title/description, title/content)
             const altKeyPatterns = [
                 /\{\s*question\s*:\s*(['"`])((?:\\.|(?!\1)[\s\S])*?)\1\s*,\s*answer\s*:\s*(['"`])((?:\\.|(?!\3)[\s\S])*?)\3\s*\}/g,
                 /\{\s*title\s*:\s*(['"`])((?:\\.|(?!\1)[\s\S])*?)\1\s*,\s*(?:description|content|answer)\s*:\s*(['"`])((?:\\.|(?!\3)[\s\S])*?)\3\s*\}/g,
                 /\{\s*answer\s*:\s*(['"`])((?:\\.|(?!\1)[\s\S])*?)\1\s*,\s*question\s*:\s*(['"`])((?:\\.|(?!\3)[\s\S])*?)\3\s*\}/g,
             ];
-            
+
             for (const altRegex of altKeyPatterns) {
                 let altMatch;
                 while ((altMatch = altRegex.exec(content)) !== null) {
@@ -3233,7 +4235,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
                     const isReversed = altRegex.source.startsWith('\\{\\s*answer\\s*:');
                     const question = normalizeExtractedJsString(isReversed ? altMatch[4] : altMatch[2]).trim();
                     const answer = normalizeExtractedJsString(isReversed ? altMatch[2] : altMatch[4]).trim();
-                    
+
                     if (question && answer && question.length > 5 && answer.length > 10) {
                         if (!faqData.some(item => item.q.toLowerCase() === question.toLowerCase())) {
                             faqData.push({ q: question, a: answer });
@@ -3246,7 +4248,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
             // File read error - continue to next file
         }
     }
-    
+
     // FALLBACK: If TSX scan finds nothing, scan build artifacts (JS/HTML files)
     if (faqData.length === 0) {
       const buildFiles = allFiles.filter(f => {
@@ -3270,17 +4272,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           }
         }
       }
-      
+
       if (faqData.length > 0) {
         addLog(`Fallback extraction found ${faqData.length} FAQ items from build artifacts`, 'success');
       }
     }
-    
+
     // THIRD FALLBACK: Extract from prerendered HTML files
     // This finds actual rendered accordion content regardless of source format
     if (faqData.length === 0) {
       addLog(`Attempting extraction from prerendered HTML files...`, 'info');
-      
+
       // Find prerendered HTML files
       const prerenderedFiles = allFiles.filter(f => {
         const lower = norm(f);
@@ -3290,18 +4292,18 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
           (lower.includes('prerendered/') || lower.includes('/faq') || lower === 'index.html' || lower.endsWith('/index.html'))
         );
       });
-      
+
       addLog(`Scanning ${prerenderedFiles.length} prerendered HTML files for accordion content...`, 'info');
-      
+
       for (const filePath of prerenderedFiles) {
         const htmlText = await readZipText(zipContent, filePath);
         if (!htmlText) continue;
-        
+
         try {
           // Parse the HTML
           const tempParser = new DOMParser();
           const doc = tempParser.parseFromString(htmlText, 'text/html');
-          
+
           // Method 1: Radix accordion items with data-radix-accordion-item
           doc.querySelectorAll('[data-radix-accordion-item]').forEach(item => {
             const trigger = item.querySelector('[data-radix-accordion-trigger], button[aria-expanded]');
@@ -3314,21 +4316,21 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
               }
             }
           });
-          
+
           // Method 2: button with aria-controls pointing to panel
           doc.querySelectorAll('button[aria-controls]').forEach(btn => {
             const panelId = btn.getAttribute('aria-controls');
             if (!panelId) return;
             const panel = doc.getElementById(panelId);
             if (!panel) return;
-            
+
             const q = (btn.textContent || '').replace(/\s+/g, ' ').trim();
             const a = (panel.textContent || '').replace(/\s+/g, ' ').trim();
             if (q && a && a.length > 10 && !faqData.some(x => x.q.toLowerCase() === q.toLowerCase())) {
               faqData.push({ q, a });
             }
           });
-          
+
           // Method 3: AccordionItem wrapper pattern (shadcn/Radix HTML output)
           doc.querySelectorAll('[data-state]').forEach(item => {
             if (!item.querySelector('button[aria-expanded]')) return; // Not an accordion
@@ -3342,17 +4344,17 @@ const Dashboard: React.FC<DashboardProps> = ({ onConversionComplete }) => {
               }
             }
           });
-          
+
         } catch (e) {
           // HTML parse error, continue
         }
       }
-      
+
       if (faqData.length > 0) {
         addLog(`Prerendered HTML extraction found ${faqData.length} FAQ items`, 'success');
       }
     }
-    
+
     // Always generate faq-data.js (even if empty) to prevent WordPress enqueue errors
     folder.file("assets/js/faq-data.js", `/* FAQ Data - used by interactive-components.js to populate empty Radix accordion content */
 window.FAQ_DATA = ${JSON.stringify(faqData, null, 2)};`);
@@ -3361,25 +4363,25 @@ window.FAQ_DATA = ${JSON.stringify(faqData, null, 2)};`);
     } else {
         addLog(`Warning: No FAQ data extracted. Accordion answers may show placeholders.`, 'warning');
     }
-    
+
     // Extract review data from source if available
     let reviewData: {name: string, initial: string, location: string, color: string, date: string, text: string}[] = [];
-    const reviewTsxFiles = allFiles.filter(f => 
-        (f.endsWith('.tsx') || f.endsWith('.jsx')) && 
+    const reviewTsxFiles = allFiles.filter(f =>
+        (f.endsWith('.tsx') || f.endsWith('.jsx')) &&
         (f.toLowerCase().includes('review') || f.toLowerCase().includes('testimonial') || f.toLowerCase().includes('feedback'))
     );
-    
+
     if (reviewTsxFiles.length > 0) {
         for (const filePath of reviewTsxFiles) {
             try {
                 const content = await zipContent.files[filePath].async('string');
                 const reviewsArrayRegex = /reviews=\{\[([\s\S]*?)\]\}/g;
                 let arrayMatch;
-                
+
                 while ((arrayMatch = reviewsArrayRegex.exec(content)) !== null) {
                     const reviewsContent = arrayMatch[1];
                     const reviewObjRegex = /\{\s*name:\s*["']([^"']+)["']\s*,\s*initial:\s*["']([^"']+)["']\s*,\s*location:\s*["']([^"']+)["']\s*,\s*color:\s*["']([^"']+)["']\s*,\s*date:\s*["']([^"']+)["']\s*,\s*text:\s*["']([^"']+)["']\s*\}/g;
-                    
+
                     let objMatch;
                     while ((objMatch = reviewObjRegex.exec(reviewsContent)) !== null) {
                         reviewData.push({
@@ -3393,7 +4395,7 @@ window.FAQ_DATA = ${JSON.stringify(faqData, null, 2)};`);
             }
         }
     }
-    
+
     // Generate reviews-data.js for potential future dynamic enhancements
     folder.file("assets/js/reviews-data.js", `/* Reviews Data - can be used for dynamic carousel content enhancements */
 window.REVIEWS_DATA = ${JSON.stringify(reviewData, null, 2)};`);
@@ -3410,27 +4412,1668 @@ window.REVIEWS_DATA = ${JSON.stringify(reviewData, null, 2)};`);
             fontLinks.push(fontMatch[1].replace(/&amp;/g, '&'));
         }
 
+        if (mode === 'wordpress-elementor') {
+            folder.file("assets/css/whipify-elementor-visual-fidelity.css", `.whipify-elementor-visual-fidelity-mode .elementor-widget-html,
+.whipify-elementor-visual-fidelity-mode .elementor-widget-html > .elementor-widget-container {
+  display: contents;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.wp-source-body {
+  gap: 0 !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con:not([class*="gap-"]):not([class*="space-y-"]):not([class*="space-x-"]) {
+  --gap: 0 !important;
+  gap: 0 !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.gap-2 {
+  --gap: 0.5rem !important;
+  gap: 0.5rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.gap-3 {
+  --gap: 0.75rem !important;
+  gap: 0.75rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.gap-4 {
+  --gap: 1rem !important;
+  gap: 1rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.gap-6 {
+  --gap: 1.5rem !important;
+  gap: 1.5rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.gap-8 {
+  --gap: 2rem !important;
+  gap: 2rem !important;
+}
+body.whipify-elementor-visual-fidelity-mode {
+  overflow-x: hidden;
+}
+body.whipify-elementor-visual-fidelity-mode #root > nav.sticky {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  width: 100% !important;
+  z-index: 1000 !important;
+}
+body.whipify-elementor-visual-fidelity-mode #root > main.site-main {
+  margin-top: 80px !important;
+}
+html:has(body.whipify-elementor-visual-fidelity-mode) {
+  overflow-x: hidden;
+}
+.whipify-elementor-visual-fidelity-mode .elementor,
+.whipify-elementor-visual-fidelity-mode .elementor-section-wrap,
+.whipify-elementor-visual-fidelity-mode .elementor-widget-wrap {
+  max-width: 100%;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.overflow-hidden,
+.whipify-elementor-visual-fidelity-mode .elementor .overflow-hidden {
+  overflow: hidden !important;
+  overflow-x: hidden !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor iframe[src*="google.com/maps"] {
+  display: block !important;
+  width: 100% !important;
+  height: 400px !important;
+  border: 0 !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-elementor-carousel-prev,
+.whipify-elementor-visual-fidelity-mode .whipify-elementor-carousel-next {
+  position: absolute;
+  top: 50%;
+  z-index: 20;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.375rem;
+  border: 2px solid hsl(var(--foreground, 222 47% 11%));
+  background: #fff;
+  color: hsl(var(--foreground, 222 47% 11%));
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.18);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  line-height: 1;
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-elementor-carousel-prev {
+  left: -1rem;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-elementor-carousel-next {
+  right: -1rem;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-elementor-carousel-prev:disabled,
+.whipify-elementor-visual-fidelity-mode .whipify-elementor-carousel-next:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.mx-auto,
+.whipify-elementor-visual-fidelity-mode .elementor .mx-auto {
+  margin-left: auto !important;
+  margin-right: auto !important;
+  align-self: center !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.relative,
+.whipify-elementor-visual-fidelity-mode .elementor .relative {
+  position: relative !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.absolute,
+.whipify-elementor-visual-fidelity-mode .elementor .absolute {
+  position: absolute !important;
+  width: auto !important;
+  max-width: calc(100% - 3rem) !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.bottom-6,
+.whipify-elementor-visual-fidelity-mode .elementor .bottom-6 {
+  bottom: 1.5rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.left-6,
+.whipify-elementor-visual-fidelity-mode .elementor .left-6 {
+  left: 1.5rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .rounded-md {
+  border-radius: 0.375rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .rounded-lg {
+  border-radius: 0.5rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .rounded-xl {
+  border-radius: 0.75rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .rounded-2xl {
+  border-radius: 1rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .rounded-3xl {
+  border-radius: 1.5rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .rounded-full {
+  border-radius: 9999px !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.py-16.md\\:py-20 {
+  padding-top: 5rem !important;
+  padding-bottom: 5rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.space-y-6 {
+  gap: 0 !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="space-y-"] {
+  --gap: 0 !important;
+  gap: 0 !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-image.object-cover,
+.whipify-elementor-visual-fidelity-mode .elementor-widget-image.object-cover > .elementor-widget-container {
+  height: 100% !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-image.object-cover img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  display: block !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-html .flex.flex-wrap.gap-6.items-center {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 1.5rem !important;
+  margin-top: 1.5rem !important;
+  width: auto !important;
+  max-width: 100% !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-html .flex.flex-wrap.gap-6.items-center img {
+  width: auto !important;
+  height: auto !important;
+  max-height: 4rem !important;
+  max-width: 14rem !important;
+  object-fit: contain !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-html .flex.flex-wrap.gap-6.items-center img:first-child {
+  max-height: 3.5rem !important;
+  max-width: 9rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-html .flex.flex-wrap.gap-6.items-center img:nth-child(2) {
+  max-height: 4.25rem !important;
+  max-width: 4.25rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-html .flex.flex-wrap.gap-6.items-center img.h-12 {
+  height: 3rem !important;
+  max-height: 3rem !important;
+  width: auto !important;
+  max-width: none !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-html .flex.flex-wrap.gap-6.items-center img.h-14 {
+  height: 3.5rem !important;
+  max-height: 3.5rem !important;
+  width: auto !important;
+  max-width: none !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-elementor-page-shell {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-html,
+.whipify-elementor-visual-fidelity-mode .elementor-widget-html > .elementor-widget-container,
+.whipify-elementor-visual-fidelity-mode .whipify-elementor-page-shell > * {
+  box-sizing: border-box;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-html {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+.whipify-elementor-visual-fidelity-mode .tf-elementor-breadcrumbs {
+  max-width: 1400px;
+  margin: 1rem auto 0;
+  padding: 0 1rem !important;
+  min-height: 20px !important;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: hsl(var(--muted-foreground, 215 16% 47%));
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 0.75rem !important;
+  width: 100%;
+}
+.whipify-elementor-visual-fidelity-mode .tf-elementor-breadcrumbs .elementor-widget,
+.whipify-elementor-visual-fidelity-mode .tf-elementor-breadcrumbs .elementor-widget-container {
+  width: auto !important;
+  max-width: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.whipify-elementor-visual-fidelity-mode .tf-elementor-breadcrumbs .elementor-button {
+  background: transparent !important;
+  color: inherit !important;
+  padding: 0 !important;
+  min-height: 0 !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  width: auto !important;
+  display: inline-flex !important;
+}
+.whipify-elementor-visual-fidelity-mode .tf-elementor-breadcrumbs a {
+  color: inherit;
+  text-decoration: none;
+}
+.whipify-elementor-visual-fidelity-mode .tf-elementor-breadcrumbs__separator {
+  display: inline-block;
+  margin: 0;
+  color: hsl(var(--muted-foreground, 215 16% 47%));
+}
+.whipify-elementor-visual-fidelity-mode .tf-elementor-breadcrumbs__current {
+  color: hsl(var(--foreground, 220 13% 18%));
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.grid {
+  --display: grid;
+  display: grid !important;
+  grid-template-rows: none !important;
+  grid-auto-rows: auto !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.flex:not(.flex-col):not(.flex-col-reverse):not(.flex-row-reverse) {
+  --flex-direction: row;
+  flex-direction: row !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.flex.flex-wrap {
+  --flex-wrap: wrap;
+  flex-wrap: wrap !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.inline-flex {
+  --container-widget-width: fit-content;
+  width: fit-content !important;
+  max-width: 100%;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.inline-flex:not(.w-full) .elementor-button {
+  width: auto !important;
+  max-width: max-content !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.inline-flex .elementor-button {
+  display: inline-flex;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.bg-white.border-2 .elementor-widget-button.font-semibold {
+  --container-widget-width: auto;
+  width: auto !important;
+  max-width: 100% !important;
+  align-self: flex-start !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.bg-white.border-2 .elementor-widget-button.font-semibold .elementor-button {
+  background: transparent !important;
+  color: inherit !important;
+  padding: 0 !important;
+  min-height: 0 !important;
+  width: auto !important;
+  max-width: max-content !important;
+  box-shadow: none !important;
+  justify-content: flex-start !important;
+  text-align: left !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.w-full {
+  --container-widget-width: 100%;
+  width: 100% !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-primary,
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-accent {
+  background: transparent !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button[class*="px-"] {
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button .elementor-button {
+  border-radius: inherit;
+  box-shadow: inherit;
+  font: inherit;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-primary .elementor-button {
+  background: hsl(var(--primary, 180 100% 25%)) !important;
+  color: #fff !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-accent .elementor-button {
+  background: hsl(var(--accent, 15 100% 60%)) !important;
+  color: #fff !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.text-primary:not(.border-2):not([class*="border-primary"]) .elementor-button,
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button[class*="hover:underline"] .elementor-button {
+  padding: 0 !important;
+  min-height: 0 !important;
+  line-height: inherit !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: inherit !important;
+  width: auto !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.border-primary.bg-transparent .elementor-button,
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button[class*="border-primary"].bg-transparent .elementor-button {
+  background: transparent !important;
+  color: hsl(var(--primary, 174 100% 29%)) !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button:not([class*="bg-"]) .elementor-button {
+  background: transparent !important;
+  color: inherit !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.text-white .elementor-button {
+  color: #fff !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.px-4 .elementor-button {
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.px-6 .elementor-button {
+  padding-left: 1.5rem !important;
+  padding-right: 1.5rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.px-8 .elementor-button {
+  padding-left: 2rem !important;
+  padding-right: 2rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.px-10 .elementor-button {
+  padding-left: 2.5rem !important;
+  padding-right: 2.5rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.h-10 .elementor-button,
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.h-11 .elementor-button,
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.h-12 .elementor-button,
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.h-14 .elementor-button,
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.h-16 .elementor-button {
+  min-height: 100%;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.whipify-elementor-visual-fidelity-mode .elementor img.h-12 {
+  height: 3rem !important;
+  width: auto !important;
+  max-width: none !important;
+  object-fit: contain !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor img.h-14 {
+  height: 3.5rem !important;
+  width: auto !important;
+  max-width: none !important;
+  object-fit: contain !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor a:has(> img[src*="Google-Reviews-logo"]),
+.whipify-elementor-visual-fidelity-mode .elementor a:has(> img[src*="Best-Cleaning-Badge"]),
+.whipify-elementor-visual-fidelity-mode .elementor a:has(> img[src*="ThreeBestRated"]) {
+  border-radius: 0.5rem;
+  box-shadow: 0 0 18px 3px rgba(0, 127, 127, 0.55);
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-primary a[href="#pricing"] .elementor-button-text:before,
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-accent a[href^="tel:"] .elementor-button-text:before {
+  display: inline-block;
+  margin-right: 0.75rem;
+  font-size: 1rem;
+  line-height: 1;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-primary a[href="#pricing"] .elementor-button-text:before {
+  content: "▦";
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-accent a[href^="tel:"] .elementor-button-text:before {
+  content: "☎";
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-white.border {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: auto !important;
+  flex: 0 0 auto !important;
+  min-height: 2.625rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-white.border .elementor-button {
+  background: transparent !important;
+  color: hsl(var(--foreground, 222 47% 11%)) !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  min-height: 0 !important;
+  height: auto !important;
+  line-height: 1.5 !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-white.border .elementor-button-content-wrapper {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 0.5rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-white.border .elementor-button-text {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 0.5rem !important;
+  font-weight: 600 !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-white.border .elementor-button-text:before {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1rem;
+  font-weight: 800;
+  line-height: 1;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-white.border a[href*="facebook"] .elementor-button-text:before {
+  content: "f";
+  color: #1877f2;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-white.border a[href*="linkedin"] .elementor-button-text:before {
+  content: "in";
+  color: #0a66c2;
+  font-size: 0.85rem;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-white.border a[href*="youtube"] .elementor-button-text:before {
+  content: "▶";
+  color: #ff0000;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-white.border a[href*="yelp"] .elementor-button-text:before {
+  content: "☆";
+  color: #ff1a1a;
+  font-size: 1.1rem;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-white.border a[href*="twitter"] .elementor-button-text:before,
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-white.border a[href*="x.com"] .elementor-button-text:before {
+  content: "X";
+  color: hsl(var(--foreground, 222 47% 11%));
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-white.border a[href*="tiktok"] .elementor-button-text:before {
+  content: "♪";
+  color: hsl(var(--foreground, 222 47% 11%));
+  font-size: 1.1rem;
+}
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-white.border a[href*="instagram"] .elementor-button-text:before {
+  content: "◎";
+  color: #e1306c;
+  font-size: 1.1rem;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__card a {
+  color: hsl(var(--primary, 180 100% 25%)) !important;
+  font-weight: 600 !important;
+  text-decoration: none !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__card a:hover {
+  text-decoration: underline !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.lg\\:grid-cols-4) .whipify-feature-grid__card h3 {
+  font-size: 1.125rem !important;
+  line-height: 1.75rem !important;
+  margin-bottom: 0.5rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.lg\\:grid-cols-4) .whipify-feature-grid__card p {
+  font-size: 1rem !important;
+  line-height: 1.5rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.lg\\:grid-cols-4) .whipify-feature-grid__card a {
+  display: inline-flex !important;
+  align-items: center !important;
+  font-size: 0.875rem !important;
+  line-height: 1.25rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.lg\\:grid-cols-4) .whipify-feature-grid__footer {
+  max-width: 1368px !important;
+  width: 100% !important;
+  margin-top: 2rem !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  color: hsl(var(--muted-foreground, 215 16% 47%)) !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.lg\\:grid-cols-4) .whipify-feature-grid__footer > p {
+  margin: 0 !important;
+  font-size: 0.875rem !important;
+  line-height: 1.25rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.lg\\:grid-cols-4) .whipify-feature-grid__footer > .mt-12[class*="bg-gradient"] {
+  max-width: 1368px !important;
+  margin: 3rem auto 0 !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.lg\\:grid-cols-4) .whipify-feature-grid__footer > .mt-12[class*="bg-gradient"] a[class*="inline-flex"] {
+  min-width: 17.6875rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.lg\\:grid-cols-4) .whipify-feature-grid__footer > .mt-12[class*="bg-gradient"] a[class*="inline-flex"]::before {
+  content: "\\2726";
+  display: inline-block;
+  width: 1rem;
+  margin-right: 0.5rem;
+  line-height: 1;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.lg\\:grid-cols-4) .whipify-feature-grid__inner > .mt-12[class*="bg-gradient"] a[class*="inline-flex"] {
+  min-width: 17.6875rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.lg\\:grid-cols-4) .whipify-feature-grid__inner > .mt-12[class*="bg-gradient"] a[class*="inline-flex"]::before {
+  content: "\\2726";
+  display: inline-block;
+  width: 1rem;
+  margin-right: 0.5rem;
+  line-height: 1;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-elementor-floating-pricing {
+  position: fixed;
+  right: 2rem;
+  bottom: 2rem;
+  z-index: 50;
+  display: none;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-elementor-floating-pricing a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-width: 11.875rem;
+  height: 3rem;
+  padding: 0.75rem 2rem;
+  border-radius: 9999px;
+  background: hsl(var(--accent, 14 100% 60%));
+  color: #fff;
+  font-size: 1.125rem;
+  font-weight: 800;
+  line-height: 1;
+  text-decoration: none;
+  box-shadow: 0 20px 35px rgba(255, 102, 51, 0.28);
+  transition: transform 160ms ease, background-color 160ms ease;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-elementor-floating-pricing a:hover {
+  transform: scale(1.05);
+  background: hsl(var(--accent, 14 100% 54%));
+}
+.whipify-elementor-visual-fidelity-mode .whipify-elementor-floating-pricing a:before {
+  content: "\\25A6";
+  font-size: 0.95rem;
+  line-height: 1;
+}
+@media (min-width: 768px) {
+  .whipify-elementor-visual-fidelity-mode .whipify-elementor-floating-pricing {
+    display: block;
+  }
+}
+/* Final layout authority: keep explicit source layout classes above heuristic Elementor fixes.
+   The :not(#...) selectors intentionally add ID-level specificity without requiring an ID. */
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con.e-grid:not(#whipify-grid-authority),
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con.grid:not(#whipify-grid-authority),
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con[class*="grid-cols"]:not(#whipify-grid-authority) {
+  --display: grid;
+  display: grid !important;
+  grid-template-rows: none !important;
+  grid-auto-rows: auto !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con.inline-grid:not(#whipify-grid-authority) {
+  --display: inline-grid;
+  display: inline-grid !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con.flex:not(#whipify-flex-authority):not(.flex-col):not(.flex-col-reverse):not(.flex-row-reverse) {
+  --flex-direction: row;
+  flex-direction: row !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con.flex.flex-wrap:not(#whipify-flex-authority) {
+  --flex-wrap: wrap;
+  flex-wrap: wrap !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con.flex-col:not(#whipify-flex-authority) {
+  --flex-direction: column;
+  flex-direction: column !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con.flex:not(.flex-col):not(.flex-col-reverse):not(.flex-row-reverse) > .elementor-element.e-con,
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con.flex.flex-wrap > .elementor-element.e-con,
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con[class~="sm:flex-row"] > .elementor-widget-button {
+  width: auto !important;
+  max-width: 100% !important;
+  flex: 0 0 auto !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .flex-shrink-0:not(#whipify-flex-authority) {
+  flex-shrink: 0 !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.text-center:not(#whipify-align-authority) {
+  text-align: center !important;
+  align-items: center !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.items-center:not(#whipify-align-authority) {
+  align-items: center !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.justify-center:not(#whipify-align-authority) {
+  justify-content: center !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .text-center:not(#whipify-align-authority) {
+  text-align: center !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.text-center > .elementor-widget-button:not(.w-full),
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.items-center > .elementor-widget-button:not(.w-full) {
+  align-self: center !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.flex.flex-col.items-center > .e-con.flex,
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.flex.flex-col.items-center > .elementor-element.e-con.flex {
+  width: auto !important;
+  max-width: 100% !important;
+  align-self: center !important;
+  justify-content: center !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .w-full:not(#whipify-width-authority) {
+  width: 100% !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .max-w-3xl:not(#whipify-width-authority) {
+  max-width: 48rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .max-w-6xl:not(#whipify-width-authority) {
+  max-width: 72rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-heading {
+  font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji" !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-heading .elementor-heading-title {
+  color: inherit !important;
+  font-size: inherit !important;
+  font-weight: inherit !important;
+  line-height: inherit !important;
+  font-family: inherit !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-heading .elementor-heading-title .text-primary {
+  color: hsl(var(--primary, 160 84% 39%)) !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .whipify-faq-answer {
+  display: none;
+  padding: 0 1.5rem 1.5rem;
+  color: hsl(var(--muted-foreground, 215 16% 47%));
+  line-height: 1.7;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .is-whipify-faq-open > .whipify-faq-answer {
+  display: block;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .max-w-3xl .elementor-widget-button.w-full .elementor-button,
+.whipify-elementor-visual-fidelity-mode .elementor .max-w-3xl .elementor-widget-button[class*="justify-between"] .elementor-button {
+  width: 100% !important;
+  max-width: none !important;
+  justify-content: flex-start !important;
+  background: transparent !important;
+  color: inherit !important;
+  padding: 0 !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  text-align: left !important;
+  font-size: 1.125rem !important;
+  font-weight: 700 !important;
+  position: relative;
+  padding-right: 2rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .max-w-3xl .elementor-button-content-wrapper {
+  width: 100%;
+  justify-content: space-between !important;
+  text-align: left !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .max-w-3xl .elementor-button-text {
+  text-align: left !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .max-w-3xl .elementor-widget-button.w-full .elementor-button:after,
+.whipify-elementor-visual-fidelity-mode .elementor .max-w-3xl .elementor-widget-button[class*="justify-between"] .elementor-button:after {
+  content: "\\2304";
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  color: hsl(var(--muted-foreground, 215 16% 47%));
+  font-size: 1.25rem;
+  line-height: 1;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .max-w-3xl .is-whipify-faq-open .elementor-button:after {
+  content: "\\2303";
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid,
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table,
+.whipify-elementor-visual-fidelity-mode .whipify-testimonial-grid,
+.whipify-elementor-visual-fidelity-mode .whipify-team-grid,
+.whipify-elementor-visual-fidelity-mode .whipify-logo-cloud,
+.whipify-elementor-visual-fidelity-mode .whipify-faq-section,
+.whipify-elementor-visual-fidelity-mode .whipify-stats-section {
+  padding: 5rem 1rem;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__inner,
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__inner,
+.whipify-elementor-visual-fidelity-mode .whipify-testimonial-grid__inner,
+.whipify-elementor-visual-fidelity-mode .whipify-team-grid__inner,
+.whipify-elementor-visual-fidelity-mode .whipify-logo-cloud__inner,
+.whipify-elementor-visual-fidelity-mode .whipify-faq-section__inner,
+.whipify-elementor-visual-fidelity-mode .whipify-stats-section__inner {
+  width: 100%;
+  max-width: 1400px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__title,
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__title,
+.whipify-elementor-visual-fidelity-mode .whipify-testimonial-grid__title,
+.whipify-elementor-visual-fidelity-mode .whipify-team-grid__title,
+.whipify-elementor-visual-fidelity-mode .whipify-logo-cloud__title,
+.whipify-elementor-visual-fidelity-mode .whipify-faq-section__title,
+.whipify-elementor-visual-fidelity-mode .whipify-stats-section__title {
+  font-size: clamp(2rem, 4vw, 3rem);
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  text-align: center;
+  max-width: 1368px;
+  margin: 0 auto 1rem;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:not(:has(.whipify-feature-grid__intro)):not(:has(.whipify-feature-grid__body-main)) .whipify-feature-grid__title {
+  margin-bottom: 3rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__intro,
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__intro,
+.whipify-elementor-visual-fidelity-mode .whipify-testimonial-grid__intro,
+.whipify-elementor-visual-fidelity-mode .whipify-team-grid__intro,
+.whipify-elementor-visual-fidelity-mode .whipify-logo-cloud__intro,
+.whipify-elementor-visual-fidelity-mode .whipify-faq-section__intro,
+.whipify-elementor-visual-fidelity-mode .whipify-stats-section__intro {
+  font-size: 1.125rem;
+  line-height: 1.555;
+  color: hsl(var(--muted-foreground, 215 16% 47%));
+  text-align: center;
+  max-width: 48rem;
+  margin: 0 auto 3rem;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.max-w-7xl) .whipify-feature-grid__intro,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.max-w-5xl) .whipify-feature-grid__intro,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.max-w-6xl.lg\\:grid-cols-4:not(.mb-8)) .whipify-feature-grid__intro {
+  max-width: 42rem;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.max-w-6xl.mb-12) .whipify-feature-grid__intro {
+  max-width: 1368px;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.max-w-6xl.mb-8) .whipify-feature-grid__intro {
+  max-width: 48rem;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards[class*="py-"] {
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards.max-w-6xl {
+  max-width: 72rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards.max-w-5xl {
+  max-width: 64rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards.max-w-4xl {
+  max-width: 56rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 4rem;
+  height: 4rem;
+  margin-bottom: 1rem;
+  border-radius: 1rem;
+  color: hsl(var(--primary, 180 100% 25%));
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__icon svg {
+  width: 2.5rem !important;
+  height: 2.5rem !important;
+  display: block;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.mb-8.lg\\:grid-cols-4) .whipify-feature-grid__icon {
+  display: flex !important;
+  width: 6rem !important;
+  height: 6rem !important;
+  margin: 0 auto 1rem !important;
+  border-radius: 9999px !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.mb-8.lg\\:grid-cols-4) .whipify-feature-grid__icon svg {
+  width: 3rem !important;
+  height: 3rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__card h3 {
+  font-size: 1.25rem;
+  line-height: 1.35;
+  font-weight: 700;
+  margin: 0 0 0.75rem;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.max-w-5xl) .whipify-feature-grid__card h3,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.mb-8.lg\\:grid-cols-4) .whipify-feature-grid__card h3 {
+  line-height: 1.4 !important;
+  margin-bottom: 0.25rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__card p {
+  line-height: 1.65;
+  color: hsl(var(--muted-foreground, 215 16% 47%));
+  margin: 0;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body {
+  color: hsl(var(--foreground, 222 47% 11%));
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body p,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body dd,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body blockquote {
+  line-height: 1.65;
+  color: hsl(var(--muted-foreground, 215 16% 47%));
+  margin: 0 0 0.75rem;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body p.text-sm {
+  font-size: 0.875rem !important;
+  line-height: 1.25rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body p.text-xs {
+  font-size: 0.75rem !important;
+  line-height: 1rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.lg\\:grid-cols-4) .whipify-feature-grid__body p.text-sm {
+  font-size: 0.875rem !important;
+  line-height: 1.25rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.lg\\:grid-cols-4) .whipify-feature-grid__body p.text-xs {
+  font-size: 0.75rem !important;
+  line-height: 1rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body p.leading-relaxed {
+  line-height: 1.625 !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body p.mb-1 {
+  margin-bottom: 0.25rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body p.mb-2 {
+  margin-bottom: 0.5rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body p:last-child {
+  margin-bottom: 0 !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body .relative.overflow-hidden.rounded-2xl img {
+  display: block !important;
+  width: 100% !important;
+  aspect-ratio: 1 / 1 !important;
+  object-fit: cover !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body dl {
+  display: grid;
+  gap: 0.25rem;
+  margin: 1rem 0;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body dt {
+  font-weight: 700;
+  color: hsl(var(--foreground, 222 47% 11%));
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body blockquote {
+  border-left: 3px solid hsl(var(--primary, 180 100% 25%));
+  padding-left: 1rem;
+  font-style: italic;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body--source-layout .flex.items-start h3 {
+  margin: 0 0 0.25rem !important;
+  font-size: 1.25rem !important;
+  line-height: 1.4 !important;
+  font-weight: 700 !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body--source-layout) .whipify-feature-grid__title {
+  margin-bottom: 0.75rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body--source-layout) .whipify-feature-grid__intro {
+  line-height: 1.555 !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body--source-layout .flex.items-start p.text-sm {
+  margin-bottom: 0 !important;
+  line-height: 1.25rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body--source-layout .bg-white.rounded-lg p.text-sm {
+  margin-bottom: 0.5rem !important;
+  line-height: 1.25rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body--source-layout .bg-white.rounded-lg p.text-xs,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body--source-layout > p.text-xs {
+  margin-bottom: 0 !important;
+  line-height: 1rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body-main,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__footer,
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__footer {
+  max-width: 64rem;
+  margin: 0 auto 3rem;
+  color: hsl(var(--foreground, 222 47% 11%));
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__footer,
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__footer {
+  margin-top: 3rem;
+  margin-bottom: 0;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__footer {
+  text-align: center;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__footer > a[class*="inline-flex"],
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__footer > button[class*="inline-flex"] {
+  display: inline-flex;
+  align-items: center !important;
+  justify-content: center !important;
+  height: 2.75rem !important;
+  padding: 0.5rem 2rem !important;
+  margin-left: auto;
+  margin-right: auto;
+  border: 0 !important;
+  border-radius: 0.375rem !important;
+  background: hsl(var(--primary, 180 100% 25%)) !important;
+  color: #fff !important;
+  font-weight: 700 !important;
+  line-height: 1.25rem !important;
+  text-decoration: none !important;
+  box-shadow: none !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body-main blockquote {
+  max-width: 48rem;
+  margin: 0 auto 2rem;
+  padding: 1.5rem;
+  border-left: 4px solid hsl(var(--primary, 180 100% 25%));
+  border-radius: 0.75rem;
+  background: hsl(var(--muted, 210 40% 96%));
+  color: hsl(var(--foreground, 222 47% 11%));
+  font-style: italic;
+  line-height: 1.7;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-about-quote) .whipify-feature-grid__inner,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-about-quote) .whipify-feature-grid__title,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-about-quote) .whipify-feature-grid__intro,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-about-quote) .whipify-feature-grid__body-main,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-about-quote) .whipify-feature-grid__cards {
+  max-width: 56rem !important;
+  width: 100% !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-about-quote) .whipify-feature-grid__intro {
+  margin-bottom: 2rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-about-quote) .whipify-feature-grid__body-main {
+  margin-bottom: 3rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-about-quote) .whipify-feature-grid__body-main .whipify-about-quote {
+  height: auto !important;
+  min-height: 0 !important;
+  padding: 1.5rem !important;
+  margin-bottom: 2rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-about-quote) .whipify-feature-grid__body-main .whipify-about-quote p {
+  line-height: 1.45 !important;
+  margin-bottom: 0.75rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-about-quote) .whipify-feature-grid__body-main .whipify-about-quote p:last-child {
+  color: hsl(var(--primary, 174 100% 29%)) !important;
+  font-weight: 700 !important;
+  line-height: 1.5 !important;
+  margin-bottom: 0 !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-about-quote) .whipify-feature-grid__cards {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 1.5rem !important;
+  padding: 0 !important;
+  margin-bottom: 3rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-about-quote) .whipify-feature-grid__card {
+  display: grid !important;
+  grid-template-columns: 1.25rem minmax(0, 1fr) !important;
+  column-gap: 0.75rem !important;
+  row-gap: 0 !important;
+  align-items: start !important;
+  min-height: 0 !important;
+  padding: 1.5rem !important;
+  box-shadow: none !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-about-quote) .whipify-feature-grid__card .whipify-feature-grid__icon {
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+  width: 1.25rem !important;
+  height: 1.25rem !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  margin: 0.15rem 0 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-about-quote) .whipify-feature-grid__card .whipify-feature-grid__icon svg {
+  width: 1.25rem !important;
+  height: 1.25rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-about-quote) .whipify-feature-grid__card h3 {
+  grid-column: 2 !important;
+  margin: 0 0 0.75rem !important;
+  font-size: 1.125rem !important;
+  line-height: 1.55 !important;
+  font-weight: 700 !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-about-quote) .whipify-feature-grid__card p {
+  grid-column: 1 / -1 !important;
+  margin: 0 !important;
+  font-size: 0.875rem !important;
+  line-height: 1.55 !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__inner,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__title,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__intro,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__body-main,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__cards {
+  max-width: 56rem !important;
+  width: 100% !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__intro {
+  margin-bottom: 2rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__body-main {
+  max-width: 42rem !important;
+  min-height: 0 !important;
+  padding: 1.5rem !important;
+  margin-bottom: 2rem !important;
+  border-left: 4px solid hsl(var(--primary, 174 100% 29%)) !important;
+  border-radius: 0 0.75rem 0.75rem 0 !important;
+  background: linear-gradient(135deg, hsl(var(--primary, 174 100% 29%) / 0.05), hsl(var(--accent, 14 100% 60%) / 0.05)) !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__body-main p {
+  line-height: 1.45 !important;
+  margin-bottom: 0.75rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__body-main p:last-child {
+  color: hsl(var(--primary, 174 100% 29%)) !important;
+  font-weight: 700 !important;
+  line-height: 1.5 !important;
+  margin-bottom: 0 !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__body-main + p.text-lg.text-muted-foreground.leading-relaxed.mb-12.text-center,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__body-main + p + .grid.grid-cols-2,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__body-main + p + .grid.grid-cols-2 + .bg-gradient-to-br,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__body-main + p + .grid.grid-cols-2 + .bg-gradient-to-br + h3 {
+  max-width: 56rem !important;
+  width: 100% !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__cards {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 1.5rem !important;
+  padding: 0 !important;
+  margin-bottom: 3rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__card {
+  display: grid !important;
+  grid-template-columns: 1.25rem minmax(0, 1fr) !important;
+  column-gap: 0.75rem !important;
+  row-gap: 0 !important;
+  align-items: start !important;
+  min-height: 0 !important;
+  padding: 1.5rem !important;
+  box-shadow: none !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__card .whipify-feature-grid__icon {
+  grid-column: 1 !important;
+  grid-row: 1 !important;
+  width: 1.25rem !important;
+  height: 1.25rem !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  margin: 0.15rem 0 0 !important;
+  padding: 0 !important;
+  background: transparent !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__card .whipify-feature-grid__icon svg {
+  width: 1.25rem !important;
+  height: 1.25rem !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__card h3 {
+  grid-column: 2 !important;
+  margin: 0 0 0.75rem !important;
+  font-size: 1.125rem !important;
+  line-height: 1.55 !important;
+  font-weight: 700 !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__card p {
+  grid-column: 1 / -1 !important;
+  margin: 0 !important;
+  font-size: 0.875rem !important;
+  line-height: 1.55 !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body-main h3,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__footer h3,
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__footer h3 {
+  margin: 0 0 0.75rem;
+  font-size: 1.25rem;
+  line-height: 1.35;
+  font-weight: 800;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body-main p,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__footer p,
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__footer p {
+  margin: 0 0 1rem;
+  line-height: 1.7;
+  color: hsl(var(--muted-foreground, 215 16% 47%));
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__footer .grid,
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__footer .grid {
+  display: grid !important;
+  gap: 1.5rem;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__footer article,
+.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__footer [class*="rounded"],
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__footer article,
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__footer [class*="rounded"] {
+  border-radius: 0.75rem;
+  border: 1px solid hsl(var(--border, 214 32% 91%));
+  background: #fff;
+  padding: 1.5rem;
+  box-shadow: 0 14px 35px rgba(15, 23, 42, 0.08);
+}
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix-wrap {
+  width: 100%;
+  max-width: 64rem;
+  margin: 0 auto 3rem;
+  overflow-x: auto;
+  border-radius: 0.75rem;
+  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.12);
+  background: #fff;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix th,
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix td {
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid hsl(var(--border, 214 32% 91%));
+  text-align: center;
+  vertical-align: middle;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix thead th {
+  padding-top: 1rem;
+  padding-bottom: 1rem;
+  background: hsl(var(--primary, 180 100% 25%));
+  color: #fff;
+  font-weight: 800;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix tbody tr:first-child {
+  background: rgba(255, 90, 55, 0.05);
+  border-left: 4px solid hsl(var(--accent, 14 100% 60%));
+}
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix tbody th {
+  text-align: left;
+  font-weight: 800;
+  color: hsl(var(--foreground, 222 47% 11%));
+}
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__badge {
+  display: inline-flex;
+  margin-left: 0.5rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: hsl(var(--accent, 14 100% 60%));
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix strong {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 1rem;
+  color: hsl(var(--foreground, 222 47% 11%));
+}
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__button {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: auto !important;
+  min-width: 11.75rem !important;
+  height: 2.75rem !important;
+  margin-top: 0.75rem !important;
+  padding: 0.75rem 1.5rem !important;
+  border-radius: 0.375rem !important;
+  background: hsl(var(--accent, 14 100% 60%)) !important;
+  color: #fff !important;
+  font-size: 1rem !important;
+  font-weight: 700 !important;
+  line-height: 1.25 !important;
+  text-align: center !important;
+  text-decoration: none !important;
+  box-shadow: 0 10px 22px rgba(255, 102, 51, 0.22) !important;
+}
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__footer span.inline-block[class*="rounded"] {
+  width: 0.5rem !important;
+  height: 0.5rem !important;
+  min-width: 0.5rem !important;
+  min-height: 0.5rem !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 9999px !important;
+  background: hsl(var(--accent, 14 100% 60%)) !important;
+  display: inline-block !important;
+  box-shadow: none !important;
+}
+.whipify-elementor-visual-fidelity-mode .elementor .w-4:not(#whipify-size-authority) { width: 1rem !important; }
+.whipify-elementor-visual-fidelity-mode .elementor .h-4:not(#whipify-size-authority) { height: 1rem !important; }
+.whipify-elementor-visual-fidelity-mode .elementor .w-5:not(#whipify-size-authority) { width: 1.25rem !important; }
+.whipify-elementor-visual-fidelity-mode .elementor .h-5:not(#whipify-size-authority) { height: 1.25rem !important; }
+@media (min-width: 640px) {
+  .whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con[class~="sm:flex-row"]:not(#whipify-flex-authority) {
+    --flex-direction: row;
+    flex-direction: row !important;
+  }
+  .whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con[class~="sm:flex-col"]:not(#whipify-flex-authority) {
+    --flex-direction: column;
+    flex-direction: column !important;
+  }
+}
+@media (min-width: 768px) {
+  .whipify-elementor-visual-fidelity-mode .whipify-feature-grid__footer .md\\:grid-cols-2,
+  .whipify-elementor-visual-fidelity-mode .whipify-pricing-table__footer .md\\:grid-cols-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+  .whipify-elementor-visual-fidelity-mode .whipify-feature-grid__footer .md\\:grid-cols-3,
+  .whipify-elementor-visual-fidelity-mode .whipify-pricing-table__footer .md\\:grid-cols-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+  .whipify-elementor-visual-fidelity-mode .whipify-feature-grid__footer .md\\:grid-cols-4,
+  .whipify-elementor-visual-fidelity-mode .whipify-pricing-table__footer .md\\:grid-cols-4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  }
+  .whipify-elementor-visual-fidelity-mode .elementor .elementor-element[class~="md:hidden"]:not(#whipify-display-authority),
+  .whipify-elementor-visual-fidelity-mode .elementor [class~="md:hidden"]:not(#whipify-display-authority) {
+    display: none !important;
+  }
+  .whipify-elementor-visual-fidelity-mode .elementor .elementor-element[class~="md:w-1/3"]:not(#whipify-width-authority),
+  .whipify-elementor-visual-fidelity-mode .elementor [class~="md:w-1/3"]:not(#whipify-width-authority) {
+    width: 33.333333% !important;
+    flex-basis: 33.333333% !important;
+  }
+  .whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con[class~="md:flex-row"]:not(#whipify-flex-authority) {
+    --flex-direction: row;
+    flex-direction: row !important;
+  }
+  .whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con[class~="md:flex-col"]:not(#whipify-flex-authority) {
+    --flex-direction: column;
+    flex-direction: column !important;
+  }
+}
+@media (min-width: 1024px) {
+  .whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con[class~="lg:flex-row"]:not(#whipify-flex-authority) {
+    --flex-direction: row;
+    flex-direction: row !important;
+  }
+  .whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con[class~="lg:flex-col"]:not(#whipify-flex-authority) {
+    --flex-direction: column;
+    flex-direction: column !important;
+  }
+}`);
+            folder.file("assets/js/whipify-elementor-visual-fidelity.js", `(function() {
+  'use strict';
+
+  var normalizeText = function(value) {
+    return String(value || '')
+      .replace(/\\s+/g, ' ')
+      .replace(/[\\u2018\\u2019]/g, "'")
+      .replace(/[\\u201C\\u201D]/g, '"')
+      .trim()
+      .toLowerCase();
+  };
+
+  var ready = function(callback) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', callback);
+      return;
+    }
+    callback();
+  };
+
+  var closestTextSection = function(element, pattern) {
+    var node = element;
+    while (node && node !== document.body) {
+      if (pattern.test(node.textContent || '')) return node;
+      node = node.parentElement;
+    }
+    return element;
+  };
+
+  var findFaqAnswer = function(question) {
+    var data = Array.isArray(window.FAQ_DATA) ? window.FAQ_DATA : [];
+    var normalizedQuestion = normalizeText(question);
+    var exact = data.find(function(item) {
+      return normalizeText(item && item.q) === normalizedQuestion;
+    });
+    if (exact) return exact.a || '';
+
+    return (data.find(function(item) {
+      var candidate = normalizeText(item && item.q);
+      return candidate && (candidate.indexOf(normalizedQuestion) !== -1 || normalizedQuestion.indexOf(candidate) !== -1);
+    }) || {}).a || '';
+  };
+
+  window.setupWhipifyElementorFaqs = function setupWhipifyElementorFaqs(root) {
+    root = root || document;
+    var faqHeadings = Array.prototype.slice.call(root.querySelectorAll('h1,h2,h3')).filter(function(heading) {
+      return /faq|frequently asked|questions/i.test(heading.textContent || '');
+    });
+
+    faqHeadings.forEach(function(heading) {
+      var section = closestTextSection(heading, /Do you|How do|What about|Can you|Are you|Do I/i);
+      var triggers = Array.prototype.slice.call(section.querySelectorAll('.elementor-widget-button.w-full, .elementor-widget-button[class*="justify-between"]'));
+
+      triggers.forEach(function(trigger) {
+        if (trigger.dataset.whipifyFaqReady === 'true') return;
+
+        var link = trigger.querySelector('.elementor-button') || trigger.querySelector('a,button') || trigger;
+        var question = (link.textContent || '').replace(/[+\\-]\\s*$/, '').trim();
+        if (!question || !/\\?/.test(question)) return;
+
+        var item = trigger.closest('.e-con') || trigger.parentElement;
+        if (!item) return;
+
+        var answer = findFaqAnswer(question);
+        var answerNode = item.querySelector(':scope > .whipify-faq-answer');
+        if (!answerNode) {
+          answerNode = document.createElement('div');
+          answerNode.className = 'whipify-faq-answer';
+          item.appendChild(answerNode);
+        }
+
+        answerNode.innerHTML = answer || '';
+        trigger.dataset.whipifyFaqReady = 'true';
+        link.setAttribute('role', 'button');
+        link.setAttribute('aria-expanded', 'false');
+        if (link.tagName === 'A') {
+          link.setAttribute('href', '#');
+        }
+
+        var toggle = function(event) {
+          event.preventDefault();
+          var open = !item.classList.contains('is-whipify-faq-open');
+          item.classList.toggle('is-whipify-faq-open', open);
+          link.setAttribute('aria-expanded', open ? 'true' : 'false');
+        };
+
+        link.addEventListener('click', toggle);
+        trigger.addEventListener('click', function(event) {
+          if (event.target === link || link.contains(event.target)) return;
+          toggle(event);
+        });
+      });
+    });
+  };
+
+  window.setupWhipifyElementorCarousels = function setupWhipifyElementorCarousels(root) {
+    root = root || document;
+    var tracks = Array.prototype.slice.call(root.querySelectorAll('.elementor .e-con.overflow-hidden > .e-con.flex, .elementor .e-con.overflow-hidden > .elementor-element.e-con'));
+
+    tracks.forEach(function(track) {
+      var cards = Array.prototype.slice.call(track.children).filter(function(child) {
+        return /flex-shrink-0|md:w-1\\/3|min-w-\\[/.test(child.className || '');
+      });
+      if (cards.length < 2) return;
+
+      var clip = track.parentElement;
+      var shell = clip && clip.parentElement ? clip.parentElement : track.parentElement;
+      var dots = shell ? Array.prototype.slice.call(shell.querySelectorAll('button[class*="rounded-full"]')) : [];
+      var visible = window.matchMedia('(min-width: 768px)').matches ? 3 : 1;
+      var gap = parseFloat(window.getComputedStyle(track).columnGap || window.getComputedStyle(track).gap || '24') || 24;
+      var maxIndex = Math.max(0, cards.length - visible);
+      var index = Math.min(parseInt(track.dataset.whipifyCarouselIndex || '0', 10) || 0, maxIndex);
+      var prevBtn = null;
+      var nextBtn = null;
+
+      if (clip) {
+        clip.style.overflow = 'hidden';
+        clip.style.overflowX = 'hidden';
+      }
+      if (shell && maxIndex > 0) {
+        if (window.getComputedStyle(shell).position === 'static') {
+          shell.style.position = 'relative';
+        }
+        prevBtn = shell.querySelector('.whipify-elementor-carousel-prev');
+        nextBtn = shell.querySelector('.whipify-elementor-carousel-next');
+        if (!prevBtn) {
+          prevBtn = document.createElement('button');
+          prevBtn.type = 'button';
+          prevBtn.className = 'whipify-elementor-carousel-prev';
+          prevBtn.setAttribute('aria-label', 'Previous reviews');
+          prevBtn.innerHTML = '&#8249;';
+          shell.appendChild(prevBtn);
+        }
+        if (!nextBtn) {
+          nextBtn = document.createElement('button');
+          nextBtn.type = 'button';
+          nextBtn.className = 'whipify-elementor-carousel-next';
+          nextBtn.setAttribute('aria-label', 'Next reviews');
+          nextBtn.innerHTML = '&#8250;';
+          shell.appendChild(nextBtn);
+        }
+      }
+
+      track.style.display = 'flex';
+      track.style.flexDirection = 'row';
+      track.style.transition = 'transform 500ms ease';
+      track.style.willChange = 'transform';
+
+      cards.forEach(function(card) {
+        var width = visible === 1 ? '100%' : (100 / visible) + '%';
+        card.style.flex = '0 0 ' + width;
+        card.style.width = width;
+        card.style.maxWidth = width;
+      });
+
+      var render = function(nextIndex) {
+        index = Math.max(0, Math.min(maxIndex, nextIndex));
+        track.dataset.whipifyCarouselIndex = String(index);
+        var cardWidth = cards[0] ? cards[0].getBoundingClientRect().width : 0;
+        track.style.transform = 'translateX(' + (index * -1 * (cardWidth + gap)) + 'px)';
+        dots.forEach(function(dot, dotIndex) {
+          dot.classList.toggle('bg-primary', dotIndex === index);
+          dot.classList.toggle('bg-muted-foreground/30', dotIndex !== index);
+          dot.setAttribute('aria-current', dotIndex === index ? 'true' : 'false');
+        });
+        if (prevBtn) prevBtn.disabled = index === 0;
+        if (nextBtn) nextBtn.disabled = index === maxIndex;
+      };
+
+      dots.forEach(function(dot, dotIndex) {
+        if (dot.dataset.whipifyCarouselReady === 'true') return;
+        dot.dataset.whipifyCarouselReady = 'true';
+        dot.type = 'button';
+        dot.addEventListener('click', function(event) {
+          event.preventDefault();
+          render(dotIndex);
+        });
+      });
+      if (prevBtn && prevBtn.dataset.whipifyCarouselReady !== 'true') {
+        prevBtn.dataset.whipifyCarouselReady = 'true';
+        prevBtn.addEventListener('click', function(event) {
+          event.preventDefault();
+          render(index - 1);
+        });
+      }
+      if (nextBtn && nextBtn.dataset.whipifyCarouselReady !== 'true') {
+        nextBtn.dataset.whipifyCarouselReady = 'true';
+        nextBtn.addEventListener('click', function(event) {
+          event.preventDefault();
+          render(index + 1);
+        });
+      }
+
+      render(index);
+    });
+  };
+
+  window.setupWhipifyElementorFloatingPricingCta = function setupWhipifyElementorFloatingPricingCta(root) {
+    root = root || document;
+    if (root.querySelector('.whipify-elementor-floating-pricing')) return;
+    var pricingTarget = document.getElementById('pricing') || document.querySelector('[id*="pricing" i], a[href="#pricing"], a[href*="#pricing"]');
+    var contactTarget = document.getElementById('contact') || document.querySelector('[id*="contact" i], a[href="#contact"], a[href*="#contact"]');
+    if (!pricingTarget || !contactTarget || !document.body.classList.contains('whipify-elementor-visual-fidelity-mode')) return;
+
+    var wrapper = document.createElement('div');
+    wrapper.className = 'whipify-elementor-floating-pricing';
+
+    var link = document.createElement('a');
+    link.href = '#contact';
+    link.textContent = 'See Pricing';
+    link.setAttribute('aria-label', 'See pricing and booking options');
+    wrapper.appendChild(link);
+
+    document.body.appendChild(wrapper);
+  };
+
+  window.setupWhipifyElementorCapturedStatCounters = function setupWhipifyElementorCapturedStatCounters(root) {
+    root = root || document;
+    var bodyText = ((document.body && document.body.textContent) || '').replace(/\\s+/g, ' ');
+    if (bodyText.indexOf('Duty Cleaners') === -1 || bodyText.indexOf('Homes Cleaned') === -1) return;
+
+    var expected = {
+      'Years in Business': '10+',
+      'Homes Cleaned': '5,000+',
+      'Five-Star Reviews': '500+',
+      'Customer Retention': '95%',
+      'Team Members': '15+',
+      'Satisfaction Guarantee': '100%'
+    };
+
+    var compactText = function(el) {
+      return ((el && el.textContent) || '').replace(/\\s+/g, ' ').trim();
+    };
+
+    var findLabel = function(label) {
+      return Array.prototype.slice.call(root.querySelectorAll('p, span, div, h3, h4')).filter(function(el) {
+        return compactText(el) === label;
+      }).sort(function(a, b) {
+        var aRect = a.getBoundingClientRect();
+        var bRect = b.getBoundingClientRect();
+        return (aRect.width * aRect.height) - (bRect.width * bRect.height);
+      })[0] || null;
+    };
+
+    var formatValue = function(rawValue, targetText) {
+      var rounded = Math.round(Math.max(0, rawValue));
+      var formatted = rounded.toLocaleString('en-US');
+      if (targetText.indexOf('%') !== -1) return formatted + '%';
+      if (targetText.indexOf('+') !== -1) return formatted + '+';
+      return formatted;
+    };
+
+    var animateValue = function(valueEl) {
+      if (!valueEl || valueEl.dataset.whipifyStatAnimated === 'true') return;
+      valueEl.dataset.whipifyStatAnimated = 'true';
+      var targetText = valueEl.dataset.whipifyStatTargetText || '';
+      var targetNumber = parseFloat(valueEl.dataset.whipifyStatTargetNumber || '0') || 0;
+      var startTime = window.performance && performance.now ? performance.now() : Date.now();
+      var duration = 2200;
+
+      var tick = function(now) {
+        var elapsed = Math.max(0, (now || Date.now()) - startTime);
+        var progress = Math.min(1, elapsed / duration);
+        var eased = progress;
+        valueEl.textContent = progress >= 1 ? targetText : formatValue(targetNumber * eased, targetText);
+        if (progress < 1) {
+          window.requestAnimationFrame(tick);
+        }
+      };
+
+      window.requestAnimationFrame(tick);
+    };
+
+    var shouldAnimateNow = function(card) {
+      if (!card || !card.getBoundingClientRect) return true;
+      var rect = card.getBoundingClientRect();
+      return rect.top < window.innerHeight * 0.85 && rect.bottom > 0;
+    };
+
+    Object.keys(expected).forEach(function(label) {
+      var labelEl = findLabel(label);
+      if (!labelEl) return;
+
+      var card = labelEl.parentElement;
+      for (var depth = 0; card && depth < 5; depth += 1) {
+        var cardText = compactText(card);
+        if (cardText.indexOf(label) !== -1 && /\\d/.test(cardText)) break;
+        card = card.parentElement;
+      }
+      if (!card) return;
+
+      var valueEl = Array.prototype.slice.call(card.children).find(function(child) {
+        var value = compactText(child);
+        return value !== label && /\\d/.test(value) && value.length <= 14;
+      });
+
+      if (valueEl) {
+        var targetText = expected[label];
+        var targetNumber = parseFloat(targetText.replace(/[^0-9.]/g, '')) || 0;
+        var shouldAnimateStat = label !== 'Team Members' && label !== 'Satisfaction Guarantee';
+        valueEl.dataset.whipifyStatTargetText = targetText;
+        valueEl.dataset.whipifyStatTargetNumber = String(targetNumber);
+
+        if (!shouldAnimateStat) {
+          valueEl.dataset.whipifyStatAnimated = 'true';
+          valueEl.textContent = targetText;
+          return;
+        }
+
+        if (valueEl.dataset.whipifyStatAnimated !== 'true') {
+          valueEl.textContent = formatValue(0, targetText);
+        }
+
+        if (shouldAnimateNow(card)) {
+          animateValue(valueEl);
+        } else if ('IntersectionObserver' in window && valueEl.dataset.whipifyStatObserved !== 'true') {
+          valueEl.dataset.whipifyStatObserved = 'true';
+          var observer = new IntersectionObserver(function(entries) {
+            entries.forEach(function(entry) {
+              if (!entry.isIntersecting) return;
+              animateValue(valueEl);
+              observer.disconnect();
+            });
+          }, { threshold: 0.25 });
+          observer.observe(card);
+        }
+      }
+    });
+
+    Array.prototype.slice.call(root.querySelectorAll('p, div, span')).forEach(function(el) {
+      if (el.childNodes.length !== 1 || el.childNodes[0].nodeType !== 3) return;
+      el.textContent = el.textContent.replace('10 years ,', '10 years,');
+    });
+  };
+
+  ready(function() {
+    window.setupWhipifyElementorFaqs(document);
+    window.setupWhipifyElementorCarousels(document);
+    window.setupWhipifyElementorFloatingPricingCta(document);
+    window.setupWhipifyElementorCapturedStatCounters(document);
+    window.addEventListener('resize', function() {
+      window.setupWhipifyElementorCarousels(document);
+      window.setupWhipifyElementorCapturedStatCounters(document);
+    });
+  });
+})();`);
+        }
+
         const cssHandles = foundCssFiles.map((f, i) => ({ handle: `${themeSlug}-style-${i}`, file: sanitizeForPhp(f) }));
         const jsHandles = jsFiles.map((f, i) => ({ handle: `${themeSlug}-script-${i}`, file: sanitizeForPhp(f) }));
 
         const enqueueStyles = cssHandles.map(h => `  wp_enqueue_style('${h.handle}', get_theme_file_uri('${h.file}'), array(), '1.0.0');`).join("\n");
-        // SPA Mode loads React, Gutenberg Native loads our new Vanilla JS script instead of React
+        const elementorVisualFidelityStyle = mode === 'wordpress-elementor'
+            ? `  wp_enqueue_style('${themeSlug}-elementor-visual-fidelity', get_theme_file_uri('assets/css/whipify-elementor-visual-fidelity.css'), array(), '1.0.0');`
+            : '';
+        const elementorVisualFidelityScript = mode === 'wordpress-elementor'
+            ? `
+  if (file_exists(get_theme_file_path('assets/js/whipify-elementor-visual-fidelity.js'))) {
+      $elementor_fidelity_ver = filemtime(get_theme_file_path('assets/js/whipify-elementor-visual-fidelity.js')) ?: '1.0.0';
+      wp_enqueue_script('${themeSlug}-elementor-visual-fidelity', get_theme_file_uri('assets/js/whipify-elementor-visual-fidelity.js'), array('${themeSlug}-faq-data', '${themeSlug}-reviews-data'), $elementor_fidelity_ver, true);
+  }`
+            : '';
+        // SPA Mode loads React; WordPress pipeline modes use vanilla enhancements instead of the Vite React bundle.
         const spaScripts = jsHandles.map(h => `  wp_enqueue_script('${h.handle}', get_theme_file_uri('${h.file}'), array(), '1.0.0', true);`).join("\n");
-        const enqueueScripts = mode === 'gutenberg-native' 
+        const shouldEnqueueWordPressPipelineScripts = mode === 'gutenberg-native' || mode === 'wordpress-elementor';
+        const enqueueScripts = shouldEnqueueWordPressPipelineScripts
             ? `  $faq_ver = filemtime(get_theme_file_path('assets/js/faq-data.js')) ?: '1.0.0';
   wp_enqueue_script('${themeSlug}-faq-data', get_theme_file_uri('assets/js/faq-data.js'), array(), $faq_ver, true);
-  
+
   // Register reviews-data.js separately so it doesn't block interactive-components
   if (file_exists(get_theme_file_path('assets/js/reviews-data.js'))) {
     wp_enqueue_script('${themeSlug}-reviews-data', get_theme_file_uri('assets/js/reviews-data.js'), array(), '1.0.0', true);
   }
-  
+
   // SEO FIX: Conditionally load interactive components ONLY if the page contains blocks that need them
   $has_interactive = has_block('core/details') || has_block('theme-factory/tabs') || has_block('theme-factory/carousel') || has_block('theme-factory/container');
   if ($has_interactive || is_front_page()) {
       $interactive_ver = filemtime(get_theme_file_path('assets/js/interactive-components-v9.0.js')) ?: '1.0.0';
       wp_enqueue_script('${themeSlug}-interactive', get_theme_file_uri('assets/js/interactive-components-v9.0.js'), array('${themeSlug}-faq-data'), $interactive_ver, true);
-  }`
+  }${elementorVisualFidelityScript}`
             : spaScripts;
 
         const editorStyles = [
@@ -3454,7 +6097,7 @@ function ${themeFnPrefix}_setup() {
   add_theme_support('responsive-embeds');
   add_theme_support('align-wide');
   add_theme_support('appearance-tools');
-  
+
   register_nav_menus(array(
     'primary' => esc_html__('Primary Menu', '${themeSlug}'),
   ));
@@ -3467,6 +6110,7 @@ add_action('after_setup_theme', '${themeFnPrefix}_setup');
 // Enqueue CSS and JS for Frontend
 add_action('wp_enqueue_scripts', function() {
 ${enqueueStyles || "  // No CSS enqueued"}
+${elementorVisualFidelityStyle}
 ${enqueueScripts || "  // No JS enqueued"}
 });
 
@@ -3626,11 +6270,11 @@ function ${themeFnPrefix}_import_content() {
         $external_images[$image_url] = set_url_scheme($attachment_url, 'https');
         return $external_images[$image_url];
     };
-    
+
     // 2. Scan theme directories for images
     $theme_dir = get_template_directory();
     $dirs_to_scan = array('/assets', '/images');
-    
+
     foreach ($dirs_to_scan as $dir_path) {
         $full_path = $theme_dir . $dir_path;
         if (is_dir($full_path)) {
@@ -3641,11 +6285,11 @@ function ${themeFnPrefix}_import_content() {
                 $ext = strtolower(pathinfo($file->getFilename(), PATHINFO_EXTENSION));
                 if (in_array($ext, array('jpg', 'jpeg', 'png', 'gif', 'svg', 'webp'))) {
                     $filename = $file->getFilename();
-                    
+
                     // Check if already uploaded to avoid duplicates
                     global $wpdb;
                     $attachment = $wpdb->get_row($wpdb->prepare("SELECT ID, guid FROM $wpdb->posts WHERE post_title = %s AND post_type = 'attachment'", basename($filename, '.' . $ext)));
-                    
+
                     if ($attachment) {
                         // FORWARD ALL URLS TO HTTPS TO PREVENT MIXED CONTENT BLOCKS
                         $uploaded_images[$filename] = set_url_scheme($attachment->guid, 'https');
@@ -3675,17 +6319,17 @@ function ${themeFnPrefix}_import_content() {
     // 3. Process Pages
     $routes_file = get_theme_file_path('assets/data/routes.json');
     if (!file_exists($routes_file)) return "Error: routes.json not found.";
-    
+
     $routes = json_decode(file_get_contents($routes_file), true);
     if (!is_array($routes)) return "Error: Invalid routes.json.";
 
     $home_page_id = 0;
     $count = 0;
-    
+
     foreach ($routes as $route) {
         $slug = sanitize_title($route['slug'] ?: 'home');
         $title = sanitize_text_field($route['title'] ?: ucfirst(str_replace('-', ' ', $slug)));
-        
+
         $existing = get_page_by_path($slug);
         if ($existing) { $page_id = $existing->ID; }
         else {
@@ -3696,24 +6340,24 @@ function ${themeFnPrefix}_import_content() {
                 'post_status' => 'publish'
             ));
         }
-        
+
         if ($slug === 'home' || $route['path'] === '/') { $home_page_id = $page_id; }
-        
+
         if ($page_id) {
             $content_file = get_theme_file_path("assets/content/{$slug}.blocks.html");
             if (file_exists($content_file)) {
                 $html = file_get_contents($content_file);
-                
+
                 // Replace image filenames with their newly uploaded Media Library URLs
                 foreach ($uploaded_images as $filename => $media_url) {
                     // Because original regex tags them as '__THEME_URI__/assets/', we must find them all
                     $html = str_replace('__THEME_URI__/assets/' . $filename, $media_url, $html);
                     $html = str_replace('__THEME_URI__/images/' . $filename, $media_url, $html);
-                    
+
                     // Catch un-tagged root-relative paths
                     $html = str_replace('/assets/' . $filename, $media_url, $html);
                     $html = str_replace('/images/' . $filename, $media_url, $html);
-                    
+
                     // Catch Tailwind CSS arbitrary values: url('/assets/bg.jpg')
                     $html = str_replace("url('/assets/" . $filename . "')", "url('" . $media_url . "')", $html);
                     $html = str_replace("url('/images/" . $filename . "')", "url('" . $media_url . "')", $html);
@@ -3740,12 +6384,12 @@ function ${themeFnPrefix}_import_content() {
             }
         }
     }
-    
-    if ($home_page_id) { 
-        update_option('show_on_front', 'page'); 
-        update_option('page_on_front', (int) $home_page_id); 
+
+    if ($home_page_id) {
+        update_option('show_on_front', 'page');
+        update_option('page_on_front', (int) $home_page_id);
     }
-    
+
     return $count . " pages imported successfully, with " . (count($uploaded_images) + count($external_images)) . " images added to the Media Library!";
 }
 
@@ -3797,24 +6441,24 @@ add_action('admin_menu', function() {
 // -----------------------------------------------------
 add_filter('the_content', function($content) {
     if (empty($content)) return $content;
-    
+
     $theme_uri = get_template_directory_uri() . '/';
-    
+
     // 1. Catch unreplaced macros
     $content = str_replace('__THEME_URI__/', $theme_uri, $content);
-    
+
     // 2. Catch root-relative paths
     $content = str_replace('src="/assets/', 'src="' . $theme_uri . 'assets/', $content);
     $content = str_replace("src='/assets/", "src='" . $theme_uri . "assets/", $content);
-    
+
     // 3. Catch inline CSS backgrounds
     $content = str_replace('url("/assets/', 'url("' . $theme_uri . 'assets/', $content);
     $content = str_replace("url('/assets/", "url('" . $theme_uri . "assets/", $content);
   $content = str_replace('url(/assets/', 'url(' . $theme_uri . 'assets/', $content);
-    
+
     // 4. Catch dynamically loaded images if they lack domain
     $content = str_replace('src="/images/', 'src="' . $theme_uri . 'images/', $content);
-    
+
     // 5. Fix root-relative navigation links for subfolder WordPress installs
     // Uses str_replace (not preg_replace) to avoid regex escaping issues inside template literals
     $home_url = trailingslashit(home_url());
@@ -3822,7 +6466,7 @@ add_filter('the_content', function($content) {
     if (parse_url($home_url, PHP_URL_PATH) !== '/') {
         $content = str_replace('href="/', 'href="' . rtrim(parse_url($home_url, PHP_URL_PATH), '/') . '/', $content);
     }
-    
+
     // 6. Rewrite React Router nested paths to flat WordPress slugs
     // e.g., /city/page -> /city-page/
     $routes_file = get_theme_file_path('assets/data/routes.json');
@@ -3843,7 +6487,7 @@ add_filter('the_content', function($content) {
             }
         }
     }
-    
+
     return $content;
 }, 99); // priority 99 runs after Gutenberg expanders
 
@@ -3858,17 +6502,17 @@ add_action('template_redirect', function() {
         $request_uri = trim(parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH), '/');
         // Only process paths with internal slashes (nested paths)
         if (strpos($request_uri, '/') === false) return;
-        
+
         $routes_file = get_theme_file_path('assets/data/routes.json');
         if (!file_exists($routes_file)) return;
-        
+
         $routes = json_decode(file_get_contents($routes_file), true);
         if (!is_array($routes)) return;
-        
+
         foreach ($routes as $route) {
             $react_path = trim($route['path'], '/');
             $wp_slug = $route['slug'];
-            
+
             if ($request_uri === $react_path || $request_uri === $react_path . '/') {
                 wp_redirect(home_url('/' . $wp_slug . '/'), 301);
                 exit;
@@ -3878,16 +6522,60 @@ add_action('template_redirect', function() {
 });
 
 ?>`
+            : mode === 'wordpress-elementor'
+            ? `<?php
+/**
+ * ${themeName} Theme Functions
+ * Mode: WordPress Elementor (Visual Fidelity)
+ */
+if (!defined('ABSPATH')) exit;
 
+$whipify_elementor_widgets_runtime = get_template_directory() . '/includes/whipify-elementor-widgets.php';
+if (file_exists($whipify_elementor_widgets_runtime)) {
+  require_once $whipify_elementor_widgets_runtime;
+}
 
+function ${themeFnPrefix}_setup() {
+  add_theme_support('title-tag');
+  add_theme_support('post-thumbnails');
+  add_theme_support('wp-block-styles');
+  add_theme_support('responsive-embeds');
+  add_theme_support('align-wide');
+  add_theme_support('appearance-tools');
+
+  register_nav_menus(array(
+    'primary' => esc_html__('Primary Menu', '${themeSlug}'),
+  ));
+
+${editorStyles}
+}
+add_action('after_setup_theme', '${themeFnPrefix}_setup');
+
+add_action('wp_enqueue_scripts', function() {
+${enqueueStyles || "  // No CSS enqueued"}
+${elementorVisualFidelityStyle}
+${enqueueScripts || "  // No JS enqueued"}
+});
+
+add_filter('body_class', function($classes) {
+  $source_classes = '${bodyClasses} ${htmlClasses}';
+  foreach (explode(' ', $source_classes) as $c) {
+    if ($c = trim($c)) $classes[] = $c;
+  }
+  $classes[] = 'wordpress-elementor-mode';
+  $classes[] = 'whipify-elementor-visual-fidelity-mode';
+  return $classes;
+});
+
+?>`
             : `<?php /* SPA mode ... */ ?>`;
 
         // SAAS FEATURE: Inject "Locations" Custom Post Type for Programmatic SEO
         const cptCode = seoSettings.enableLocationsCPT ? `
 <?php
-/* 
- * Multi-City Local SEO Architecture (Custom Post Type) 
- * Dynamically generated by Theme Factory AI 
+/*
+ * Multi-City Local SEO Architecture (Custom Post Type)
+ * Dynamically generated by Theme Factory AI
  */
 function tf_register_locations_cpt() {
     $labels = array(
@@ -3917,11 +6605,62 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
 ?>
 ` : '';
 
+        const registryCompatibilitySource = mode === 'gutenberg-native' && wordpressContentRegistry
+            ? finalizeWordPressContentRegistry(wordpressContentRegistry)
+            : null;
+        const registryDerivedQuickEditorSlotSupport = registryCompatibilitySource
+            ? deriveWhipifyQuickEditorSlotSupportFromWordPressContentRegistry(registryCompatibilitySource)
+            : quickEditorSlotSupport;
+        const frontendEditorSupportMap = registryCompatibilitySource
+            ? buildWhipifyFrontendEditorSupportMapFromWordPressContentRegistry(registryCompatibilitySource)
+            : buildWhipifyFrontendEditorSupportMap({
+                hasHeaderSlots: quickEditorSlotSupport.header,
+                hasFooterSlots: quickEditorSlotSupport.footer,
+                hasSocialSlots: quickEditorSlotSupport.social,
+            });
+        const quickEditorPhp = mode === 'gutenberg-native'
+            ? buildWhipifyQuickEditorPhp(quickEditorDefaults, registryDerivedQuickEditorSlotSupport).replace(/^<\?php\s*/, '').replace(/\?>\s*$/, '')
+            : '';
+        const frontendEditorArtifacts = mode === 'gutenberg-native'
+            ? buildWhipifyFrontendEditorArtifacts({
+                defaults: quickEditorDefaults,
+                supportMap: frontendEditorSupportMap,
+                themeSlug,
+            })
+            : null;
+        if (mode === 'gutenberg-native' && wordpressContentRegistry) {
+            appendWordPressContentRegistryEditor(wordpressContentRegistry, {
+                kind: 'quick',
+                name: 'whipify-quick-editor',
+                phpFile: 'functions.php',
+            });
+        }
+
         if (mode === 'gutenberg-native') {
-            functionsPhpContent += cptCode;
+            functionsPhpContent = functionsPhpContent.replace(/\?>\s*$/, '');
+            functionsPhpContent += `\n${quickEditorPhp}\n`;
+            functionsPhpContent += frontendEditorArtifacts
+                ? `\n${frontendEditorArtifacts.php.replace(/^<\?php\s*/, '').replace(/\?>\s*$/, '')}\n`
+                : '';
+            functionsPhpContent += cptCode
+                ? cptCode.replace(/^<\?php\s*/, '').replace(/\?>\s*$/, '')
+                : '';
         }
 
         folder.file("functions.php", functionsPhpContent); stats.php++;
+        if (mode === 'gutenberg-native' && frontendEditorArtifacts) {
+            if (wordpressContentRegistry) {
+                appendWordPressContentRegistryEditor(wordpressContentRegistry, {
+                    kind: 'frontend',
+                    name: 'whipify-frontend-editor',
+                    supportMap: frontendEditorSupportMap,
+                    assetFiles: ['assets/whipify-frontend-editor.js', 'assets/whipify-frontend-editor.css'],
+                    phpFile: 'functions.php',
+                });
+            }
+            folder.file('assets/whipify-frontend-editor.js', frontendEditorArtifacts.js);
+            folder.file('assets/whipify-frontend-editor.css', frontendEditorArtifacts.css);
+        }
 
         // Chrome fingerprint helpers — detect header/footer by content, not tag name
         type ChromeSig = { texts: Set<string>; hrefs: Set<string> };
@@ -3989,16 +6728,16 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
             try {
                 addLog(`✨ AI SEO: Generating Semantic Internal Link Map for ${routesToProcess.length} routes...`, 'info');
                 const serverOrigin = remoteConfig.url ? remoteConfig.url.replace(/\/build$/, '') : 'http://localhost:3000';
-                
+
                 // Map the routes down to just what Gemini needs to save bandwidth and token limits
                 const simplifiedRoutes = routesToProcess.map(r => ({ path: r.path, title: r.title }));
-                
+
                 const response = await fetch(`${serverOrigin}/generate-link-map`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ routesToProcess: simplifiedRoutes })
                 });
-                
+
                 if (response.ok) {
                     const data = await response.json();
                     if (data.semanticMap) {
@@ -4046,7 +6785,7 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
             let customDescCode = '';
             let pageLocale = seoSettings.primaryLocale || 'en-US';
             const slug = (route.slug || 'home').toLowerCase(); // Normalize slash style and lowercase slug
-            
+
             // Build Redirect Manifest Entry
             const isHome = slug === 'home' || route.path === '/';
             const targetUrl = isHome ? '/' : `/${slug}/`;
@@ -4112,7 +6851,7 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                             });
                             addLog(`  Deep chrome scan removed ${removedCount} matching elements`, removedCount > 0 ? 'success' : 'info');
                         }
-                        
+
                         // Fallback: remove any remaining semantic tags that didn't match the signature (but which we still don't want in page content)
                         routeRoot.querySelectorAll('header').forEach(el => el.remove());
                         routeRoot.querySelectorAll('footer').forEach(el => el.remove());
@@ -4145,14 +6884,14 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                     // QA VALIDATION: Thin Page & Duplicate Intent Detection
                     const rawText = (contentSource.textContent || '').replace(/\s+/g, ' ').trim();
                     const wordCount = rawText.split(' ').filter(word => word.length > 0).length;
-                    
+
                     if (wordCount < 150) {
                         qaReport.warnings.push(`[${route.path}] Thin Page Warning: Page contains only ${wordCount} words. Consider adding more valuable content to satisfy local search intent.`);
                     }
 
                     // Extract a large enough excerpt to compare intent (first ~300 chars)
                     const textExcerpt = rawText.substring(0, 300).toLowerCase();
-                    
+
                     // Simple heuristic comparison against previously seen routes
                     let duplicateIntentFound = false;
                     for (const [priorPath, priorData] of seenRouteTexts.entries()) {
@@ -4164,7 +6903,7 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                             break;
                         }
                     }
-                    
+
                     if (!duplicateIntentFound) {
                         seenRouteTexts.set(route.path, { path: route.path, wordCount, excerpt: textExcerpt });
                     }
@@ -4277,10 +7016,10 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                     allVideos.forEach(vid => {
                         const src = vid.tagName.toLowerCase() === 'video' ? vid.querySelector('source')?.getAttribute('src') || vid.getAttribute('src') : vid.getAttribute('src');
                         if (!src) return;
-                        
+
                         const absoluteSrc = src.startsWith('http') ? src : `${seoSettings.url.endsWith('/') ? seoSettings.url.slice(0, -1) : seoSettings.url}${src}`;
                         const title = vid.getAttribute('title') || `${route.title} Video`;
-                        
+
                         pageMedia.videos.push({
                             loc: absoluteSrc,
                             title: title,
@@ -4295,30 +7034,30 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                     // QA VALIDATION: Prominent Main-Title Enforcement
                     let maxVisualWeight = 0;
                     const weightInstances = new Map<string, HTMLElement[]>(); // Text -> Array of elements sharing this weight
-                    
+
                     const tailwindWeights: Record<string, number> = {
                         'text-xs': 1, 'text-sm': 2, 'text-base': 3, 'text-lg': 4, 'text-xl': 5,
                         'text-2xl': 6, 'text-3xl': 7, 'text-4xl': 8, 'text-5xl': 9, 'text-6xl': 10,
                         'text-7xl': 11, 'text-8xl': 12, 'text-9xl': 13
                     };
-                    
+
                     const titleCandidates = routeRoot.querySelectorAll('h1, h2, h3, [class*="text-"]');
                     titleCandidates.forEach(el => {
                         if (!(el instanceof HTMLElement)) return;
                         const text = (el.textContent || '').trim();
                         // Ignore tiny strings, icons, or cosmetic numbers
                         if (text.length < 5) return;
-                        
+
                         let weight = 0;
                         const cls = el.getAttribute('class') || '';
-                        
+
                         // Check explicit Tailwind sizing
                         for (const [tClass, tWeight] of Object.entries(tailwindWeights)) {
                             // Check for exact class match (e.g., text-xl, md:text-xl)
                             // A simple includes() is okay here since we want responsive sizes too
                             if (cls.includes(tClass)) weight = Math.max(weight, tWeight);
                         }
-                        
+
                         // If no explicit tailwind size, fallback to semantic tag weight
                         if (weight === 0) {
                             const tag = el.tagName.toLowerCase();
@@ -4326,13 +7065,13 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                             else if (tag === 'h2') weight = 6;
                             else if (tag === 'h3') weight = 5;
                         }
-                        
+
                         if (weight > 0) {
                             if (weight > maxVisualWeight) {
                                 maxVisualWeight = weight;
                                 weightInstances.clear(); // New max found, reset trackers
                             }
-                            
+
                             if (weight === maxVisualWeight) {
                                 const lowerText = text.toLowerCase();
                                 const existing = weightInstances.get(lowerText) || [];
@@ -4341,7 +7080,7 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                             }
                         }
                     });
-                    
+
                     // Count distinct text values operating at the maximum visual weight
                     const uniquelyProminentNodes = Array.from(weightInstances.keys());
                     if (uniquelyProminentNodes.length > 1) {
@@ -4359,7 +7098,7 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                     } else if (h1Els.length > 1) {
                         qaReport.warnings.push(`[${route.path}] Semantic Warning: Multiple <h1> tags detected (count: ${h1Els.length}). Google prefers exactly one.`);
                     }
-                    
+
                     if (h1Els.length > 0 && h1Els[0].textContent) {
                         pageH1 = h1Els[0].textContent.trim().substring(0, 60);
                         if (seenH1s.has(pageH1)) {
@@ -4367,18 +7106,18 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                         }
                         seenH1s.set(pageH1, route.path);
                     }
-                    
+
                     // QA VALIDATION: Duplicate Slug Tracking
                     if (seenSlugs.has(slug)) {
                          qaReport.errors.push(`[${route.path}] Critical Architecture Error: Duplicate slug "${slug}" detected. This will create a WordPress fatal permalink collision.`);
                     }
                     seenSlugs.add(slug);
-                    
+
                     // Construct a dense, localized SEO Title
-                    let seoTitle = isHome 
+                    let seoTitle = isHome
                         ? `${seoSettings.companyName} | ${seoSettings.description}`
                         : `${pageH1} | ${seoSettings.companyName} in ${seoSettings.addressLocality}`;
-                    
+
                     // HOMEPAGE CALIBRATION: Ensure Homepage title aggressively fronts the Brand Name for Site Name recognition
                     if (isHome && !seoTitle.toLowerCase().startsWith(seoSettings.companyName.toLowerCase())) {
                         seoTitle = `${seoSettings.companyName} | ${pageH1}`;
@@ -4386,22 +7125,22 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
 
                     // Cap title length to standard ~65 chars to avoid truncation
                     if (seoTitle.length > 70) seoTitle = `${pageH1} | ${seoSettings.companyName}`;
-                    
+
                     // QA VALIDATION: Title Uniqueness
                     if (seenTitles.has(seoTitle)) {
                          qaReport.warnings.push(`[${route.path}] Duplicate Title Warning: "${seoTitle}" matches route ${seenTitles.get(seoTitle)}.`);
                     }
                     seenTitles.set(seoTitle, route.path);
-                    
+
                     // MULTILINGUAL & MULTIREGIONAL SEO LAYER
                     // Autodetect if current page belongs to a specific language path
                     const pathParts = route.path.split('/').filter(Boolean);
                     const isAltLangUrl = pathParts.length > 0 && /^[a-z]{2}(-[A-Z]{2})?$/.test(pathParts[0]);
                     const currentLangUrlPrefix = isAltLangUrl ? pathParts[0] : '';
-                    const baseCanonicalUrl = isAltLangUrl 
+                    const baseCanonicalUrl = isAltLangUrl
                         ? route.path.replace(`/${currentLangUrlPrefix}`, '') || '/'
                         : route.path;
-                    
+
                     // Determine page's specific locale
                     const activeAlternates = seoSettings.alternateLocales ? seoSettings.alternateLocales.split(',').map(s => s.trim()) : [];
                     if (isAltLangUrl) {
@@ -4412,17 +7151,17 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                     // Generate og:locale and hreflang blocks
                     const ogLocaleSafe = pageLocale.replace('-', '_');
                     let localeMetaTags = `\n<meta property="og:locale" content="${ogLocaleSafe}" />\n`;
-                    
+
                     const safeUrl = seoSettings.url.endsWith('/') ? seoSettings.url.slice(0, -1) : seoSettings.url;
                     const defaultPath = baseCanonicalUrl === '/' ? '/' : baseCanonicalUrl + '/';
                     const finalCanonicalUrl = `${safeUrl}${defaultPath}`;
-                    
+
                     // CANONICAL CONSISTENCY: Save this exact generated canonical string for later Graph verification
                     pageCanonicals.set(route.path, finalCanonicalUrl);
 
                     let hreflangTags = `\n<link rel="alternate" hreflang="x-default" href="${finalCanonicalUrl}" />\n`;
                     hreflangTags += `<link rel="alternate" hreflang="${seoSettings.primaryLocale || 'en-US'}" href="${finalCanonicalUrl}" />\n`;
-                    
+
                     activeAlternates.forEach(alt => {
                         const langCode = alt.split('-')[0].toLowerCase();
                         const altPath = baseCanonicalUrl === '/' ? `/${langCode}/` : `/${langCode}${baseCanonicalUrl}/`;
@@ -4439,27 +7178,77 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                     let pageDesc = isHome
                         ? seoSettings.description
                         : `${seoSettings.companyName} provides professional ${pageH1.toLowerCase()} services in ${seoSettings.addressLocality}, ${seoSettings.addressRegion}. Contact us today to learn more.`;
-                    
+
                     // QA VALIDATION: Description Uniqueness
                     if (seenDescriptions.has(pageDesc)) {
                          qaReport.warnings.push(`[${route.path}] Duplicate Meta Description Warning: The description matches route ${seenDescriptions.get(pageDesc)}.`);
                     }
                     seenDescriptions.set(pageDesc, route.path);
-                    
+
                     customDescCode = `<meta name="description" content="${pageDesc.replace(/"/g, '&quot;')}" />\n<meta property="og:description" content="${pageDesc.replace(/"/g, '&quot;')}" />\n`;
 
                     // Use replaceAssetPaths for robust asset replacement
                     let cleanHtml = replaceAssetPaths(contentSource.innerHTML, '__THEME_URI__/');
+                    const isSameClass = currentRootClasses === rootClasses;
+                    const wrapperClasses = isSameClass ? 'entry-content' : `entry-content ${currentRootClasses}`;
+                    const elementorShellClasses = `${wrapperClasses} ${bodyClasses}`.trim();
+                    if (mode === 'wordpress-elementor') {
+                        const elementorBreadcrumbHtml = (!isHome && !isNoIndex)
+                            ? `<nav class="tf-elementor-breadcrumbs" aria-label="Breadcrumb"><a href="/">Home</a><span class="tf-elementor-breadcrumbs__separator">&rsaquo;</span><span class="tf-elementor-breadcrumbs__current">${escapeHtml(route.title || pageH1 || slug)}</span></nav>`
+                            : '';
+                        const elementorHtml = [elementorBreadcrumbHtml, cleanHtml].filter(Boolean).join('\n');
+                        const elementorResult = convertHtmlToElementorDocument(elementorHtml, {
+                            title: route.title,
+                            routePath: route.path,
+                            slug,
+                            visualFidelityMode: 'native-balanced',
+                            shellClassName: elementorShellClasses,
+                        });
+                        elementorPagesManifest.push({
+                            path: route.path,
+                            slug: slug === 'home' ? 'front-page' : slug,
+                            title: route.title,
+                            templateType: 'wp-page',
+                            pageTemplate: 'default',
+                            elementorData: elementorResult.document.content,
+                            pageSettings: elementorResult.document.page_settings,
+                            stats: elementorResult.stats,
+                            warnings: elementorResult.warnings,
+                        });
+                        elementorResult.templates.forEach((template) => {
+                            elementorTemplatesManifest.push({
+                                title: template.title,
+                                slug: template.slug,
+                                templateType: template.type,
+                                sourceId: template.sourceId,
+                                elementorData: template.elementorData,
+                                pageSettings: template.pageSettings,
+                            });
+                        });
+                        addLog(`  Elementor: ${elementorResult.stats.nativeWidgets} native widgets, ${elementorResult.stats.customWidgets} custom widgets, ${elementorResult.stats.containers} containers, ${elementorResult.stats.fallbackHtmlWidgets} HTML fallbacks`, elementorResult.stats.fallbackHtmlWidgets > 0 ? 'warning' : 'success');
+                    }
                     // Don't pass header/footer patterns during page conversion — they're in header.php/footer.php
                     const conversionResult = convertToGutenbergBlocks(
                         cleanHtml,
                         mode === 'gutenberg-native'
-                            ? { faqData: faqData }
-                            : { patterns: globalPatterns, faqData: faqData }
+                            ? { faqData: faqData, routeInfo: { path: route.path, slug, title: route.title } }
+                            : { patterns: globalPatterns, faqData: faqData, routeInfo: { path: route.path, slug, title: route.title } }
                     );
                     const rawBlocks = conversionResult.html;
                     allAuditLogs.push(...conversionResult.logs);
-                    
+                    if (conversionResult.formsManifest.length > 0) {
+                        generatedFormsManifest.push(...conversionResult.formsManifest);
+                        if (wordpressContentRegistry) {
+                            conversionResult.formsManifest.forEach((entry) => {
+                                appendWordPressContentRegistryForm(wordpressContentRegistry, {
+                                    ...entry,
+                                    templateFile: route.path === '/' ? 'front-page.php' : `page-${slug}.php`,
+                                    blocksFile: `assets/content/${slug}.blocks.html`,
+                                });
+                            });
+                        }
+                    }
+
                     // Log conversion diagnostics
                     addLog(`  📊 Editability: ${Math.round(conversionResult.editabilityScore * 100)}% | Confidence: ${Math.round(conversionResult.confidenceScore * 100)}%`, 'info');
                     if (!conversionResult.validation.isValid) {
@@ -4470,7 +7259,7 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                     if (conversionResult.themeTokens.length > 0) {
                         addLog(`  🎨 Theme Token Suggestions: ${conversionResult.themeTokens.map((t: ThemeTokenSuggestion) => `${t.value} (×${t.occurrences})`).join(', ')}`, 'info');
                     }
-                    
+
                     // Strip any surviving header/footer pattern blocks and raw elements
                     let rewrittenBlocks = rawBlocks
                         .replace(/<!--\s*wp:pattern\s+\{"slug":"theme-factory\/part-header"\}\s*\/-->\s*/g, '')
@@ -4488,12 +7277,12 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                         if (r.path === '/') continue;
                         const reactPath = r.path; // e.g., /city/page
                         const wpSlug = r.slug;     // e.g., city-page
-                        
+
                         // QA VALIDATION: Log internal links for dead link / orphan checking later
                         if (rewrittenBlocks.includes(`href="${reactPath}`) || rewrittenBlocks.includes(`href='${reactPath}`)) {
                             globalInternalHrefs.set(reactPath, reactPath);
                         }
-                        
+
                         // Replace href="/city/page" with href="/city-page/"
                         // Handle with and without trailing slash
                         rewrittenBlocks = rewrittenBlocks
@@ -4504,7 +7293,7 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                             // Also rewrite "url":"..." in Gutenberg block JSON comments
                             .replace(new RegExp(`"url":"${reactPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/?"`, 'g'), `"url":"/${wpSlug}/"`);
                     }
-                    
+
                     // POST-CONVERSION FAQ INJECTION: When prerender misses accordion content
                     // (e.g., EdmontonPricing body fails to render), synthesize FAQ blocks from
                     // source TSX + faqData so the WordPress page still gets real FAQ answers.
@@ -4517,7 +7306,7 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                             routeSlugParts.join('-'),          // e.g., "edmonton-pricing"
                             ...routeSlugParts,                 // individual segments
                         ].map(s => s.toLowerCase());
-                        
+
                         const sourceFile = allFiles.find(f => {
                             const n = f.replace(/\\/g, '/').toLowerCase();
                             if (!n.endsWith('.tsx') && !n.endsWith('.jsx')) return false;
@@ -4525,11 +7314,11 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                             const basename = n.split('/').pop()?.replace(/\.(tsx|jsx)$/, '') || '';
                             return possibleNames.some(name => basename === name);
                         });
-                        
+
                         if (sourceFile) {
                             try {
                                 const srcContent = await zipContent.files[sourceFile].async('string');
-                                
+
                                 // Extract FAQ questions from source AccordionTrigger tags
                                 const triggerRegex = /<AccordionTrigger[^>]*>([\s\S]*?)<\/AccordionTrigger>/g;
                                 const pageQuestions: string[] = [];
@@ -4538,10 +7327,10 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                                     const q = tMatch[1].replace(/<[^>]+>/g, '').replace(/\{[^}]+\}/g, '').replace(/\s+/g, ' ').trim();
                                     if (q && q.length > 5) pageQuestions.push(q);
                                 }
-                                
+
                                 if (pageQuestions.length > 0) {
                                     addLog(`  🔧 FAQ INJECTION: Page "${route.path}" has ${pageQuestions.length} accordion items in source but 0 in converted output. Injecting from faqData...`, 'warning');
-                                    
+
                                     // Also extract answers directly from source as ultimate fallback
                                     const pairRegex = /<AccordionTrigger[^>]*>([\s\S]*?)<\/AccordionTrigger>[\s\S]*?<AccordionContent[^>]*>([\s\S]*?)<\/AccordionContent>/g;
                                     const sourcePairs: {q: string, a: string}[] = [];
@@ -4551,13 +7340,13 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                                         const a = pMatch[2].replace(/<[^>]+>/g, '').replace(/\{[^}]+\}/g, '').replace(/\s+/g, ' ').trim();
                                         if (q && a && a.length > 10) sourcePairs.push({ q, a });
                                     }
-                                    
+
                                     const faqBlocks: string[] = [];
                                     const normalizeText = (s: string) => s.toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
-                                    
+
                                     for (const question of pageQuestions) {
                                         const qNorm = normalizeText(question);
-                                        
+
                                         // Try faqData first (globally extracted)
                                         let answer = '';
                                         const faqMatch = faqData.find(f => {
@@ -4574,7 +7363,7 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
                                             });
                                             if (srcMatch) answer = srcMatch.a;
                                         }
-                                        
+
                                         if (answer) {
                                             // Escape HTML entities for safe embedding
                                             const safeQ = question.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -4586,7 +7375,7 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
 <!-- /wp:details -->`);
                                         }
                                     }
-                                    
+
                                     if (faqBlocks.length > 0) {
                                         // Wrap in a section with heading
                                         const faqSection = `
@@ -4599,7 +7388,7 @@ add_action( 'init', 'tf_register_locations_cpt', 0 );
 <!-- /wp:paragraph -->
 
 ${faqBlocks.join('\n\n')}`;
-                                        
+
                                         rewrittenBlocks += '\n\n' + faqSection;
                                         addLog(`  ✅ FAQ INJECTION: Successfully injected ${faqBlocks.length} FAQ items from source/faqData`, 'success');
                                     }
@@ -4675,18 +7464,18 @@ ${faqBlocks.join('\n\n')}`;
                         if (semanticLinkMap && semanticLinkMap[route.path] && semanticLinkMap[route.path].length > 0) {
                             siblings = semanticLinkMap[route.path];
                             isAiGenerated = true;
-                        } 
+                        }
                         // 2. Fallback to heuristic structural siblings
                         else {
                             siblings = routesToProcess.filter(r => r.path !== '/' && r.path !== route.path && !/thank-you|search|filter|staging|tag|category/i.test(r.slug || ''));
                             const pathParts = route.path.split('/').filter(Boolean);
-                            
+
                             // Try to find structural siblings
                             if (pathParts.length > 1) {
                                 const parentPrefix = `/${pathParts[0]}/`;
                                 siblings = siblings.filter(r => r.path.startsWith(parentPrefix));
                             }
-                            
+
                             // Fallback to top generic pages if no siblings
                             if (siblings.length === 0) {
                                 siblings = routesToProcess.filter(r => r.path !== '/' && r.path !== route.path && !/thank-you|search|filter|staging|tag|category/i.test(r.slug || '')).slice(0, 4);
@@ -4724,9 +7513,7 @@ ${faqBlocks.join('\n\n')}`;
                         addLog(`  🍞 Injected visual Breadcrumb navigation`, 'success');
                     }
 
-                    const isSameClass = currentRootClasses === rootClasses;
-                    const wrapperClasses = isSameClass ? 'entry-content' : `entry-content ${currentRootClasses}`;
-                    const shellClasses = `${wrapperClasses} ${bodyClasses}`.trim();
+                    const shellClasses = elementorShellClasses;
                     prerenderedContent = serializeWpBlock(
                         'theme-factory/page-shell',
                         shellClasses ? { className: shellClasses } : undefined,
@@ -4747,14 +7534,14 @@ ${faqBlocks.join('\n\n')}`;
                             addLog(`  ⚠ Failed to extract LLM text for ${route.title}`, 'warning');
                         }
                     }
-                } else { 
-                    addLog(`  ⚠ ${route.title}: Root element empty or too small`, 'warning'); 
-                    prerenderedContent = createPlaceholder(route.title, "Content could not be extracted from prerendered HTML."); 
+                } else {
+                    addLog(`  ⚠ ${route.title}: Root element empty or too small`, 'warning');
+                    prerenderedContent = createPlaceholder(route.title, "Content could not be extracted from prerendered HTML.");
                 } // End if (routeRoot...)
-            } catch (e: unknown) { 
+            } catch (e: unknown) {
                 console.error(`[TF] Conversion error for ${route.title}:`, e);
-                addLog(`  ⚠ ${route.title}: Parse error - ${(e as Error).message}`, 'warning'); 
-                prerenderedContent = createPlaceholder(route.title, `An error occurred while converting this page: ${(e as Error).message}`); 
+                addLog(`  ⚠ ${route.title}: Parse error - ${(e as Error).message}`, 'warning');
+                prerenderedContent = createPlaceholder(route.title, `An error occurred while converting this page: ${(e as Error).message}`);
             }
 
             // FINAL SAFETY: Aggressively strip any header/footer from blocks content
@@ -4769,7 +7556,7 @@ ${faqBlocks.join('\n\n')}`;
             if (slug === 'home' || route.path === '/') {
                 (window as any).__debugOutput += `--- HOME BLOCKS DEBUG ---\n`;
                 (window as any).__debugOutput += prerenderedContent.substring(0, 1000) + `\n\n`;
-                
+
                 addLog(`--- HOME BLOCKS DEBUG ---`, 'warning');
                 addLog(prerenderedContent.substring(0, 500).replace(/\n/g, '\\n'), 'warning');
                 addLog(`-------------------------`, 'warning');
@@ -4818,10 +7605,10 @@ ${faqBlocks.join('\n\n')}`;
             // 3. HOME PAGE: WebSite & LocalBusiness
             if (isHome) {
                 // Determine plausible alternateName (e.g., lowercase or stripped versions)
-                const alternateNames = seoSettings.companyName.toLowerCase() !== seoSettings.companyName 
-                    ? [seoSettings.companyName.toLowerCase()] 
+                const alternateNames = seoSettings.companyName.toLowerCase() !== seoSettings.companyName
+                    ? [seoSettings.companyName.toLowerCase()]
                     : [];
-                
+
                 const webSiteNode: any = {
                     "@type": "WebSite",
                     "@id": `${baseUrl}/#website`,
@@ -4904,7 +7691,7 @@ ${faqBlocks.join('\n\n')}`;
 
             // Print the Schema Router Array natively into the PHP Head (So WP PHP functions can evaluate!)
             let rawJsonString = JSON.stringify({ "@context": "https://schema.org", "@graph": schemaGraph }, null, 2);
-            
+
             // PHP Placeholders Replacement for Article Metadata
             if (isArticle) {
                 rawJsonString = rawJsonString
@@ -4922,19 +7709,21 @@ ${faqBlocks.join('\n\n')}`;
                 qaReport.errors.push(`[${route.path}] Critical Schema Error: The injected JSON-LD payload is malformed. Search engines will reject it.`);
                 addLog(`  ❌ QA Error: Malformed JSON-LD payload`, 'warning');
             }
-            
+
             folder.file(`assets/content/${slug}.blocks.html`, prerenderedContent);
-            
+
             // Generate template body, conditionally injecting noindex logic for bad routes
             let templateBody = `<?php\n/**\n * Template Name: ${route.title}\n */\n`;
-            
+            const normalizedRoutePath = route.path === '/' ? '/' : `/${route.path.replace(/^\/+|\/+$/g, '')}/`;
+            const routeChromeContext = chromeContextPlan.routeContextByPath[normalizedRoutePath] || 'global';
+
             // Inject the custom Title, Meta, and SCHEMA tags specifically into this page's head before get_header() is dumped
             templateBody += `add_action('wp_head', function() {\n?>\n${customTitleCode}${customDescCode}\n<!-- wp:html -->\n<script type="application/ld+json">\n${rawJsonString}\n</script>\n<!-- /wp:html -->\n<?php\n}, 1);\n`;
 
             if (isNoIndex) {
                 templateBody += `add_action('wp_head', function() {\n  echo '<meta name="robots" content="noindex, nofollow" />\\n';\n}, 1);\n`;
             }
-            
+
             // Article Trust Signals Visible Component
             let visibleTrustHTML = '';
             if (isArticle) {
@@ -4955,8 +7744,9 @@ ${faqBlocks.join('\n\n')}`;
   </div>\n`;
             }
 
+            templateBody += buildWordPressTemplateChromeBootstrap(routeChromeContext);
             templateBody += `get_header(); ?>\n<main id="main" class="site-main">\n${visibleTrustHTML}  <?php while (have_posts()) : the_post(); the_content(); endwhile; ?>\n</main>\n<?php get_footer(); ?>`;
-            
+
             // AUTO-FIX CANONICALS: Aggressively regex replace any local links missing trailing slashes
             // So that the exported WP arrays are perfect out of the box.
             if (seoSettings.enableQaChecks && seoSettings.url) {
@@ -4972,6 +7762,13 @@ ${faqBlocks.join('\n\n')}`;
 
             if (isHome) { folder.file("front-page.php", templateBody); } else { folder.file(`page-${slug}.php`, templateBody); }
             if (isArticle) { folder.file(`single-${slug}.php`, templateBody); } // Bind WordPress template hierarchy natively
+            if (wordpressContentRegistry) {
+                appendWordPressContentRegistryRoute(wordpressContentRegistry, {
+                    ...route,
+                    template: isHome ? 'front-page.php' : `page-${slug}.php`,
+                    chromeContext: routeChromeContext,
+                });
+            }
             stats.php++;
         }
 
@@ -4980,7 +7777,7 @@ ${faqBlocks.join('\n\n')}`;
         let total404s = 0;
         let totalCanonicalErrors = 0;
         let autoFixedCanonicals = 0;
-        
+
         // AUTO-FIX: Canonical Inconsistencies
         // Instead of just warning, we will aggressively auto-repair the HTML strings inside the generated PHP files
         // to ensure all internal links flawlessly match their declared canonical URL (trailing slash enforcement).
@@ -4990,13 +7787,13 @@ ${faqBlocks.join('\n\n')}`;
                 const fileTarget = route.path === '/' ? 'front-page.php' : `page-${slug}.php`;
                 // If it's an article, it might also be a single-XYZ.php but we'll try to heal the page- variant first
                 if (zipContent.files[fileTarget]) {
-                    // This is an async operation normally, but since we just generated it in memory, 
+                    // This is an async operation normally, but since we just generated it in memory,
                     // a better place to fix it is actually *during* the generation loop above.
                     // However, we can also just run it during the Graph Analysis.
                 }
             });
         }
-        
+
         globalInternalHrefs.forEach((normalizedTarget, rawHref) => {
             if (!allValidPaths.has(normalizedTarget)) {
                 qaReport.errors.push(`[Global] Critical Architecture Error: 404 Dead Link detected. An internal link points to "${rawHref}", but no such route exists.
@@ -5007,7 +7804,7 @@ ${faqBlocks.join('\n\n')}`;
                 const targetCanonical = pageCanonicals.get(normalizedTarget);
                 const safeBase = seoSettings.url.endsWith('/') ? seoSettings.url.slice(0, -1) : seoSettings.url;
                 const absoluteHref = rawHref.startsWith('http') ? rawHref : `${safeBase}${rawHref.startsWith('/') ? rawHref : '/' + rawHref}`;
-                
+
                 if (targetCanonical && targetCanonical !== absoluteHref && !absoluteHref.includes('#')) {
                     // It's a valid link, but formatted poorly (missing trailing slash, HTTP vs HTTPS, etc.)
                     qaReport.warnings.push(`[Global] Canonical Inconsistency: An internal link targets "${absoluteHref}", but its official canonical URL is "${targetCanonical}".
@@ -5018,17 +7815,17 @@ ${faqBlocks.join('\n\n')}`;
                 }
             }
         });
-        
+
         allValidPaths.forEach(validPath => {
             if (validPath !== '/' && !globalInternalHrefs.has(validPath)) {
                 qaReport.warnings.push(`[${validPath}] Orphan Page Warning: This route has no internal links pointing to it. It will be hard for search engines to discover.
 ► FIX: Find a relevant page in your React site (like a blog post or service page) and add a text link pointing to "${validPath}".`);
             }
         });
-        
+
         qaReport.scannedPages = routesToProcess.length;
         qaReport.passed = qaReport.errors.length === 0;
-        
+
         if (seoSettings.enableQaChecks) {
             folder.file("seo-audit-report.json", JSON.stringify(qaReport, null, 2));
             // Always save the report to state so the success screen can show a summary
@@ -5043,11 +7840,11 @@ ${faqBlocks.join('\n\n')}`;
             }
         }
 
-        folder.file("index.php", `<?php get_header(); ?>\n<main><?php while(have_posts()): the_post(); the_content(); endwhile; ?></main>\n<?php get_footer(); ?>`);
+        folder.file("index.php", `<?php\n${buildWordPressTemplateChromeBootstrap('global')}get_header(); ?>\n<main><?php while(have_posts()): the_post(); the_content(); endwhile; ?></main>\n<?php get_footer(); ?>`);
         folder.file("assets/data/routes.json", JSON.stringify(routesToProcess, null, 2));
-        folder.file("404.php", `<?php get_header(); ?>\n<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:60vh;"><h1>404</h1><p>Page Not Found</p></div>\n<?php get_footer(); ?>`);
+        folder.file("404.php", `<?php\n${buildWordPressTemplateChromeBootstrap('global')}get_header(); ?>\n<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:60vh;"><h1>404</h1><p>Page Not Found</p></div>\n<?php get_footer(); ?>`);
         folder.file("style.css", `/*\nTheme Name: ${themeName}\nVersion: 1.0.0\nAuthor: Theme Factory AI\n*/`);
-        
+
         // NATIVE FSE: Generate theme.json to populate the Site Editor global variables
         // This bridges Tailwind custom colors with the WordPress Gutenberg Editor palette sliders
         const fseThemeJson = {
@@ -5094,7 +7891,7 @@ ${faqBlocks.join('\n\n')}`;
             }
         };
         folder.file("theme.json", JSON.stringify(fseThemeJson, null, 2));
-        
+
         // Final SEO Plumbing: Dynamic Sitemap and Robots.txt
         let sitemapXml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1" xmlns:video="http://www.google.com/schemas/sitemap-video/1.1">`;
         for (const route of routesToProcess) {
@@ -5102,7 +7899,7 @@ ${faqBlocks.join('\n\n')}`;
             const loc = pageCanonicals.get(route.path) || (route.path === '/' ? baseUrl + '/' : `${baseUrl}/${route.slug}/`);
             const priority = route.path === '/' ? '1.0' : '0.8';
             let urlNode = `\n  <url>\n    <loc>${loc}</loc>\n    <lastmod>${new Date().toISOString().split('T')[0]}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>${priority}</priority>`;
-            
+
             const media = routeMedia.get(route.path);
             if (media?.images) {
                 media.images.forEach(img => {
@@ -5121,7 +7918,7 @@ ${faqBlocks.join('\n\n')}`;
         // folder.file("sitemap.xml", sitemapXml); // Disabled in favor of native WP sitemap index
 
         let robotsTxt = `User-agent: *\nAllow: /\n`;
-        
+
         if (!seoSettings.allowAiTrainingCrawlers) {
             robotsTxt += `User-agent: GPTBot\nDisallow: /\nUser-agent: CCBot\nDisallow: /\nUser-agent: anthropic-ai\nDisallow: /\n`;
             addLog("Injected AI Training Crawler block into robots.txt", "info");
@@ -5130,10 +7927,10 @@ ${faqBlocks.join('\n\n')}`;
             robotsTxt += `User-agent: OAI-SearchBot\nDisallow: /\nUser-agent: PerplexityBot\nDisallow: /\n`;
             addLog("Injected AI Search Surfacing block into robots.txt", "info");
         }
-        
+
         robotsTxt += `Sitemap: ${baseUrl}/wp-sitemap.xml`;
         folder.file("robots.txt", robotsTxt);
-        
+
         // Output experimental AI LLM endpoints
         if (seoSettings.enableLlmsTxt) {
             folder.file("llms.txt", `# ${seoSettings.companyName}\n> ${seoSettings.description}\n\n## Content Map\n[Full Knowledge Base](/llms-full.txt)`);
@@ -5149,11 +7946,12 @@ ${faqBlocks.join('\n\n')}`;
             htmlSitemapLinks += `  <li style="margin-bottom: 0.5rem;"><a href="${loc}" style="text-decoration: none; color: #0066cc;">${route.title}</a></li>\n`;
         }
         htmlSitemapLinks += `</ul>\n`;
-        
+
         const sitemapTemplateBody = `<?php
 /**
  * Template Name: HTML Sitemap
  */
+${buildWordPressTemplateChromeBootstrap('global')}
 get_header(); ?>
 <main id="main" class="site-main" style="padding: 4rem 1.5rem; max-width: 800px; margin: 0 auto;">
   <header class="page-header" style="margin-bottom: 3rem;">
@@ -5165,11 +7963,11 @@ get_header(); ?>
 </main>
 <?php get_footer(); ?>`;
         folder.file("page-sitemap.php", sitemapTemplateBody);
-        
+
         // Export WordPress Redirection Manifest
         folder.file("redirects.csv", redirectsCsv);
         if (redirectsCsv.split('\n').length > 1) setRedirectsData(redirectsCsv);
-        
+
         // Find Favicon in the React Root
         const faviconCandidates = ['favicon.ico', 'public/favicon.ico', 'favicon.png', 'public/favicon.png'];
         let foundFavicon = false;
@@ -5185,15 +7983,15 @@ get_header(); ?>
                 break;
             }
         }
-        
+
         // Advanced Route-to-CPT Auto-Migration Script
-        
+
         let llmLocationsHtml = {};
         if (seoSettings.enableLocationsCPT) {
             const citiesToGen = routesToProcess
                 .filter(r => r.path.startsWith('/locations/') || r.path.startsWith('/service-areas/'))
                 .map(r => r.title.replace(/Location - |Service Area - /i, '').trim());
-                
+
             if (citiesToGen.length > 0) {
                 try {
                     addLog(`✨ AI Writer: Generating Local SEO content for ${citiesToGen.length} service areas...`, 'info');
@@ -5204,7 +8002,7 @@ get_header(); ?>
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ seoSettings, locations: citiesToGen })
                     });
-                    
+
                     if (response.ok) {
                         const data = await response.json();
                         if (data.success && data.locations) {
@@ -5248,7 +8046,7 @@ foreach ($theme_routes as $route) {
 
     $clean_title = wp_strip_all_tags($route->title);
     $location_name = trim(str_ireplace(array('Location - ', 'Service Area - '), '', $clean_title));
-    
+
     $post_content = '<!-- wp:paragraph --><p>Content managed by Theme Factory.</p><!-- /wp:paragraph -->';
     if ($post_type === 'locations' && isset($llm_locations[$location_name])) {
         $post_content = $llm_locations[$location_name];
@@ -5264,7 +8062,7 @@ foreach ($theme_routes as $route) {
             'post_author'  => 1,
             'post_type'    => $post_type
         ));
-        
+
         if ($slug === 'front-page' && !is_wp_error($post_id)) {
             update_option('show_on_front', 'page');
             update_option('page_on_front', $post_id);
@@ -5274,33 +8072,94 @@ foreach ($theme_routes as $route) {
 echo "Theme Factory Data Migration Complete.";`;
         folder.file("setup.php", setupPhp);
         addLog("Route-to-CPT Setup script dynamically generated", "info");
-        
+
         stats.php++; // For index.php
         addLog(`Routes converted: ${successCount}/${routesToProcess.length}`, successCount === routesToProcess.length ? 'success' : 'warning'); setProgress(80);
 
         // QA VALIDATION: Post-Loop Graph Analysis (Finished)
-        
+
         // 1. Detect 404 Internal Links (Handled in early Graph Validation)
-        
+
         // 2. Detect Contextual Orphan Pages (Hub & Spoke Compliance)
         for (const validPath of allValidPaths) {
             if (validPath === '/') continue; // Ignore home
             if (/thank-you|search|filter|staging|tag|category/i.test(validPath)) continue; // Ignore utility routes
-            
+
             const inboundCount = contextualInboundLinks.get(validPath) || contextualInboundLinks.get(validPath + '/') || 0;
             if (inboundCount === 0) {
                 qaReport.warnings.push(`[Graph Analysis] Contextual Orphan Page: Route [${validPath}] has 0 contextual internal links pointing to it from the body of other pages. It relies entirely on global navigation. Add hub/spoke links to build semantic equity.`);
                 totalOrphans++;
             }
         }
-        
+
         if (total404s > 0) addLog(`  🚨 Graph Audit: Detected ${total404s} broken internal 404 links`, 'error');
         if (totalOrphans > 0) addLog(`  ⚠ Graph Audit: Detected ${totalOrphans} contextual orphan pages`, 'warning');
+
+        if (mode === 'wordpress-elementor') {
+            folder.file("includes/whipify-elementor-widgets.php", WHIPIFY_ELEMENTOR_WIDGET_RUNTIME_PHP);
+            const elementorAtomicReadiness = {
+                version: 1,
+                target: 'elementor-4-compatible',
+                usesDocumentedElementorData: true,
+                usesAtomicInternals: false,
+                notes: [
+                    'Generated output uses documented Elementor containers/widgets.',
+                    'Elementor 4 Atomic variables/classes/components can be layered later without changing page persistence.',
+                ],
+            };
+            folder.file("assets/data/elementor-pages.json", JSON.stringify({
+                version: 1,
+                mode: 'wordpress-elementor',
+                generatedAt: new Date().toISOString(),
+                pages: elementorPagesManifest,
+                templates: elementorTemplatesManifest,
+                elementorAtomicReadiness,
+            }, null, 2));
+            folder.file("assets/data/elementor-kit.json", JSON.stringify({
+                version: 1,
+                mode: 'wordpress-elementor-kit',
+                generatedAt: new Date().toISOString(),
+                pages: elementorPagesManifest,
+                templates: elementorTemplatesManifest,
+                siteSettings: {},
+                elementorAtomicReadiness,
+            }, null, 2));
+            const elementorImporterBlob = await generateElementorImporterPlugin(new JSZipLib());
+            setPluginZipBlob(elementorImporterBlob);
+            folder.file("plugins/whipify-elementor-importer.zip", elementorImporterBlob);
+            addLog(`Elementor manifest generated (${elementorPagesManifest.length} page${elementorPagesManifest.length === 1 ? '' : 's'}, ${elementorTemplatesManifest.length} template${elementorTemplatesManifest.length === 1 ? '' : 's'})`, 'success');
+            addLog("Whipify Elementor Importer Plugin generated", 'info');
+        }
+
+        if (generatedFormsManifest.length > 0) {
+            folder.file("assets/data/forms.json", JSON.stringify(generatedFormsManifest, null, 2));
+            const formsPluginBlob = await generateWhipifyFormsPlugin(new JSZipLib());
+            setFormsPluginZipBlob(formsPluginBlob);
+            folder.file("plugins/README-forms.txt", WHIPIFY_FORMS_README);
+            folder.file("plugins/whipify-forms-plugin.zip", formsPluginBlob);
+            addLog(`Whipify forms manifest generated (${generatedFormsManifest.length} form${generatedFormsManifest.length === 1 ? '' : 's'})`, 'info');
+            addLog("Whipify Forms Plugin generated (for WordPress form wiring)", 'info');
+        }
 
         if (mode === 'gutenberg-native') {
             const pluginBlob = await generateCompanionPlugin(new JSZipLib());
             setPluginZipBlob(pluginBlob);
             addLog("Companion Plugin generated (required for custom blocks)", 'info');
+        }
+        if (wordpressContentRegistry) {
+            appendWordPressContentRegistryReport(wordpressContentRegistry, {
+                warnings: qaReport.warnings,
+                emittedFiles: [
+                    'functions.php',
+                    'assets/data/content-registry.json',
+                    'assets/data/content-registry.report.json',
+                    ...(generatedFormsManifest.length > 0 ? ['assets/data/forms.json'] : []),
+                    ...(frontendEditorArtifacts ? ['assets/whipify-frontend-editor.css', 'assets/whipify-frontend-editor.js'] : []),
+                ],
+            });
+            const finalizedWordPressContentRegistry = finalizeWordPressContentRegistry(wordpressContentRegistry);
+            folder.file("assets/data/content-registry.json", JSON.stringify(finalizedWordPressContentRegistry, null, 2));
+            folder.file("assets/data/content-registry.report.json", JSON.stringify(finalizedWordPressContentRegistry.report, null, 2));
         }
 
         setConversionStats(stats); await finishBuild(newZip);
@@ -5352,7 +8211,7 @@ echo "Theme Factory Data Migration Complete.";`;
 
                 {/* Main Content Area */}
             <div className="min-h-[200px] flex flex-col justify-center">
-                
+
                 {step === STEPS.IDLE && (
                     <div className="space-y-6">
                         {/* Only show platform toggle in Admin mode, default to Lovable for SaaS users */}
@@ -5371,74 +8230,111 @@ echo "Theme Factory Data Migration Complete.";`;
                             </div>
                         )}
 
-                            <div className="border-2 border-dashed border-slate-700 rounded-xl p-8 text-center hover:border-blue-500/50 hover:bg-slate-800/30 transition-colors relative group">
-                                <input
-                                    type="file"
-                                    accept=".zip"
-                                    onChange={handleFileUpload}
-                                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                                    ref={fileInputRef}
-                                />
-                                <div className="pointer-events-none">
-                                    <div className="w-16 h-16 bg-blue-600/20 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-500 group-hover:scale-110 transition-transform">
-                                        <Upload className="w-8 h-8" />
+                        {renderOutputModeSelector()}
+
+                        {renderStaticInputPanel()}
+
+                        {renderStaticSignalsPanel()}
+
+                            {isCertifiedUrlMode ? (
+                                <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-6 space-y-4">
+                                    <div>
+                                        <h3 className="text-lg font-medium text-white mb-1">Run Certified URL Capture</h3>
+                                        <p className="text-slate-400 text-sm">This sends the live public URL through the local builder server, reconstructs a synthetic artifact, certifies it, and then packages the static export.</p>
                                     </div>
-                                    <h3 className="text-lg font-medium text-white mb-1">Upload Project ZIP</h3>
-                                    <p className="text-slate-400 text-sm">Drag and drop or click to select</p>
-                                    <p className="text-slate-500 text-xs mt-2">Our AI handles React, HTML, and Next.js archives seamlessly.</p>
+                                    <button
+                                        type="button"
+                                        onClick={handleCertifiedUrlCaptureBuild}
+                                        className="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-lg font-medium flex items-center justify-center gap-2"
+                                    >
+                                        <Globe className="w-4 h-4" />
+                                        Run Certified URL Capture
+                                    </button>
                                 </div>
-                            </div>
+                            ) : (
+                                <div className="border-2 border-dashed border-slate-700 rounded-xl p-8 text-center hover:border-blue-500/50 hover:bg-slate-800/30 transition-colors relative group">
+                                    <input
+                                        type="file"
+                                        accept=".zip"
+                                        onChange={handleFileUpload}
+                                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                                        ref={fileInputRef}
+                                    />
+                                    <div className="pointer-events-none">
+                                        <div className="w-16 h-16 bg-blue-600/20 rounded-full flex items-center justify-center mx-auto mb-4 text-blue-500 group-hover:scale-110 transition-transform">
+                                            <Upload className="w-8 h-8" />
+                                        </div>
+                                        <h3 className="text-lg font-medium text-white mb-1">Upload Project ZIP</h3>
+                                        <p className="text-slate-400 text-sm">Drag and drop or click to select</p>
+                                        <p className="text-slate-500 text-xs mt-2">Our AI handles React, HTML, and Next.js archives seamlessly.</p>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
 
                     {step === STEPS.SOURCE_DETECTED && (
                         <div className="space-y-6">
                             <div className="bg-blue-900/20 border border-blue-800/50 rounded-lg p-4 text-sm text-blue-200">
-                                <p className="flex items-center gap-2"><Code className="w-4 h-4" /> Source code detected. Select pages to include in the WordPress theme.</p>
+                                <p className="flex items-center gap-2"><Code className="w-4 h-4" /> {sourceDetectedMessage}</p>
                             </div>
 
-                            <div className="flex justify-between items-center px-1">
-                                <span className="text-xs text-slate-500">
-                                    {selectedRoutes.size} of {detectedRoutes.length} pages selected
-                                </span>
-                                <div className="flex gap-3 text-xs font-medium">
-                                    <button
-                                        onClick={() => setSelectedRoutes(new Set(detectedRoutes.map(r => r.path)))}
-                                        className="text-blue-400 hover:text-blue-300 transition-colors"
-                                    >
-                                        Select All
-                                    </button>
-                                    <span className="text-slate-700">|</span>
-                                    <button
-                                        onClick={() => setSelectedRoutes(new Set(detectedRoutes.slice(0, 25).map(r => r.path)))}
-                                        className="text-emerald-400 hover:text-emerald-300 transition-colors"
-                                    >
-                                        First 25
-                                    </button>
-                                    <span className="text-slate-700">|</span>
-                                    <button
-                                        onClick={() => setSelectedRoutes(new Set())}
-                                        className="text-slate-500 hover:text-slate-400 transition-colors"
-                                    >
-                                        Deselect All
-                                    </button>
+                            {renderOutputModeSelector()}
+
+                            {renderStaticInputPanel()}
+
+                            {renderStaticSignalsPanel()}
+
+                            {isCertifiedUrlMode ? (
+                                <div className="bg-slate-950/60 border border-slate-800 rounded-lg p-4 text-sm text-slate-400">
+                                    Route selection is skipped in Public URL mode. The capture engine will discover routes from the live site, optional route seeds, sitemap hints, and bundle inspection.
                                 </div>
-                            </div>
+                            ) : (
+                                <>
+                                    <div className="flex justify-between items-center px-1">
+                                        <span className="text-xs text-slate-500">
+                                            {selectedRoutes.size} of {detectedRoutes.length} pages selected
+                                        </span>
+                                        <div className="flex gap-3 text-xs font-medium">
+                                            <button
+                                                onClick={() => setSelectedRoutes(new Set(detectedRoutes.map(r => r.path)))}
+                                                className="text-blue-400 hover:text-blue-300 transition-colors"
+                                            >
+                                                Select All
+                                            </button>
+                                            <span className="text-slate-700">|</span>
+                                            <button
+                                                onClick={() => setSelectedRoutes(new Set(detectedRoutes.slice(0, 25).map(r => r.path)))}
+                                                className="text-emerald-400 hover:text-emerald-300 transition-colors"
+                                            >
+                                                First 25
+                                            </button>
+                                            <span className="text-slate-700">|</span>
+                                            <button
+                                                onClick={() => setSelectedRoutes(new Set())}
+                                                className="text-slate-500 hover:text-slate-400 transition-colors"
+                                            >
+                                                Deselect All
+                                            </button>
+                                        </div>
+                                    </div>
 
-                            <div className="max-h-60 overflow-y-auto bg-slate-950 rounded-lg border border-slate-800 p-2 space-y-1">
-                                {detectedRoutes.map(route => (
-                                    <label key={route.path} className="flex items-center gap-3 p-2 hover:bg-slate-900 rounded cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={selectedRoutes.has(route.path)}
-                                            onChange={() => toggleRoute(route.path)}
-                                            className="rounded border-slate-700 bg-slate-800 text-blue-600 focus:ring-blue-500"
-                                        />
-                                        <span className="flex-1 font-mono text-sm">{route.path}</span>
-                                        <span className="text-xs text-slate-500 bg-slate-900 px-2 py-1 rounded">{route.title}</span>
-                                    </label>
-                                ))}
-                            </div>
+                                    <div className="max-h-60 overflow-y-auto bg-slate-950 rounded-lg border border-slate-800 p-2 space-y-1">
+                                        {detectedRoutes.map(route => (
+                                            <label key={route.path} className="flex items-center gap-3 p-2 hover:bg-slate-900 rounded cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedRoutes.has(route.path)}
+                                                    onChange={() => toggleRoute(route.path)}
+                                                    className="rounded border-slate-700 bg-slate-800 text-blue-600 focus:ring-blue-500"
+                                                />
+                                                <span className="flex-1 font-mono text-sm">{route.path}</span>
+                                                <span className="text-xs text-slate-500 bg-slate-900 px-2 py-1 rounded">{route.title}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </>
+                            )}
 
                             <div className="bg-slate-900/50 rounded-lg border border-slate-800 p-4 space-y-4">
                                 <button
@@ -5461,7 +8357,7 @@ echo "Theme Factory Data Migration Complete.";`;
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                                     </svg>
                                 </button>
-                                
+
                                 {showSeoConfig && <div className="grid grid-cols-2 gap-4 pt-2 border-t border-slate-800">
                                     <div className="col-span-2 bg-indigo-950/30 border border-indigo-500/20 rounded-lg p-4 space-y-3">
                                         <div className="flex items-start gap-3">
@@ -5471,19 +8367,19 @@ echo "Theme Factory Data Migration Complete.";`;
                                             <div className="flex-1 min-w-0">
                                                 <h4 className="text-sm font-semibold text-indigo-300">Live Site Scanner</h4>
                                                 <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                                                    If your website is already live, paste the URL below and click <strong className="text-indigo-300">Scan</strong>. 
-                                                    This will visit your site with a headless browser and automatically fill in your Company Name, Phone Number, 
+                                                    If your website is already live, paste the URL below and click <strong className="text-indigo-300">Scan</strong>.
+                                                    This will visit your site with a headless browser and automatically fill in your Company Name, Phone Number,
                                                     Description, CTA Colors, Social Links, and other SEO fields below — saving you from entering them manually.
                                                 </p>
                                             </div>
                                         </div>
                                         <div className="flex gap-2 items-center">
-                                            <input 
-                                                type="text" 
-                                                value={seoSettings.url} 
-                                                onChange={e => setSeoSettings({...seoSettings, url: e.target.value})} 
-                                                placeholder="https://yourwebsite.com" 
-                                                className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm placeholder:text-slate-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 outline-none transition-colors" 
+                                            <input
+                                                type="text"
+                                                value={seoSettings.url}
+                                                onChange={e => setSeoSettings({...seoSettings, url: e.target.value})}
+                                                placeholder="https://yourwebsite.com"
+                                                className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm placeholder:text-slate-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 outline-none transition-colors"
                                             />
                                             <button
                                                 onClick={handleLiveScrape}
@@ -5645,7 +8541,7 @@ echo "Theme Factory Data Migration Complete.";`;
                                             </div>
                                         </div>
                                     </div>
-                                    
+
                                     {/* GOD TIER SEO ROW */}
                                     <div className="col-span-2 border-t border-slate-800 pt-2 grid grid-cols-3 gap-4">
                                         <div className="space-y-1 mt-2">
@@ -5705,7 +8601,7 @@ echo "Theme Factory Data Migration Complete.";`;
                                             </label>
                                         </div>
                                     </div>
-                                    
+
                                     <div className="col-span-2 bg-slate-900 border border-slate-800 rounded-lg p-4 mt-2 mb-2">
                                         <h3 className="text-sm font-bold text-white flex items-center gap-2 mb-3"><Globe className="w-4 h-4 text-blue-400" /> Multilingual / Regional SEO</h3>
                                         <div className="grid grid-cols-2 gap-4">
@@ -5777,14 +8673,20 @@ echo "Theme Factory Data Migration Complete.";`;
 
                             <div className="flex gap-4">
                                 <button
-                                    onClick={() => processRemoteBuild(sourceFile, detectedRoutes)}
+                                    onClick={() => {
+                                        if (isCertifiedUrlMode) {
+                                            void handleCertifiedUrlCaptureBuild();
+                                            return;
+                                        }
+                                        void processRemoteBuild(sourceFile, detectedRoutes);
+                                    }}
                                     className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-lg font-medium flex items-center justify-center gap-2"
                                 >
                                     {connectionStatus === 'success' ? <Server className="w-4 h-4" /> : <Wrench className="w-4 h-4" />}
-                                    {connectionStatus === 'success' ? 'Remote Build & Convert' : 'Local Simulation Build'}
+                                    {primaryBuildLabel}
                                 </button>
                                 <button
-                                    onClick={() => { setStep(STEPS.IDLE); setSourceFile(null); }}
+                                    onClick={() => { setStep(STEPS.IDLE); setSourceFile(null); setUrlCaptureReport(null); setUrlCaptureStatus('idle'); }}
                                     className="px-6 py-3 rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-300"
                                 >
                                     Cancel
@@ -5802,7 +8704,7 @@ echo "Theme Factory Data Migration Complete.";`;
                                             {progress < 25 && "Step 1: Analyzing Design"}
                                             {progress >= 25 && progress < 60 && "Step 2: Building Architecture"}
                                             {progress >= 60 && progress < 90 && "Step 3: Rendering Visual Layouts"}
-                                            {progress >= 90 && "Step 4: Packaging Theme"}
+                                            {progress >= 90 && packagingStepLabel}
                                         </span>
                                     </div>
                                     <div className="text-right">
@@ -5820,7 +8722,7 @@ echo "Theme Factory Data Migration Complete.";`;
                                         {progress >= 25 && progress < 40 && "Installing dependencies..."}
                                         {progress >= 40 && progress < 60 && "Compiling application..."}
                                         {progress >= 60 && progress < 90 && "Capturing dynamic routes using AI..."}
-                                        {progress >= 90 && progress < 100 && "Writing WordPress functions..."}
+                                        {progress >= 90 && progress < 100 && packagingStatusLabel}
                                         {progress >= 100 && "Finishing up..."}
                                     </p>
                                     <p className="text-sm text-slate-500 mt-2">This usually takes about 1-2 minutes. Please don't close this window.</p>
@@ -5845,7 +8747,7 @@ echo "Theme Factory Data Migration Complete.";`;
                                         </div>
                                     ))}
                                 </div>
-                                
+
                                 {qaDiagnostics.warnings.length > 0 && (
                                     <div className="mt-6 pt-6 border-t border-red-900/30">
                                         <h4 className="text-sm font-bold text-yellow-500 mb-4">{qaDiagnostics.warnings.length} Non-Fatal Warnings (Ignored)</h4>
@@ -5858,7 +8760,7 @@ echo "Theme Factory Data Migration Complete.";`;
                                         </div>
                                     </div>
                                 )}
-                                
+
                                 <div className="mt-8 flex justify-end">
                                     <button onClick={() => { setStep(STEPS.IDLE); setQaDiagnostics(null); }} className="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 rounded text-white transition-colors text-sm font-medium">
                                         Acknowledge & Return
@@ -5872,7 +8774,7 @@ echo "Theme Factory Data Migration Complete.";`;
                         <div className="space-y-6">
                             {thumbnails.length > 0 && (
                                 <div className="mt-8 mb-4">
-                                    <h3 className="text-lg font-medium text-white mb-4">Preview Your New Theme</h3>
+                                    <h3 className="text-lg font-medium text-white mb-4">{previewHeading}</h3>
                                     <div className="flex overflow-x-auto gap-4 pb-4 snap-x">
                                         {thumbnails.map((url, i) => (
                                             <div key={i} className="flex-none w-72 rounded-lg border border-slate-700 overflow-hidden bg-slate-900 group shadow-lg snap-center relative cursor-pointer" onClick={() => setPreviewImage(url)}>
@@ -5935,26 +8837,87 @@ echo "Theme Factory Data Migration Complete.";`;
                                 </div>
                             )}
 
+                            {conversionMode === 'static-site' && staticExportReport && (
+                                <div className={`rounded-xl p-5 mb-2 border ${staticExportReport.warnings.length === 0 ? 'bg-cyan-950/20 border-cyan-800/40' : 'bg-amber-950/20 border-amber-800/40'}`}>
+                                    <h3 className={`text-sm font-bold flex items-center gap-2 mb-3 ${staticExportReport.warnings.length === 0 ? 'text-cyan-300' : 'text-amber-300'}`}>
+                                        <Sparkles className="w-5 h-5" />
+                                        Static Export Health
+                                    </h3>
+                                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                                        <div className="bg-slate-900/50 rounded-lg p-3 text-center">
+                                            <div className="text-lg font-bold text-white">{staticExportReport.routeCount}</div>
+                                            <div className="text-[11px] text-slate-400">Routes Exported</div>
+                                        </div>
+                                        <div className="bg-slate-900/50 rounded-lg p-3 text-center">
+                                            <div className={`text-lg font-bold ${staticExportReport.checks.formsReady ? 'text-emerald-400' : 'text-amber-400'}`}>{staticExportReport.checks.formsReady ? 'Ready' : 'Check'}</div>
+                                            <div className="text-[11px] text-slate-400">Static Forms</div>
+                                        </div>
+                                        <div className="bg-slate-900/50 rounded-lg p-3 text-center">
+                                            <div className={`text-lg font-bold ${staticExportReport.checks.hasSufficientBusinessEntity ? 'text-emerald-400' : 'text-amber-400'}`}>{staticExportReport.checks.hasSufficientBusinessEntity ? 'Strong' : 'Weak'}</div>
+                                            <div className="text-[11px] text-slate-400">Entity Signals</div>
+                                        </div>
+                                        <div className="bg-slate-900/50 rounded-lg p-3 text-center">
+                                            <div className={`text-lg font-bold ${staticExportReport.warnings.length === 0 ? 'text-emerald-400' : 'text-amber-400'}`}>{staticExportReport.warnings.length}</div>
+                                            <div className="text-[11px] text-slate-400">Warnings</div>
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-slate-300">
+                                        <div className="bg-slate-900/40 rounded-lg p-3 space-y-1">
+                                            <p>Geo coordinates: <span className={staticExportReport.checks.hasGeoCoordinates ? 'text-emerald-400 font-semibold' : 'text-amber-400 font-semibold'}>{staticExportReport.checks.hasGeoCoordinates ? 'Configured' : 'Missing'}</span></p>
+                                            <p>Service areas: <span className={staticExportReport.checks.hasServiceAreas ? 'text-emerald-400 font-semibold' : 'text-amber-400 font-semibold'}>{staticExportReport.checks.hasServiceAreas ? 'Configured' : 'Missing'}</span></p>
+                                            <p>AI crawler allowances: <span className={staticExportReport.checks.aiCrawlerAllowancesEnabled ? 'text-emerald-400 font-semibold' : 'text-slate-400 font-semibold'}>{staticExportReport.checks.aiCrawlerAllowancesEnabled ? 'Enabled' : 'Disabled'}</span></p>
+                                        </div>
+                                        <div className="bg-slate-900/40 rounded-lg p-3 space-y-1">
+                                            <p>llms.txt: <span className={staticExportReport.checks.llmsEnabled ? 'text-emerald-400 font-semibold' : 'text-slate-400 font-semibold'}>{staticExportReport.checks.llmsEnabled ? 'Enabled' : 'Disabled'}</span></p>
+                                            <p>IndexNow key: <span className={staticExportReport.checks.indexNowEnabled ? 'text-emerald-400 font-semibold' : 'text-slate-400 font-semibold'}>{staticExportReport.checks.indexNowEnabled ? 'Enabled' : 'Disabled'}</span></p>
+                                            <p>Base URL: <span className="text-cyan-300 font-semibold break-all">{staticExportReport.baseUrl}</span></p>
+                                        </div>
+                                    </div>
+                                    {staticExportReport.warnings.length > 0 && (
+                                        <div className="mt-4 space-y-2">
+                                            {staticExportReport.warnings.map((warning, index) => (
+                                                <div key={`${warning.code}-${index}`} className="bg-slate-950/70 border border-amber-900/40 rounded-lg p-3 text-xs text-slate-300">
+                                                    <div className="font-semibold text-amber-300">{warning.code}</div>
+                                                    <div className="mt-1">{warning.message}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                 {downloadUrl && (
-                                    <a href={downloadUrl} download={`${themeSlug}-theme.zip`} className="bg-green-600 hover:bg-green-500 text-white p-4 rounded-xl flex items-center justify-between group">
+                                    <a href={downloadUrl} download={primaryDownloadName} className="bg-green-600 hover:bg-green-500 text-white p-4 rounded-xl flex items-center justify-between group">
                                         <div className="flex items-center gap-3">
                                             <div className="p-2 bg-green-700 rounded-lg"><Package className="w-6 h-6" /></div>
                                             <div className="text-left">
-                                                <div className="font-bold">Download Theme</div>
-                                                <div className="text-xs opacity-75">WordPress Theme ZIP</div>
+                                                <div className="font-bold">{downloadPrimaryLabel}</div>
+                                                <div className="text-xs opacity-75">{downloadPrimaryDescription}</div>
                                             </div>
                                         </div>
                                         <Download className="w-5 h-5 group-hover:translate-y-1 transition-transform" />
                                     </a>
                                 )}
                                 {pluginDownloadUrl && (
-                                    <a href={pluginDownloadUrl} download="theme-factory-blocks.zip" className="bg-slate-700 hover:bg-slate-600 text-white p-4 rounded-xl flex items-center justify-between group border border-slate-600">
+                                    <a href={pluginDownloadUrl} download={companionPluginDownloadName} className="bg-slate-700 hover:bg-slate-600 text-white p-4 rounded-xl flex items-center justify-between group border border-slate-600">
                                         <div className="flex items-center gap-3">
                                             <div className="p-2 bg-slate-800 rounded-lg"><Settings className="w-6 h-6 text-blue-400" /></div>
                                             <div className="text-left">
-                                                <div className="font-bold">Companion Plugin</div>
-                                                <div className="text-xs opacity-75">Required for Custom Blocks</div>
+                                                <div className="font-bold">{companionPluginTitle}</div>
+                                                <div className="text-xs opacity-75">{companionPluginDescription}</div>
+                                            </div>
+                                        </div>
+                                        <Download className="w-5 h-5 group-hover:translate-y-1 transition-transform" />
+                                    </a>
+                                )}
+                                {formsPluginDownloadUrl && (
+                                    <a href={formsPluginDownloadUrl} download="whipify-forms-plugin.zip" className="bg-slate-700 hover:bg-slate-600 text-white p-4 rounded-xl flex items-center justify-between group border border-slate-600">
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-2 bg-slate-800 rounded-lg"><Settings className="w-6 h-6 text-emerald-400" /></div>
+                                            <div className="text-left">
+                                                <div className="font-bold">Whipify Forms Plugin</div>
+                                                <div className="text-xs opacity-75">Connects generated WordPress forms</div>
                                             </div>
                                         </div>
                                         <Download className="w-5 h-5 group-hover:translate-y-1 transition-transform" />
@@ -6048,16 +9011,16 @@ echo "Theme Factory Data Migration Complete.";`;
             {/* Full Screen Image Preview Modal */}
             {previewImage && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 p-4 transition-opacity duration-300" onClick={() => setPreviewImage(null)}>
-                    <button 
+                    <button
                         className="absolute top-6 right-6 p-2 bg-slate-800 hover:bg-slate-700 rounded-full text-slate-300 hover:text-white transition-colors"
                         onClick={(e) => { e.stopPropagation(); setPreviewImage(null); }}
                     >
                         <X className="w-6 h-6" />
                     </button>
-                    <img 
-                        src={previewImage} 
-                        alt="Full screen preview" 
-                        className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl border border-slate-700 pointer-events-auto" 
+                    <img
+                        src={previewImage}
+                        alt="Full screen preview"
+                        className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl border border-slate-700 pointer-events-auto"
                         onClick={(e) => e.stopPropagation()}
                     />
                 </div>
@@ -6067,7 +9030,7 @@ echo "Theme Factory Data Migration Complete.";`;
             {showDebugConsole && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center animate-in fade-in duration-200">
                     <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowDebugConsole(false)} />
-                    <div 
+                    <div
                         className="relative bg-slate-900 border border-slate-700 w-full max-w-5xl max-h-[85vh] rounded-xl shadow-2xl flex flex-col overflow-hidden m-4 slide-in-from-bottom-4 animate-in duration-300 pointer-events-auto"
                         onClick={(e) => e.stopPropagation()}
                     >
@@ -6083,7 +9046,7 @@ echo "Theme Factory Data Migration Complete.";`;
                                 </div>
                             </div>
                             <div className="flex items-center gap-2">
-                                <button 
+                                <button
                                     onClick={() => {
                                         if (auditState) {
                                             navigator.clipboard.writeText(JSON.stringify(auditState.logs, null, 2));
@@ -6098,7 +9061,7 @@ echo "Theme Factory Data Migration Complete.";`;
                                     <FileJson className="w-4 h-4" />
                                     Copy JSON
                                 </button>
-                                <button 
+                                <button
                                     onClick={() => setShowDebugConsole(false)}
                                     className="w-10 h-10 flex items-center justify-center text-slate-400 hover:bg-rose-500/10 hover:text-rose-400 rounded-lg transition-colors"
                                 >
@@ -6106,7 +9069,7 @@ echo "Theme Factory Data Migration Complete.";`;
                                 </button>
                             </div>
                         </div>
-                        
+
                         {/* Body - Code Viewer */}
                         <div className="flex-1 overflow-y-auto bg-slate-950 p-6 custom-scrollbar">
                             <pre className="text-slate-400 font-mono text-sm whitespace-pre-wrap break-words">
@@ -6168,7 +9131,7 @@ echo "Theme Factory Data Migration Complete.";`;
                                 ))
                             )}
                         </div>
-                        
+
                         {/* Footer */}
                         {auditState && auditState.logs && (
                             <div className="px-6 py-4 bg-slate-900/80 border-t border-slate-800 flex justify-between items-center text-sm text-slate-500">
@@ -6188,7 +9151,7 @@ echo "Theme Factory Data Migration Complete.";`;
             {redirectsData && showMapModal && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center animate-in fade-in duration-200">
                     <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowMapModal(false)} />
-                    <div 
+                    <div
                         className="relative bg-slate-900 border border-slate-700 w-full max-w-5xl max-h-[85vh] rounded-xl shadow-2xl flex flex-col overflow-hidden m-4 slide-in-from-bottom-4 animate-in duration-300 pointer-events-auto"
                         onClick={(e) => e.stopPropagation()}
                     >
@@ -6203,7 +9166,7 @@ echo "Theme Factory Data Migration Complete.";`;
                                 </div>
                             </div>
                             <div className="flex items-center gap-2">
-                                <button 
+                                <button
                                     onClick={() => {
                                         navigator.clipboard.writeText(redirectsData);
                                         addLog("Copied redirect map to clipboard", "success");
@@ -6213,7 +9176,7 @@ echo "Theme Factory Data Migration Complete.";`;
                                     <FileCode className="w-4 h-4" />
                                     Copy CSV
                                 </button>
-                                <button 
+                                <button
                                     onClick={() => setShowMapModal(false)}
                                     className="w-10 h-10 flex items-center justify-center text-slate-400 hover:bg-rose-500/10 hover:text-rose-400 rounded-lg transition-colors"
                                 >
@@ -6258,7 +9221,7 @@ echo "Theme Factory Data Migration Complete.";`;
             {llmsData && showLlmsModal && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center animate-in fade-in duration-200">
                     <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowLlmsModal(false)} />
-                    <div 
+                    <div
                         className="relative bg-slate-900 border border-slate-700 w-full max-w-5xl max-h-[85vh] rounded-xl shadow-2xl flex flex-col overflow-hidden m-4 slide-in-from-bottom-4 animate-in duration-300 pointer-events-auto"
                         onClick={(e) => e.stopPropagation()}
                     >
@@ -6273,7 +9236,7 @@ echo "Theme Factory Data Migration Complete.";`;
                                 </div>
                             </div>
                             <div className="flex items-center gap-2">
-                                <button 
+                                <button
                                     onClick={() => {
                                         navigator.clipboard.writeText(llmsData);
                                         addLog("Copied AI Knowledge Base to clipboard", "success");
@@ -6283,7 +9246,7 @@ echo "Theme Factory Data Migration Complete.";`;
                                     <FileCode className="w-4 h-4" />
                                     Copy MD
                                 </button>
-                                <button 
+                                <button
                                     onClick={() => setShowLlmsModal(false)}
                                     className="w-10 h-10 flex items-center justify-center text-slate-400 hover:bg-rose-500/10 hover:text-rose-400 rounded-lg transition-colors"
                                 >

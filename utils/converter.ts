@@ -18,12 +18,41 @@ export interface ThemeTokenSuggestion {
   occurrences: number;
 }
 
+export interface GeneratedFormFieldOption {
+  label: string;
+  value: string;
+  selected?: boolean;
+}
+
+export interface GeneratedFormFieldManifest {
+  type: string;
+  name: string;
+  label?: string;
+  placeholder?: string;
+  required?: boolean;
+  multiple?: boolean;
+  accept?: string;
+  value?: string;
+  options?: GeneratedFormFieldOption[];
+}
+
+export interface GeneratedFormManifestEntry {
+  id: string;
+  page: string;
+  routeSlug: string;
+  routeTitle: string;
+  needsWiring: boolean;
+  successRedirect?: string;
+  fields: GeneratedFormFieldManifest[];
+}
+
 export interface ConversionResult {
   html: string;
   logs: AuditLog[];
   editabilityScore: number;
   confidenceScore: number;
   themeTokens: ThemeTokenSuggestion[];
+  formsManifest: GeneratedFormManifestEntry[];
   validation: {
     isValid: boolean;
     errors: string[];
@@ -36,16 +65,28 @@ export interface ConversionContext {
   textDiv: HTMLDivElement;
   patterns?: { headerPattern?: string, footerPattern?: string };
   faqData?: FaqItem[];  // FAQ Q&A pairs for direct embedding
+  routeInfo?: { path: string; slug: string; title: string };
+  formsManifest: GeneratedFormManifestEntry[];
   logs: AuditLog[];     // Array to collect heuristic audit warnings
   _blockCounts: Record<string, number>;  // Track block type usage for scoring
   _colorOccurrences: Record<string, number>;  // Track repeated colors for theme tokens
   _spacingOccurrences: Record<string, number>;  // Track repeated spacing for theme tokens
+  _formSequence: number;
 }
 
 const SKIP_TAGS = new Set(['script', 'style', 'noscript', 'meta', 'link', 'head', 'template']);
 const STRUCTURAL_TAGS = new Set(['div', 'article', 'main', 'header', 'footer', 'aside', 'nav', 'section']);
-const DYNAMIC_CONTAINER_SAFE_TAGS = new Set(['div', 'section', 'article', 'main', 'aside', 'header', 'footer', 'nav', 'span', 'form']);
+const DYNAMIC_CONTAINER_SAFE_TAGS = new Set(['div', 'section', 'article', 'main', 'aside', 'header', 'footer', 'nav', 'span', 'form', 'button']);
 const HTML_IDREF_ATTRIBUTES = new Set(['aria-controls', 'aria-labelledby', 'aria-describedby', 'aria-owns', 'aria-details', 'aria-flowto', 'aria-activedescendant']);
+const WP_RESERVED_FIELD_NAMES = new Set([
+  'name', 'day', 'month', 'year', 'hour', 'minute', 'second',
+  'p', 's', 'w', 'cat', 'tag', 'author', 'order', 'orderby',
+  'page', 'paged', 'type', 'error', 'm', 'attachment', 'calendar',
+  'post', 'title', 'feed', 'preview', 'search', 'comments', 'cpage',
+  'taxonomy', 'term', 'pagename', 'subpost', 'subpost_id',
+  'post_type', 'posts_per_page', 'post_status', 'post_parent',
+  'meta_key', 'meta_value', 'static', 'category_name',
+]);
 
 function decodeLooseUnicodeEscapes(value: string): string {
   if (!value) return '';
@@ -173,6 +214,173 @@ function normalizeQuestionText(value: string): string {
     .trim();
 }
 
+function createSafeFormFieldName(source: string, fallback: string): string {
+  const normalized = normalizeLooseText(source || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 40);
+
+  const candidate = normalized || fallback;
+  return WP_RESERVED_FIELD_NAMES.has(candidate) ? `customer_${candidate}` : candidate;
+}
+
+function getFieldLabelText(field: HTMLElement, formEl: HTMLFormElement): string {
+  const id = field.getAttribute('id') || '';
+  if (id) {
+    const explicitLabel = Array.from(formEl.querySelectorAll('label')).find((label) => label.getAttribute('for') === id);
+    if (explicitLabel?.textContent?.trim()) {
+      return normalizeLooseText(explicitLabel.textContent.replace(/\s+/g, ' ').trim());
+    }
+  }
+
+  const wrappedLabel = field.closest('label');
+  if (wrappedLabel) {
+    const clone = wrappedLabel.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll('input, select, textarea, button, svg').forEach((node) => node.remove());
+    const text = normalizeLooseText((clone.textContent || '').replace(/\s+/g, ' ').trim());
+    if (text) return text;
+  }
+
+  return normalizeLooseText(
+    field.getAttribute('aria-label') ||
+    field.getAttribute('placeholder') ||
+    field.getAttribute('name') ||
+    ''
+  );
+}
+
+function getFieldType(field: HTMLElement): string {
+  const tag = field.tagName.toLowerCase();
+  if (tag === 'textarea') return 'textarea';
+  if (tag === 'select') return 'select';
+  const input = field as HTMLInputElement;
+  return (input.getAttribute('type') || 'text').toLowerCase();
+}
+
+function ensureWhipifyFormAnnotations(formEl: HTMLFormElement, ctx: ConversionContext): void {
+  if (!ctx.routeInfo) return;
+
+  const allocatedNames = new Map<string, number>();
+  const reserveName = (candidateSource: string, fallback: string): string => {
+    let candidate = createSafeFormFieldName(candidateSource, fallback);
+    const seen = allocatedNames.get(candidate) || 0;
+    allocatedNames.set(candidate, seen + 1);
+    if (seen > 0) candidate = `${candidate}_${seen + 1}`;
+    return candidate;
+  };
+
+  const fields: GeneratedFormFieldManifest[] = [];
+  const groupedChoices = new Map<string, GeneratedFormFieldManifest>();
+  const elements = Array.from(formEl.querySelectorAll('input, select, textarea')) as HTMLElement[];
+
+  for (const field of elements) {
+    const tag = field.tagName.toLowerCase();
+    const fieldType = getFieldType(field);
+    if (tag === 'input' && ['submit', 'button', 'reset', 'image'].includes(fieldType)) continue;
+
+    const existingName = field.getAttribute('name') || '';
+    const label = getFieldLabelText(field, formEl);
+    const placeholder = normalizeLooseText(field.getAttribute('placeholder') || '');
+    const baseNameSource = existingName || label || placeholder || fieldType;
+
+    if (fieldType === 'radio' || fieldType === 'checkbox') {
+      const groupKey = existingName || `${fieldType}-${label || placeholder || fields.length + 1}`;
+      let entry = groupedChoices.get(groupKey);
+      if (!entry) {
+        const reservedName = reserveName(baseNameSource, `${fieldType}_${fields.length + 1}`);
+        entry = {
+          type: fieldType,
+          name: reservedName,
+          label: label || placeholder || reservedName.replace(/_/g, ' '),
+          required: field.hasAttribute('required'),
+          options: [],
+        };
+        groupedChoices.set(groupKey, entry);
+        fields.push(entry);
+      } else if (field.hasAttribute('required')) {
+        entry.required = true;
+      }
+
+      field.setAttribute('name', entry.name);
+      const optionLabel = label || normalizeLooseText(field.getAttribute('value') || entry.name);
+      const optionValue = normalizeLooseText(field.getAttribute('value') || optionLabel || entry.name);
+      if (optionValue && !(entry.options || []).some((option) => option.value === optionValue)) {
+        entry.options = entry.options || [];
+        entry.options.push({
+          label: optionLabel || optionValue,
+          value: optionValue,
+          selected: (field as HTMLInputElement).checked,
+        });
+      }
+      continue;
+    }
+
+    const resolvedName = reserveName(baseNameSource, `${fieldType}_${fields.length + 1}`);
+    field.setAttribute('name', resolvedName);
+
+    const manifestField: GeneratedFormFieldManifest = {
+      type: fieldType,
+      name: resolvedName,
+    };
+
+    if (label) manifestField.label = label;
+    if (placeholder) manifestField.placeholder = placeholder;
+    if (field.hasAttribute('required')) manifestField.required = true;
+
+    if (tag === 'select') {
+      const selectEl = field as HTMLSelectElement;
+      if (selectEl.multiple) manifestField.multiple = true;
+      manifestField.options = Array.from(selectEl.options).map((option) => ({
+        label: normalizeLooseText(option.textContent || option.label || option.value),
+        value: option.value,
+        selected: option.selected,
+      }));
+    }
+
+    if (fieldType === 'file') {
+      const accept = field.getAttribute('accept') || '';
+      if (accept) manifestField.accept = accept;
+    }
+
+    if (fieldType === 'hidden') {
+      const value = field.getAttribute('value') || '';
+      if (value) manifestField.value = value;
+    }
+
+    fields.push(manifestField);
+  }
+
+  if (fields.length === 0) return;
+
+  const nextIndex = ctx._formSequence + 1;
+  ctx._formSequence = nextIndex;
+  const baseSlug = sanitizeHtmlIdValue(ctx.routeInfo.slug || 'page') || 'page';
+  const formId = `whipify-${baseSlug}-form-${nextIndex}`;
+  const rawSuccessRedirect = formEl.getAttribute('data-success-redirect') || formEl.getAttribute('action') || '';
+  const successRedirect = /^(\/|https?:\/\/|\.\/|\.\.\/)/i.test(rawSuccessRedirect) && !/wp-json|admin-ajax|javascript:|mailto:/i.test(rawSuccessRedirect)
+    ? rawSuccessRedirect
+    : '';
+
+  formEl.setAttribute('data-whipify-form-id', formId);
+  formEl.setAttribute('data-whipify-form', 'needs-wiring');
+  formEl.setAttribute('data-wpconvert-form-id', formId);
+  formEl.setAttribute('data-wpconvert-form', 'needs-wiring');
+  if (successRedirect) {
+    formEl.setAttribute('data-success-redirect', successRedirect);
+  }
+
+  ctx.formsManifest.push({
+    id: formId,
+    page: ctx.routeInfo.path,
+    routeSlug: ctx.routeInfo.slug,
+    routeTitle: ctx.routeInfo.title,
+    needsWiring: true,
+    successRedirect: successRedirect || undefined,
+    fields,
+  });
+}
+
 function looksLikeQuestionText(value: string): boolean {
   const raw = normalizeLooseText(value).replace(/\s+/g, ' ').trim();
   if (!raw || raw.length < 8 || raw.length > 220) return false;
@@ -276,9 +484,10 @@ export function convertToGutenbergBlocks(
   options?: { 
     patterns?: { headerPattern?: string, footerPattern?: string };
     faqData?: FaqItem[];
+    routeInfo?: { path: string; slug: string; title: string };
   }
 ): ConversionResult {
-  const defaultReturn: ConversionResult = { html: '', logs: [], editabilityScore: 0, confidenceScore: 0, themeTokens: [], validation: { isValid: true, errors: [] } };
+  const defaultReturn: ConversionResult = { html: '', logs: [], editabilityScore: 0, confidenceScore: 0, themeTokens: [], formsManifest: [], validation: { isValid: true, errors: [] } };
   
   if (!html || typeof html !== 'string' || html.trim().length < 10) {
     defaultReturn.html = createPlaceholder('Empty Content', 'No content was provided for this page.');
@@ -299,10 +508,13 @@ export function convertToGutenbergBlocks(
         textDiv: doc.createElement('div'),
         patterns: options?.patterns,
         faqData: options?.faqData,
+        routeInfo: options?.routeInfo,
+        formsManifest: [],
         logs: [],
         _blockCounts: {},
         _colorOccurrences: {},
-        _spacingOccurrences: {}
+        _spacingOccurrences: {},
+        _formSequence: 0,
     };
     
     // PHASE 1.4: Wrapper Reduction — collapse meaningless single-child divs
@@ -324,7 +536,7 @@ export function convertToGutenbergBlocks(
     const { editabilityScore, confidenceScore } = computeScores(ctx);
     const themeTokens = extractThemeTokenSuggestions(ctx);
     
-    return { html: serialized, logs: ctx.logs, editabilityScore, confidenceScore, themeTokens, validation };
+    return { html: serialized, logs: ctx.logs, editabilityScore, confidenceScore, themeTokens, formsManifest: ctx.formsManifest, validation };
   } catch (e) {
     console.error('Gutenberg Converter Error:', e);
     return { ...defaultReturn, html: createPlaceholder('Conversion Error', `Failed to convert: ${e instanceof Error ? e.message : 'Unknown error'}`), logs: [] };
@@ -1221,6 +1433,11 @@ function createFormSelect(el: HTMLSelectElement, ctx: ConversionContext): string
 function createContainer(el: HTMLElement, ctx: ConversionContext, supportInteractivity: boolean = false): string {
     const elClassName = getClassName(el);
     const isWithinFormContext = el.closest('form') !== null;
+    const tagName = el.tagName.toLowerCase();
+
+    if (tagName === 'form') {
+        ensureWhipifyFormAnnotations(el as HTMLFormElement, ctx);
+    }
     
     // ─── HEURISTIC: Radix/Headless UI Accordion → core/details ────────
     // Detect accordion containers with data-orientation="vertical" and
@@ -1572,7 +1789,6 @@ function createContainer(el: HTMLElement, ctx: ConversionContext, supportInterac
 
     const children = processChildren(el, ctx).join('\n\n');
     let className = getClassName(el);
-    const tagName = el.tagName.toLowerCase();
     let styleString = el.getAttribute('style') || '';
     const id = el.id;
 
@@ -1696,7 +1912,7 @@ function createContainer(el: HTMLElement, ctx: ConversionContext, supportInterac
             for (let i = 0; i < el.attributes.length; i++) {
                 const attr = el.attributes[i];
                 const name = attr.name;
-                if (name.startsWith('data-') || name.startsWith('aria-') || name === 'role' || name === 'hidden' || name === 'tabindex') {
+                if (name.startsWith('data-') || name.startsWith('aria-') || name === 'role' || name === 'hidden' || name === 'tabindex' || name === 'type') {
                     const rawValue = name === 'hidden' ? true : attr.value;
                     if (rawValue === true) {
                         htmlAttributes[name] = true;
