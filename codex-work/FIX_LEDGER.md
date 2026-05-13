@@ -193,3 +193,98 @@
   - Bumped importer header/runtime marker to 1.3.19 and activated that importer on the live site after deactivating the older 1.3.18 importer.
 - Live result: Edmonton page 5012 now renders 26 standalone `whipify_feature_card` Elementor widgets, 0 legacy `whipify_feature_grid` widgets, and 0 HTML widgets. Clicking a Feature Card in Elementor opens `Edit Whipify Feature Card` with direct populated controls.
 - Risk: Feature Cards are generated custom Elementor widgets, not decomposed into only Elementor core Heading/Text/Button widgets. This is the intended custom-widget tier for complex React/Tailwind cards while making each card independently selectable/editable.
+
+## Elementor FAQ Answer Editor-Only Repair - 2026-05-06
+
+- Changed files: utils/elementorPluginTemplates.ts, scripts/elementor-export-regression.mjs, .tools/deploy/whipify-elementor-importer-1.3.26-faq-only/
+- Reason: FAQ answers opened on the public page but were not selectable/editable in Elementor. A broad attempted patch changed unrelated page behavior, so it was rolled back and replaced with an FAQ-only importer repair.
+- Issue IDs fixed: AUD-EL-EDITABILITY-022
+- Changes:
+  - Restored the live site to the known-good standalone Feature Card behavior before applying the FAQ fix.
+  - Added importer-side FAQ data lookup from generated `assets/js/faq-data.js`.
+  - Injected a `text-editor` Elementor widget with class `whipify-faq-answer` beside each FAQ question button before document save and during activation/import repair.
+  - Added Elementor-preview-only CSS/JS that makes those answer widgets visible/selectable in the editor iframe while preserving closed answers on the public page.
+  - Rebuilt and deployed importer 1.3.26 using JSZip forward-slash paths so WordPress installs nested `assets/` and `includes/` folders correctly.
+- Live result: Edmonton page 5012 public output keeps FAQ answers closed until clicked, has 26 standalone Feature Card widgets, 0 legacy Feature Grid widgets, and 0 HTML widgets. Elementor editor output has 10 FAQ answer Text Editor widgets visible/selectable for editing, and clicking an answer opens `Edit Text Editor` with answer content.
+- Risk: Older inactive importer folders remain installed in wp-admin and should not be activated. The FAQ answer repair is intentionally scoped to generated FAQ button/answer pairs and does not convert FAQ questions into a new custom FAQ widget.
+
+## Homepage Elementor Visual Parity Importer 1.3.46 - 2026-05-06
+
+- Changed files: components/Dashboard.tsx, utils/elementorPluginTemplates.ts, scripts/elementor-export-regression.mjs, .tools/deploy/whipify-elementor-importer-1.3.46-homepage-header-flow-parity/
+- Reason: The Elementor homepage at `https://mikaily128.sg-host.com/` still differed from the React/static reference at `https://mikaily125.sg-host.com/`, especially in the header, above-the-fold hero trust badge, scroll behavior, and location-card decorative bubble.
+- Issue IDs fixed: AUD-EL-HOME-023
+- Changes:
+  - Added generated-theme visual-fidelity CSS for normal-flow header chrome, 1280px header max width, logo/nav spacing, and zero `main.site-main` fixed-header offset.
+  - Added importer high-priority override CSS with the same header-flow rules so already-installed Elementor themes can be corrected through the importer package.
+  - Restored source `inline-flex` behavior on Elementor `e-con` containers that should size to content instead of stretching full width.
+  - Restored the location-card decorative bubble dimensions for the `absolute w-32 h-32` source element that was collapsed by broad absolute-positioning overrides.
+  - Added regression assertions that the generated theme CSS and importer CSS include the homepage header-flow, inline-flex, and location-bubble parity rules.
+- Live result: Active live importer was updated to 1.3.46 and the homepage was compared against the static reference. Header/nav/logo, hero trust badge/title, and location-card surface/bubble metrics match exactly in the recorded 1440px comparison.
+- Evidence paths: logs/homepage-parity-2026-05-06/after-1.3.46/metrics.json; logs/homepage-parity-2026-05-06/after-1.3.46/converted-1440x1400.png; logs/homepage-parity-2026-05-06/after-1.3.46/reference-1440x1400.png; logs/homepage-parity-2026-05-06/after-1.3.46/scroll-slices/
+- Risk: The recorded full page height is still 9px shorter than the reference, likely from footer/chrome residuals. Older inactive Whipify Elementor Importer folders remain installed and should not be activated without checking version lineage.
+
+## Elementor WordPress-Theme Chrome + FAQ Runtime Fix - 2026-05-06
+
+- Changed files: components/Dashboard.tsx, scripts/elementor-export-regression.mjs, generated theme artifacts under logs/domain-parity-2026-05-06/regenerate-after-chrome-fix-v2/ and logs/domain-parity-2026-05-06/regenerate-after-radix-faq-one-open-v4/
+- Reason: Continuing the domain-wide Elementor parity work showed the generated package could duplicate body content through `footer.php`, miss header/footer partials, emit invalid `setup.php`, and leave Radix FAQ HTML fallback questions non-functional.
+- Issue IDs fixed: AUD-EL-DOMAIN-024, AUD-EL-DOMAIN-025, AUD-EL-FAQ-026
+- Changes:
+  - Existing generated WordPress-theme inputs now read source `header.php` and `footer.php` for chrome instead of using `front-page.php` body splitting.
+  - Elementor theme generation now creates `partials/header-global.php` and `partials/footer-global.php` for those WordPress-theme inputs, strips leading source `</main>` from generated footer output, and includes WPConvert fallback menu helpers.
+  - Generated `setup.php` now writes route/location data through PHP-safe `json_decode(...)` string literals.
+  - Elementor visual-fidelity runtime now includes `setupWhipifyElementorRadixAccordions()` for Radix-style FAQ buttons inside HTML fallback widgets.
+  - The Radix FAQ runtime hydrates empty answer panels from `window.FAQ_DATA`, keeps all answers visually closed on load, and closes sibling answers so only one answer remains open per accordion group.
+  - For the deployed Duty Cleaners package, `faq-data.js` was enriched with 18 main FAQ-page answers from the original React source plus the existing city FAQ entries, resulting in 33 FAQ entries.
+- Live result: Uploaded and imported v4 theme package. Live `https://mikaily128.sg-host.com/faq/` now reports 18 FAQ buttons, 33 FAQ data entries, 0 open answers on load, 1 open answer after first click, and still 1 open answer after clicking the second question. A 99-route crawl found no missing headers, no missing footers, no non-home homepage-content leakage, and no FAQ regions open on load.
+- Evidence paths: logs/domain-parity-2026-05-06/live-verify-v4-radix-faq-one-open/faq-final.json; logs/domain-parity-2026-05-06/live-verify-v4-radix-faq-one-open/problems.json; logs/domain-parity-2026-05-06/live-deploy-v4-radix-faq-one-open/deploy-summary.json
+- Risk: Six crawled routes still have no `<h1>` and use heading-level `<h2>` for their main title. This was recorded as a residual SEO/semantics issue, not a duplicate-content/header/FAQ failure.
+
+## Elementor Live Header Routes, FAQ Scope, Locations, and Breadcrumbs - 2026-05-07
+
+- Changed files: components/Dashboard.tsx, utils/elementorPluginTemplates.ts, scripts/elementor-export-regression.mjs, generated theme artifacts under logs/regression-2026-05-07/theme-v5-faq-route-fix/
+- Reason: The live Elementor site still had user-visible regressions after the broader FAQ/domain pass: Edmonton FAQ behavior needed rechecking, `/faq/` needed to stay untouched, header dropdown links/routing needed to resolve the correct city pages, `/calgary/pricing/` and generic aliases needed to work, `/locations/` needed to stop looking broken, and nested location paths needed safe fallbacks.
+- Issue IDs fixed: AUD-EL-DOMAIN-027, AUD-EL-DOMAIN-028, AUD-EL-FAQ-029, AUD-EL-VISUAL-030
+- Changes:
+  - Added default route-prefix detection from generated `assets/data/menus.json`, preferring footer/region evidence over stale captured primary-menu URLs.
+  - Added title-aware menu URL normalization so visible menu labels such as `All Services`, `Pricing`, `Move In/Out Cleaning`, and `Post-Construction Cleaning` resolve to the intended default region routes.
+  - Reordered generic alias fallback so `/services/`, `/pricing/`, `/move-in-move-out-cleaning/`, and `/post-construction-cleaning/` prefer the detected default prefix before generic suffix matching.
+  - Preserved explicit city aliases such as `/calgary/pricing/` resolving to `/calgary-pricing/`.
+  - Added nested `/locations/*` fallback to the canonical `/locations/` page.
+  - Added stronger breadcrumb sibling spacing CSS after Elementor widget margin resets.
+  - Added regression coverage for route-prefix detection, title-aware menu routing, child menu item title passing, direct route fallback ordering, and breadcrumb spacing selectors.
+  - Rebuilt and deployed the final v11 generated Elementor theme package.
+- Live result: Final v11 verification shows header dropdown links route to Edmonton canonical pages, `/services/` and `/pricing/` resolve to Edmonton pages, `/calgary/pricing/` still resolves to Calgary pricing, `/locations/airdrie/` falls back to `/locations/`, Edmonton FAQ answers are closed on load and one-open on click, `/locations/` breadcrumb spacing is corrected, and the broad live/reference crawl found no live 404s or missing reference paths.
+- Evidence paths: logs/regression-2026-05-07/live-post-deploy-v11-final-verify-1778144579915/verification.json; logs/regression-2026-05-07/live-post-deploy-v11-final-verify-1778144579915/edmonton.png; logs/regression-2026-05-07/live-post-deploy-v11-final-verify-1778144579915/locations.png; logs/regression-2026-05-07/live-post-deploy-v9-crawl-1778144038668/crawl-full.json
+- Risk: This checkpoint fixed and verified the reported route/FAQ/menu/location regressions and ran a broad crawl. It did not claim pixel-perfect visual equivalence for every crawled page; full SaaS-grade visual parity still requires automated screenshot-diff coverage across all route templates.
+
+## Elementor Edmonton Mobile Visual Parity V41 - 2026-05-10
+
+- Changed files: `components/Dashboard.tsx`, `utils/elementorPluginTemplates.ts`, `scripts/elementor-export-regression.mjs`, `scripts/elementor-visual-parity-regression.mjs`, generated v41 theme/importer artifacts under `logs/regression-2026-05-07/theme-v12-saas-parity/`
+- Reason: Live `/edmonton/` had remaining mobile visual drift against the static reference and the screenshot harness captured lazy gallery images too early.
+- Issue IDs fixed: AUD-EL-VISUAL-031
+- Changes:
+  - Added a guarded mobile-only visual-fidelity runtime repair for the converted Edmonton long-form section rhythm.
+  - Kept desktop behavior untouched by gating the repair behind `(max-width: 767px)`.
+  - Restored source-style case-study card headers with service badges/title/location while preserving standalone editable Feature Card widgets.
+  - Restored `.text-accent` color inside custom Feature Card body HTML.
+  - Updated the visual parity harness to force eager image loading and wait for image load/decode before screenshots.
+  - Bumped/deployed Whipify Elementor Importer to `1.3.52` and generated Elementor theme to `1.0.41`.
+- Live result: Targeted parity for `/edmonton-pricing/`, `/edmonton/`, and `/locations/` passed across desktop and mobile with `failureCount: 0`.
+- Risk: The broader 25-page crawl still has 12 failures; see AUD-EL-VISUAL-032.
+
+## Elementor SaaS Visual + Interaction Parity V81 - 2026-05-13
+
+- Changed files: `components/Dashboard.tsx`, `utils/elementorPluginTemplates.ts`, `scripts/elementor-export-regression.mjs`, `scripts/elementor-visual-parity-regression.mjs`
+- Reason: Continuing AUD-EL-VISUAL-032 showed the broader 25-page visual crawl still needed durable parity coverage and the live FAQ interaction smoke exposed missing Radix accordion hydration in the active installed theme/importer combination.
+- Issue IDs fixed: AUD-EL-VISUAL-032, AUD-EL-VISUAL-033, AUD-EL-FAQ-034
+- Changes:
+  - Added importer and generated-theme mobile CSS for move-out service-card source heights.
+  - Added a scoped Radix FAQ closed-row normalizer that only touches move-out FAQ sections and leaves pricing FAQ rows at source height.
+  - Added importer-bundled Radix FAQ accordion hydration for older installed themes that do not define `setupWhipifyElementorRadixAccordions`.
+  - Added safer Radix accordion item/group detection so sibling panels close correctly.
+  - Added FAQ lookup hardening with token-overlap matching plus scoped common move-out fallback answers for older generated `faq-data.js` files missing page-specific move-out answers.
+  - Updated the visual parity harness to classify effectively blank reference pages instead of failing valid live pages against blank reference screenshots.
+  - Bumped and deployed the active live Whipify Elementor Importer to `1.3.81`.
+- Live result: Active live importer is `1.3.81`. Targeted visual parity for `/edmonton-pricing/`, `/edmonton-move-in-move-out-cleaning/`, `/blog/`, and `/calgary/` passed across desktop/mobile. Broad 25-page visual parity crawl passed across desktop/mobile with `failureCount: 0`. Live interaction smoke passed for pricing tabs, pricing FAQ, move-out FAQ, and Calgary header route/phone localization.
+- Evidence paths: `logs/regression-2026-05-07/visual-parity-v81-targeted/summary.json`; `logs/regression-2026-05-07/visual-parity-v81-broader-crawl-25/summary.json`; generated importer package under `logs/regression-2026-05-07/theme-v12-saas-parity/plugin-v81-faq-answer-hydrator/`.
+- Risk: The reference domain has blank responses for some Calgary/location alias pages; the visual parity harness now records those as `reference-blank` instead of pixel-comparing against empty screenshots. Older inactive Whipify Elementor Importer folders remain installed in wp-admin and should stay inactive.

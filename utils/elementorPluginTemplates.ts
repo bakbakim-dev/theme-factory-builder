@@ -3,14 +3,14 @@ export const ELEMENTOR_IMPORTER_PLUGIN_FILES: Record<string, string> = {
 /**
  * Plugin Name: Whipify Elementor Importer
  * Description: Imports Theme Factory Elementor-native page data into real WordPress pages.
- * Version: 1.3.19
+ * Version: 1.3.81
  * Author: Theme Factory AI
  * Text Domain: whipify-elementor-importer
  */
 
 if (!defined('ABSPATH')) exit;
 
-define('WEI_VERSION', '1.3.19');
+define('WEI_VERSION', '1.3.81');
 
 $whipify_elementor_widget_runtime = plugin_dir_path(__FILE__) . 'includes/whipify-elementor-widgets.php';
 if (file_exists($whipify_elementor_widget_runtime)) {
@@ -250,7 +250,8 @@ if (!function_exists('whipify_elementor_feature_grid_render_card_body')) {
         } elseif ($leading_body_icon !== '') {
             whipify_elementor_feature_grid_render_leading_body_icon($leading_body_icon, $card);
         } elseif (!$body_owns_header && !empty($card['card_icon_html'])) {
-            echo '<div class="whipify-feature-grid__icon">' . whipify_elementor_kses_svg($card['card_icon_html']) . '</div>';
+            $icon_classes = !empty($card['card_icon_class_name']) ? ' ' . $card['card_icon_class_name'] : '';
+            echo '<div class="whipify-feature-grid__icon' . esc_attr($icon_classes) . '">' . whipify_elementor_kses_svg($card['card_icon_html']) . '</div>';
         }
 
         if ($body_owns_header) {
@@ -858,6 +859,11 @@ if (
                 'type' => \\Elementor\\Controls_Manager::TEXTAREA,
                 'default' => '',
             ));
+            $repeater->add_control('card_icon_class_name', array(
+                'label' => __('Source icon frame classes', 'whipify-elementor-importer'),
+                'type' => \\Elementor\\Controls_Manager::HIDDEN,
+                'default' => '',
+            ));
             $repeater->add_control('card_class_name', array(
                 'label' => __('Source card classes', 'whipify-elementor-importer'),
                 'type' => \\Elementor\\Controls_Manager::HIDDEN,
@@ -906,7 +912,8 @@ if (
             } elseif ($leading_body_icon !== '') {
                 whipify_elementor_feature_grid_render_leading_body_icon($leading_body_icon, $card);
             } elseif (!$body_owns_header && !empty($card['card_icon_html'])) {
-                echo '<div class="whipify-feature-grid__icon">' . whipify_elementor_kses_svg($card['card_icon_html']) . '</div>';
+                $icon_classes = !empty($card['card_icon_class_name']) ? ' ' . $card['card_icon_class_name'] : '';
+                echo '<div class="whipify-feature-grid__icon' . esc_attr($icon_classes) . '">' . whipify_elementor_kses_svg($card['card_icon_html']) . '</div>';
             }
 
             if ($body_owns_header) {
@@ -1073,7 +1080,7 @@ if (
                                 <# } else if ( leadingBodyIcon ) { #>
                                     {{{ leadingBodyIcon }}}
                                 <# } else if ( card.card_icon_html ) { #>
-                                    <div class="whipify-feature-grid__icon">{{{ card.card_icon_html }}}</div>
+                                    <div class="whipify-feature-grid__icon {{{ card.card_icon_class_name || '' }}}">{{{ card.card_icon_html }}}</div>
                                 <# } #>
                                 <# if ( card.card_title ) { #><h3 {{{ view.getRenderAttributeString( cardTitleKey ) }}}>{{{ card.card_title }}}</h3><# } #>
                                 <# if ( bodyHtml ) { #><div {{{ view.getRenderAttributeString( cardBodyKey ) }}}>{{{ bodyHtml }}}</div><# } else if ( card.card_text ) { #><p {{{ view.getRenderAttributeString( cardTextKey ) }}}>{{{ card.card_text }}}</p><# } #>
@@ -1088,6 +1095,183 @@ if (
                     <# } #>
                 </div>
             </section>
+            <?php
+        }
+    }
+}
+
+if (
+    class_exists('\\\\Elementor\\\\Widget_Base') &&
+    class_exists('\\\\Elementor\\\\Controls_Manager') &&
+    !class_exists('Whipify_Elementor_Location_Card_Widget_V139')
+) {
+    class Whipify_Elementor_Location_Card_Widget_V139 extends \\Elementor\\Widget_Base {
+        public function get_name() {
+            return 'whipify_location_card';
+        }
+
+        public function get_title() {
+            return __('Whipify Location Card', 'whipify-elementor-importer');
+        }
+
+        public function get_icon() {
+            return 'eicon-map-pin';
+        }
+
+        public function get_categories() {
+            return array('general');
+        }
+
+        protected function register_controls() {
+            $this->start_controls_section('content_section', array(
+                'label' => __('Content', 'whipify-elementor-importer'),
+                'tab' => \\Elementor\\Controls_Manager::TAB_CONTENT,
+            ));
+
+            $this->add_control('city_name', array(
+                'label' => __('City', 'whipify-elementor-importer'),
+                'type' => \\Elementor\\Controls_Manager::TEXT,
+                'default' => '',
+            ));
+
+            $this->add_control('rating_text', array(
+                'label' => __('Rating', 'whipify-elementor-importer'),
+                'type' => \\Elementor\\Controls_Manager::TEXT,
+                'default' => '',
+            ));
+
+            $this->add_control('region_text', array(
+                'label' => __('Region', 'whipify-elementor-importer'),
+                'type' => \\Elementor\\Controls_Manager::TEXT,
+                'default' => '',
+            ));
+
+            $this->add_control('phone_text', array(
+                'label' => __('Phone', 'whipify-elementor-importer'),
+                'type' => \\Elementor\\Controls_Manager::TEXT,
+                'default' => '',
+            ));
+
+            $this->add_control('reviews_text', array(
+                'label' => __('Reviews', 'whipify-elementor-importer'),
+                'type' => \\Elementor\\Controls_Manager::TEXT,
+                'default' => '',
+            ));
+
+            $this->add_control('experience_text', array(
+                'label' => __('Experience', 'whipify-elementor-importer'),
+                'type' => \\Elementor\\Controls_Manager::TEXT,
+                'default' => '',
+            ));
+
+            $this->add_control('button_text', array(
+                'label' => __('Button label', 'whipify-elementor-importer'),
+                'type' => \\Elementor\\Controls_Manager::TEXT,
+                'default' => 'View Services',
+            ));
+
+            $this->add_control('card_url', array(
+                'label' => __('Link', 'whipify-elementor-importer'),
+                'type' => \\Elementor\\Controls_Manager::URL,
+                'default' => array('url' => ''),
+            ));
+
+            $this->add_control('variant', array(
+                'label' => __('Variant', 'whipify-elementor-importer'),
+                'type' => \\Elementor\\Controls_Manager::HIDDEN,
+                'default' => 'default',
+            ));
+
+            $this->add_control('source_class_name', array(
+                'label' => __('Source link classes', 'whipify-elementor-importer'),
+                'type' => \\Elementor\\Controls_Manager::HIDDEN,
+                'default' => '',
+            ));
+
+            $this->add_control('card_class_name', array(
+                'label' => __('Source card classes', 'whipify-elementor-importer'),
+                'type' => \\Elementor\\Controls_Manager::HIDDEN,
+                'default' => '',
+            ));
+
+            $this->end_controls_section();
+        }
+
+        private function icon_svg($name, $class_name) {
+            $attrs = ' xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="' . esc_attr($class_name) . '"';
+            if ($name === 'star') {
+                return '<svg' . $attrs . '><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"></path></svg>';
+            }
+            if ($name === 'pin') {
+                return '<svg' . $attrs . '><path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"></path><circle cx="12" cy="10" r="3"></circle></svg>';
+            }
+            if ($name === 'phone') {
+                return '<svg' . $attrs . '><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>';
+            }
+            if ($name === 'clock') {
+                return '<svg' . $attrs . '><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>';
+            }
+            return '<svg' . $attrs . '><path d="M5 12h14"></path><path d="m12 5 7 7-7 7"></path></svg>';
+        }
+
+        private function default_card_classes($variant) {
+            if ($variant === 'calgary') {
+                return 'bg-gradient-to-br from-[hsl(260,100%,55%)] to-[hsl(240,100%,45%)] rounded-2xl p-8 text-white hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 relative overflow-hidden';
+            }
+
+            return 'bg-gradient-to-br from-[hsl(160,100%,35%)] to-[hsl(160,100%,25%)] rounded-2xl p-8 text-white hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 relative overflow-hidden';
+        }
+
+        protected function render() {
+            $settings = $this->get_settings_for_display();
+            $variant = sanitize_html_class($settings['variant'] ?? 'default');
+            $source_classes = !empty($settings['source_class_name']) ? ' ' . $settings['source_class_name'] : ' group block';
+            $card_classes = !empty($settings['card_class_name']) ? $settings['card_class_name'] : $this->default_card_classes($variant);
+            $url = !empty($settings['card_url']['url']) ? $settings['card_url']['url'] : '#';
+            $button_color = $variant === 'calgary' ? 'rgb(79, 0, 230)' : 'rgb(0, 153, 102)';
+
+            foreach (array('city_name', 'rating_text', 'region_text', 'phone_text', 'reviews_text', 'experience_text', 'button_text') as $key) {
+                $this->add_inline_editing_attributes($key, 'none');
+            }
+
+            echo '<a class="whipify-location-card' . esc_attr($source_classes) . '" href="' . esc_url($url) . '">';
+            echo '<div class="whipify-location-card__surface ' . esc_attr($card_classes) . '" data-whipify-location-card="1">';
+            echo '<div class="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>';
+            echo '<div class="relative z-10">';
+            echo '<div class="flex items-center justify-between mb-3">';
+            echo '<h3 class="text-3xl md:text-4xl font-bold" ' . $this->get_render_attribute_string('city_name') . '>' . esc_html($settings['city_name'] ?? '') . '</h3>';
+            echo '<div class="flex items-center gap-1 bg-white/20 px-3 py-1 rounded-full">' . $this->icon_svg('star', 'lucide lucide-star w-5 h-5 fill-yellow-300 text-yellow-300') . '<span class="font-bold text-lg" ' . $this->get_render_attribute_string('rating_text') . '>' . esc_html($settings['rating_text'] ?? '') . '</span></div>';
+            echo '</div>';
+            echo '<div class="flex items-center gap-2 text-white/80 mb-6">' . $this->icon_svg('pin', 'lucide lucide-map-pin w-4 h-4') . '<span class="text-sm font-medium" ' . $this->get_render_attribute_string('region_text') . '>' . esc_html($settings['region_text'] ?? '') . '</span></div>';
+            echo '<div class="flex items-center gap-2 mb-6">' . $this->icon_svg('phone', 'lucide lucide-phone w-5 h-5') . '<span class="text-xl font-bold" ' . $this->get_render_attribute_string('phone_text') . '>' . esc_html($settings['phone_text'] ?? '') . '</span></div>';
+            echo '<div class="space-y-2 mb-6">';
+            echo '<div class="flex items-center gap-2 text-white/90">' . $this->icon_svg('star', 'lucide lucide-star w-4 h-4') . '<span ' . $this->get_render_attribute_string('reviews_text') . '>' . esc_html($settings['reviews_text'] ?? '') . '</span></div>';
+            echo '<div class="flex items-center gap-2 text-white/90">' . $this->icon_svg('clock', 'lucide lucide-clock w-4 h-4') . '<span ' . $this->get_render_attribute_string('experience_text') . '>' . esc_html($settings['experience_text'] ?? '') . '</span></div>';
+            echo '</div>';
+            echo '<div class="whipify-location-card__button inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-4 py-2 w-full bg-white font-semibold text-lg h-12 transition-all" style="color: ' . esc_attr($button_color) . '"><span ' . $this->get_render_attribute_string('button_text') . '>' . esc_html($settings['button_text'] ?? 'View Services') . '</span>' . $this->icon_svg('arrow', 'lucide lucide-arrow-right w-5 h-5 ml-2') . '</div>';
+            echo '</div></div></a>';
+        }
+
+        protected function content_template() {
+            ?>
+            <a class="whipify-location-card {{{ settings.source_class_name || 'group block' }}}" href="{{ settings.card_url && settings.card_url.url ? settings.card_url.url : '#' }}">
+                <div class="whipify-location-card__surface {{{ settings.card_class_name || '' }}}" data-whipify-location-card="1">
+                    <div class="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
+                    <div class="relative z-10">
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-3xl md:text-4xl font-bold">{{{ settings.city_name }}}</h3>
+                            <div class="flex items-center gap-1 bg-white/20 px-3 py-1 rounded-full"><span class="font-bold text-lg">{{{ settings.rating_text }}}</span></div>
+                        </div>
+                        <div class="flex items-center gap-2 text-white/80 mb-6"><span class="text-sm font-medium">{{{ settings.region_text }}}</span></div>
+                        <div class="flex items-center gap-2 mb-6"><span class="text-xl font-bold">{{{ settings.phone_text }}}</span></div>
+                        <div class="space-y-2 mb-6">
+                            <div class="flex items-center gap-2 text-white/90"><span>{{{ settings.reviews_text }}}</span></div>
+                            <div class="flex items-center gap-2 text-white/90"><span>{{{ settings.experience_text }}}</span></div>
+                        </div>
+                        <div class="whipify-location-card__button inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md px-4 py-2 w-full bg-white font-semibold text-lg h-12 transition-all"><span>{{{ settings.button_text || 'View Services' }}}</span></div>
+                    </div>
+                </div>
+            </a>
             <?php
         }
     }
@@ -1163,6 +1347,12 @@ if (
                 'default' => '',
             ));
 
+            $this->add_control('card_icon_class_name', array(
+                'label' => __('Source icon frame classes', 'whipify-elementor-importer'),
+                'type' => \\Elementor\\Controls_Manager::HIDDEN,
+                'default' => '',
+            ));
+
             $this->add_control('card_class_name', array(
                 'label' => __('Source card classes', 'whipify-elementor-importer'),
                 'type' => \\Elementor\\Controls_Manager::HIDDEN,
@@ -1197,7 +1387,8 @@ if (
             } elseif ($leading_body_icon !== '') {
                 whipify_elementor_feature_grid_render_leading_body_icon($leading_body_icon, $card);
             } elseif (!$body_owns_header && !empty($card['card_icon_html'])) {
-                echo '<div class="whipify-feature-grid__icon">' . whipify_elementor_kses_svg($card['card_icon_html']) . '</div>';
+                $icon_classes = !empty($card['card_icon_class_name']) ? ' ' . $card['card_icon_class_name'] : '';
+                echo '<div class="whipify-feature-grid__icon' . esc_attr($icon_classes) . '">' . whipify_elementor_kses_svg($card['card_icon_html']) . '</div>';
             }
 
             if ($body_owns_header) {
@@ -1263,7 +1454,7 @@ if (
                 <# if ( settings.card_image && settings.card_image.url ) { #>
                     <img class="whipify-feature-grid__image" src="{{ settings.card_image.url }}" alt="{{ settings.card_image.alt || '' }}">
                 <# } else if ( settings.card_icon_html ) { #>
-                    <div class="whipify-feature-grid__icon">{{{ settings.card_icon_html }}}</div>
+                    <div class="whipify-feature-grid__icon {{{ settings.card_icon_class_name || '' }}}">{{{ settings.card_icon_html }}}</div>
                 <# } #>
                 <# if ( settings.card_title ) { #><h3 {{{ view.getRenderAttributeString( 'card_title' ) }}}>{{{ settings.card_title }}}</h3><# } #>
                 <# if ( settings.card_body_html ) { #><div {{{ view.getRenderAttributeString( 'card_body_html' ) }}}>{{{ settings.card_body_html }}}</div><# } else if ( settings.card_text ) { #><p {{{ view.getRenderAttributeString( 'card_text' ) }}}>{{{ settings.card_text }}}</p><# } #>
@@ -1342,6 +1533,11 @@ if (
                 'label' => __('Interval', 'whipify-elementor-importer'),
                 'type' => \\Elementor\\Controls_Manager::TEXT,
                 'default' => '',
+            ));
+            $repeater->add_control('plan_price_position', array(
+                'label' => __('Source price position', 'whipify-elementor-importer'),
+                'type' => \\Elementor\\Controls_Manager::HIDDEN,
+                'default' => 'before_features',
             ));
             $repeater->add_control('plan_features', array(
                 'label' => __('Features', 'whipify-elementor-importer'),
@@ -1446,7 +1642,7 @@ if (
             echo '<div class="whipify-pricing-table__inner">';
 
             if (!empty($settings['section_title'])) {
-                echo '<h2 ' . $this->get_render_attribute_string('section_title') . '>' . esc_html($settings['section_title']) . '</h2>';
+                echo '<h2 ' . $this->get_render_attribute_string('section_title') . '>' . whipify_elementor_kses_post_with_svg($settings['section_title']) . '</h2>';
             }
 
             if (!empty($settings['section_intro'])) {
@@ -1529,6 +1725,7 @@ if (
                 $this->add_inline_editing_attributes($cta_text_key, 'none');
                 $plan_classes = !empty($plan['plan_class_name']) ? ' ' . $plan['plan_class_name'] : '';
                 $highlighted_class = !empty($plan['is_highlighted']) ? ' is-highlighted' : '';
+                $plan_price_position = !empty($plan['plan_price_position']) ? $plan['plan_price_position'] : 'before_features';
                 echo '<article class="whipify-pricing-table__plan' . esc_attr($highlighted_class . $plan_classes) . '">';
 
                 if (!empty($plan['plan_name'])) {
@@ -1539,7 +1736,7 @@ if (
                     echo '<p class="whipify-pricing-table__description" ' . $this->get_render_attribute_string($plan_description_key) . '>' . esc_html($plan['plan_description']) . '</p>';
                 }
 
-                if (!empty($plan['plan_price'])) {
+                if ($plan_price_position !== 'after_features' && !empty($plan['plan_price'])) {
                     echo '<div class="whipify-pricing-table__price"><span ' . $this->get_render_attribute_string($plan_price_key) . '>' . esc_html($plan['plan_price']) . '</span>';
                     if (!empty($plan['plan_interval'])) {
                         echo '<span ' . $this->get_render_attribute_string($plan_interval_key) . '>' . esc_html($plan['plan_interval']) . '</span>';
@@ -1557,6 +1754,14 @@ if (
                         }
                     }
                     echo '</ul>';
+                }
+
+                if ($plan_price_position === 'after_features' && !empty($plan['plan_price'])) {
+                    echo '<div class="whipify-pricing-table__price"><span ' . $this->get_render_attribute_string($plan_price_key) . '>' . esc_html($plan['plan_price']) . '</span>';
+                    if (!empty($plan['plan_interval'])) {
+                        echo '<span ' . $this->get_render_attribute_string($plan_interval_key) . '>' . esc_html($plan['plan_interval']) . '</span>';
+                    }
+                    echo '</div>';
                 }
 
                 if (!empty($plan['cta_url']['url']) && !empty($plan['cta_text'])) {
@@ -1665,7 +1870,7 @@ if (
                             <article class="whipify-pricing-table__plan <# if ( plan.is_highlighted ) { #>is-highlighted<# } #> {{{ plan.plan_class_name }}}">
                                 <# if ( plan.plan_name ) { #><h3 {{{ view.getRenderAttributeString( planNameKey ) }}}>{{{ plan.plan_name }}}</h3><# } #>
                                 <# if ( plan.plan_description ) { #><p class="whipify-pricing-table__description" {{{ view.getRenderAttributeString( planDescriptionKey ) }}}>{{{ plan.plan_description }}}</p><# } #>
-                                <# if ( plan.plan_price ) { #>
+                                <# if ( plan.plan_price && plan.plan_price_position !== 'after_features' ) { #>
                                     <div class="whipify-pricing-table__price"><span {{{ view.getRenderAttributeString( planPriceKey ) }}}>{{{ plan.plan_price }}}</span><# if ( plan.plan_interval ) { #><span {{{ view.getRenderAttributeString( planIntervalKey ) }}}>{{{ plan.plan_interval }}}</span><# } #></div>
                                 <# } #>
                                 <# if ( plan.plan_features ) { #>
@@ -1674,6 +1879,9 @@ if (
                                             <li>{{{ feature.trim() }}}</li>
                                         <# } }); #>
                                     </ul>
+                                <# } #>
+                                <# if ( plan.plan_price && plan.plan_price_position === 'after_features' ) { #>
+                                    <div class="whipify-pricing-table__price"><span {{{ view.getRenderAttributeString( planPriceKey ) }}}>{{{ plan.plan_price }}}</span><# if ( plan.plan_interval ) { #><span {{{ view.getRenderAttributeString( planIntervalKey ) }}}>{{{ plan.plan_interval }}}</span><# } #></div>
                                 <# } #>
                                 <# if ( plan.cta_url && plan.cta_url.url && plan.cta_text ) { #>
                                     <a {{{ view.getRenderAttributeString( planCtaTextKey ) }}}>{{{ plan.cta_text }}}</a>
@@ -2921,11 +3129,17 @@ final class Whipify_Elementor_Importer {
         add_action('admin_post_whipify_elementor_import', array(__CLASS__, 'handle_import'));
         add_action('elementor/widgets/register', array(__CLASS__, 'register_generated_widgets'), 30);
         add_action('wp_enqueue_scripts', array(__CLASS__, 'enqueue_visual_fidelity_assets'), 99);
+        add_action('wp_head', array(__CLASS__, 'print_editor_faq_answer_visibility_css'), 1000);
+        add_action('wp_footer', array(__CLASS__, 'print_editor_faq_answer_visibility_js'), 1000);
         add_filter('body_class', array(__CLASS__, 'add_visual_fidelity_body_class'));
 
         if (defined('WP_CLI') && WP_CLI) {
             WP_CLI::add_command('whipify-elementor import', array(__CLASS__, 'cli_import'));
         }
+    }
+
+    public static function repair_faq_answer_widgets_on_activation() {
+        self::repair_faq_answer_widgets_for_existing_pages();
     }
 
     private static function is_whipify_elementor_page() {
@@ -2988,6 +3202,67 @@ final class Whipify_Elementor_Importer {
         }
     }
 
+    public static function print_editor_faq_answer_visibility_css() {
+        if (!isset($_GET['elementor-preview'])) {
+            return;
+        }
+        ?>
+        <style id="whipify-elementor-editor-faq-answer-visibility">
+        body.elementor-editor-active.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget.whipify-faq-answer {
+            display: block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            height: auto !important;
+            max-height: none !important;
+        }
+        body.elementor-editor-active.whipify-elementor-visual-fidelity-mode .elementor .whipify-faq-answer > .elementor-widget-container {
+            display: block !important;
+        }
+        </style>
+        <?php
+    }
+
+    public static function print_editor_faq_answer_visibility_js() {
+        if (!isset($_GET['elementor-preview'])) {
+            return;
+        }
+        ?>
+        <script id="whipify-elementor-editor-faq-answer-visibility-js">
+        (function () {
+            function showFaqAnswerWidgets() {
+                if (!document.body || !document.body.classList.contains('elementor-editor-active')) {
+                    return;
+                }
+
+                document.querySelectorAll('.elementor-widget.whipify-faq-answer').forEach(function (answer) {
+                    answer.hidden = false;
+                    answer.removeAttribute('hidden');
+                    answer.setAttribute('aria-hidden', 'false');
+                    answer.style.display = 'block';
+                    answer.style.visibility = 'visible';
+                    answer.style.opacity = '1';
+                    answer.style.height = 'auto';
+                    answer.style.maxHeight = 'none';
+                });
+            }
+
+            showFaqAnswerWidgets();
+            document.addEventListener('DOMContentLoaded', showFaqAnswerWidgets);
+            window.addEventListener('load', showFaqAnswerWidgets);
+            window.setTimeout(showFaqAnswerWidgets, 300);
+            window.setTimeout(showFaqAnswerWidgets, 1200);
+
+            if ('MutationObserver' in window) {
+                new MutationObserver(showFaqAnswerWidgets).observe(document.documentElement, {
+                    childList: true,
+                    subtree: true
+                });
+            }
+        })();
+        </script>
+        <?php
+    }
+
     private static function has_registered_visual_fidelity_asset($type) {
         $registry = $type === 'script' ? wp_scripts() : wp_styles();
         $needle = $type === 'script'
@@ -3036,6 +3311,7 @@ final class Whipify_Elementor_Importer {
             'Whipify_Elementor_Map_Embed_Widget_V139',
             'Whipify_Elementor_Feature_Grid_Widget_V139',
             'Whipify_Elementor_Feature_Card_Widget_V139',
+            'Whipify_Elementor_Location_Card_Widget_V139',
             'Whipify_Elementor_Pricing_Table_Widget_V139',
             'Whipify_Elementor_Testimonial_Grid_Widget_V139',
             'Whipify_Elementor_Cta_Section_Widget_V139',
@@ -3299,6 +3575,90 @@ final class Whipify_Elementor_Importer {
 
             if (!empty($element['elements']) && is_array($element['elements'])) {
                 $element['elements'] = self::upgrade_feature_grid_widgets_to_card_widgets($element['elements']);
+            }
+
+            $upgraded[] = $element;
+        }
+
+        return $upgraded;
+    }
+
+    private static function location_card_default_classes($variant) {
+        return $variant === 'calgary'
+            ? 'bg-gradient-to-br from-[hsl(260,100%,55%)] to-[hsl(240,100%,45%)] rounded-2xl p-8 text-white hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 relative overflow-hidden'
+            : 'bg-gradient-to-br from-[hsl(160,100%,35%)] to-[hsl(160,100%,25%)] rounded-2xl p-8 text-white hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 relative overflow-hidden';
+    }
+
+    private static function location_card_settings_from_legacy_button($element) {
+        if (
+            !is_array($element)
+            || ($element['elType'] ?? '') !== 'widget'
+            || ($element['widgetType'] ?? '') !== 'button'
+            || empty($element['settings'])
+            || !is_array($element['settings'])
+        ) {
+            return null;
+        }
+
+        $classes = (string) ($element['settings']['_css_classes'] ?? '');
+        $text = trim(preg_replace('/\\s+/', ' ', wp_strip_all_tags((string) ($element['settings']['text'] ?? ''))));
+        if (strpos($classes, 'group block') === false || $text === '' || strpos($text, 'View Services') === false) {
+            return null;
+        }
+
+        $city = '';
+        if (stripos($text, 'Edmonton') === 0 || stripos($text, 'Edmonton ') !== false) {
+            $city = 'Edmonton';
+        } elseif (stripos($text, 'Calgary') === 0 || stripos($text, 'Calgary ') !== false) {
+            $city = 'Calgary';
+        }
+
+        if ($city === '') {
+            return null;
+        }
+
+        $variant = strtolower($city);
+        preg_match('/\\b\\d(?:\\.\\d)?\\b/', $text, $rating_match);
+        preg_match('/\\b[A-Z]{2}\\b/', $text, $region_match);
+        preg_match('/\\(?\\d{3}\\)?[\\s-]?\\d{3}-\\d{4}/', $text, $phone_match);
+        preg_match('/\\d+\\+\\s*Reviews/i', $text, $reviews_match);
+        preg_match('/\\d+\\+\\s*Years\\s*Experience/i', $text, $experience_match);
+        $link = is_array($element['settings']['link'] ?? null) ? $element['settings']['link'] : array();
+
+        return array(
+            'city_name' => $city,
+            'rating_text' => $rating_match[0] ?? '',
+            'region_text' => $region_match[0] ?? 'AB',
+            'phone_text' => $phone_match[0] ?? '',
+            'reviews_text' => $reviews_match[0] ?? '',
+            'experience_text' => $experience_match[0] ?? '',
+            'button_text' => 'View Services',
+            'card_url' => array('url' => (string) ($link['url'] ?? '')),
+            'variant' => $variant,
+            'source_class_name' => $classes,
+            'card_class_name' => self::location_card_default_classes($variant),
+        );
+    }
+
+    private static function upgrade_location_card_button_widgets($elements) {
+        if (!is_array($elements)) {
+            return $elements;
+        }
+
+        $upgraded = array();
+        foreach ($elements as $element) {
+            if (!is_array($element)) {
+                continue;
+            }
+
+            $location_settings = self::location_card_settings_from_legacy_button($element);
+            if (is_array($location_settings)) {
+                $upgraded[] = self::migrated_elementor_widget(($element['id'] ?? 'location-card') . ':location-card', 'whipify_location_card', $location_settings);
+                continue;
+            }
+
+            if (!empty($element['elements']) && is_array($element['elements'])) {
+                $element['elements'] = self::upgrade_location_card_button_widgets($element['elements']);
             }
 
             $upgraded[] = $element;
@@ -3604,6 +3964,210 @@ final class Whipify_Elementor_Importer {
         return $elements;
     }
 
+    private static function read_faq_data_for_editor_repair() {
+        $paths = array(
+            trailingslashit(get_stylesheet_directory()) . 'assets/js/faq-data.js',
+            trailingslashit(get_template_directory()) . 'assets/js/faq-data.js',
+        );
+
+        foreach ($paths as $path) {
+            if (!file_exists($path)) {
+                continue;
+            }
+
+            $raw = file_get_contents($path);
+            if (!is_string($raw) || !preg_match('/window\\.FAQ_DATA\\s*=\\s*(\\[[\\s\\S]*?\\]);/m', $raw, $matches)) {
+                continue;
+            }
+
+            $decoded = json_decode($matches[1], true);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+        }
+
+        return array();
+    }
+
+    private static function normalize_faq_text_for_editor_repair($text) {
+        $text = html_entity_decode(wp_strip_all_tags((string) $text), ENT_QUOTES, get_bloginfo('charset'));
+        $text = strtolower($text);
+        $text = preg_replace('/[^a-z0-9\\s]/', ' ', $text);
+        $text = preg_replace('/\\s+/', ' ', $text);
+
+        return trim((string) $text);
+    }
+
+    private static function find_faq_answer_for_editor_repair($question, $faq_data) {
+        $normalized_question = self::normalize_faq_text_for_editor_repair($question);
+        if ($normalized_question === '' || !is_array($faq_data)) {
+            return '';
+        }
+
+        foreach ($faq_data as $item) {
+            $candidate = self::normalize_faq_text_for_editor_repair($item['q'] ?? '');
+            if ($candidate !== '' && $candidate === $normalized_question) {
+                return wp_kses_post($item['a'] ?? '');
+            }
+        }
+
+        foreach ($faq_data as $item) {
+            $candidate = self::normalize_faq_text_for_editor_repair($item['q'] ?? '');
+            if (
+                $candidate !== ''
+                && (
+                    strpos($candidate, $normalized_question) !== false
+                    || strpos($normalized_question, $candidate) !== false
+                    || substr($candidate, 0, 36) === substr($normalized_question, 0, 36)
+                )
+            ) {
+                return wp_kses_post($item['a'] ?? '');
+            }
+        }
+
+        return '';
+    }
+
+    private static function element_css_classes_for_editor_repair($element) {
+        if (empty($element['settings']) || !is_array($element['settings'])) {
+            return '';
+        }
+
+        return (string) ($element['settings']['_css_classes'] ?? $element['settings']['css_classes'] ?? '');
+    }
+
+    private static function element_is_faq_answer_for_editor_repair($element) {
+        return is_array($element)
+            && preg_match('/\\bwhipify-faq-answer\\b/', self::element_css_classes_for_editor_repair($element)) === 1;
+    }
+
+    private static function element_is_faq_trigger_for_editor_repair($element) {
+        if (
+            !is_array($element)
+            || ($element['elType'] ?? '') !== 'widget'
+            || ($element['widgetType'] ?? '') !== 'button'
+            || empty($element['settings'])
+            || !is_array($element['settings'])
+        ) {
+            return false;
+        }
+
+        return strpos(wp_strip_all_tags((string) ($element['settings']['text'] ?? '')), '?') !== false;
+    }
+
+    private static function create_faq_answer_widget_for_editor_repair($question, $answer) {
+        return array(
+            'id' => substr(md5('whipify-faq-answer:' . $question), 0, 8),
+            'elType' => 'widget',
+            'isInner' => false,
+            'widgetType' => 'text-editor',
+            'settings' => array(
+                '_css_classes' => 'whipify-faq-answer',
+                'editor' => wp_kses_post($answer),
+            ),
+            'elements' => array(),
+        );
+    }
+
+    private static function inject_faq_answer_widgets_for_editor_repair($elements, $faq_data, &$changed) {
+        if (!is_array($elements)) {
+            return $elements;
+        }
+
+        foreach ($elements as $index => $element) {
+            if (!is_array($element)) {
+                continue;
+            }
+
+            if (!empty($element['elements']) && is_array($element['elements'])) {
+                $children = self::inject_faq_answer_widgets_for_editor_repair($element['elements'], $faq_data, $changed);
+                $patched_children = array();
+
+                foreach ($children as $child_index => $child) {
+                    $patched_children[] = $child;
+
+                    if (!self::element_is_faq_trigger_for_editor_repair($child)) {
+                        continue;
+                    }
+
+                    $next_child = $children[$child_index + 1] ?? null;
+                    if (self::element_is_faq_answer_for_editor_repair($next_child)) {
+                        continue;
+                    }
+
+                    $question = (string) ($child['settings']['text'] ?? '');
+                    $answer = self::find_faq_answer_for_editor_repair($question, $faq_data);
+                    if ($answer === '') {
+                        continue;
+                    }
+
+                    $patched_children[] = self::create_faq_answer_widget_for_editor_repair($question, $answer);
+                    $changed = true;
+                }
+
+                $element['elements'] = $patched_children;
+            }
+
+            $elements[$index] = $element;
+        }
+
+        return $elements;
+    }
+
+    private static function repair_faq_answer_widgets_for_existing_pages() {
+        $faq_data = self::read_faq_data_for_editor_repair();
+        if (empty($faq_data)) {
+            return 0;
+        }
+
+        $post_ids = get_posts(array(
+            'post_type' => 'page',
+            'post_status' => 'any',
+            'fields' => 'ids',
+            'posts_per_page' => -1,
+            'meta_query' => array(
+                array(
+                    'key' => '_elementor_edit_mode',
+                    'value' => 'builder',
+                ),
+            ),
+        ));
+
+        $updated = 0;
+        foreach ($post_ids as $post_id) {
+            $raw = get_post_meta($post_id, '_elementor_data', true);
+            $data = is_string($raw) ? json_decode(wp_unslash($raw), true) : $raw;
+            if (!is_array($data)) {
+                continue;
+            }
+
+            $changed = false;
+            $patched = self::inject_faq_answer_widgets_for_editor_repair($data, $faq_data, $changed);
+            if (!$changed) {
+                continue;
+            }
+
+            update_post_meta($post_id, '_elementor_data', wp_slash(wp_json_encode($patched)));
+            update_post_meta($post_id, '_converter_faq_answer_editor_repair', WEI_VERSION);
+            self::clear_elementor_cache((int) $post_id);
+            $updated++;
+        }
+
+        update_option('whipify_elementor_faq_answer_editor_repair_version', WEI_VERSION, false);
+
+        return $updated;
+    }
+
+    private static function inject_faq_answer_widgets_into_import_data($elementor_data) {
+        $faq_data = self::read_faq_data_for_editor_repair();
+        if (empty($faq_data)) {
+            return $elementor_data;
+        }
+
+        $changed = false;
+        return self::inject_faq_answer_widgets_for_editor_repair($elementor_data, $faq_data, $changed);
+    }
+
     private static function sanitize_status($status) {
         $status = sanitize_key($status ?: 'publish');
         return in_array($status, array('publish', 'draft', 'private', 'pending'), true) ? $status : 'publish';
@@ -3721,10 +4285,12 @@ final class Whipify_Elementor_Importer {
         $page_settings = self::replace_theme_uri($page['pageSettings'] ?? array());
         $elementor_data = self::import_elementor_media($elementor_data);
         $elementor_data = self::upgrade_feature_grid_widgets_to_card_widgets($elementor_data);
+        $elementor_data = self::upgrade_location_card_button_widgets($elementor_data);
         $elementor_data = self::upgrade_svg_icon_widgets($elementor_data);
         $elementor_data = self::upgrade_text_fragment_widgets($elementor_data);
         $elementor_data = self::upgrade_neighborhood_list_widgets($elementor_data);
         $elementor_data = self::upgrade_remaining_html_widgets($elementor_data);
+        $elementor_data = self::inject_faq_answer_widgets_into_import_data($elementor_data);
         $page_settings = self::import_elementor_media($page_settings);
 
         if (class_exists('\\\\Elementor\\\\Plugin') && isset(\\Elementor\\Plugin::$instance->documents)) {
@@ -3769,10 +4335,12 @@ final class Whipify_Elementor_Importer {
     private static function save_elementor_template($post_id, $template) {
         $elementor_data = self::import_elementor_media(self::replace_theme_uri($template['elementorData'] ?? array()));
         $elementor_data = self::upgrade_feature_grid_widgets_to_card_widgets($elementor_data);
+        $elementor_data = self::upgrade_location_card_button_widgets($elementor_data);
         $elementor_data = self::upgrade_svg_icon_widgets($elementor_data);
         $elementor_data = self::upgrade_text_fragment_widgets($elementor_data);
         $elementor_data = self::upgrade_neighborhood_list_widgets($elementor_data);
         $elementor_data = self::upgrade_remaining_html_widgets($elementor_data);
+        $elementor_data = self::inject_faq_answer_widgets_into_import_data($elementor_data);
         $page_settings = self::import_elementor_media(self::replace_theme_uri($template['pageSettings'] ?? array()));
 
         update_post_meta($post_id, '_elementor_edit_mode', 'builder');
@@ -3929,6 +4497,7 @@ final class Whipify_Elementor_Importer {
         }
 
         $template_result = self::import_templates($manifest);
+        self::repair_faq_answer_widgets_for_existing_pages();
 
         return array(
             'imported' => $count,
@@ -3938,13 +4507,14 @@ final class Whipify_Elementor_Importer {
     }
 }
 
+register_activation_hook(__FILE__, array('Whipify_Elementor_Importer', 'repair_faq_answer_widgets_on_activation'));
 Whipify_Elementor_Importer::init();
 `,
   'assets/css/whipify-elementor-visual-fidelity.css': `body.whipify-elementor-visual-fidelity-mode {
   --primary: 180 100% 25%;
   --accent: 14 100% 60%;
-  --foreground: 222 47% 11%;
-  --muted-foreground: 215 16% 47%;
+  --foreground: 220 13% 18%;
+  --muted-foreground: 220 9% 46%;
   --border: 214 32% 91%;
 }
 
@@ -3952,6 +4522,27 @@ Whipify_Elementor_Importer::init();
 .whipify-elementor-visual-fidelity-mode .elementor-section-wrap,
 .whipify-elementor-visual-fidelity-mode .elementor-widget-wrap {
   width: 100%;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .entry-content.e-con,
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.entry-content {
+  flex-direction: column !important;
+  align-items: stretch !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .entry-content.e-con > .elementor-widget-html,
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.entry-content > .elementor-widget-html {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .entry-content.e-con > .elementor-widget-html > div,
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.entry-content > .elementor-widget-html > div {
+  width: 100% !important;
+  max-width: 100% !important;
 }
 
 .whipify-elementor-visual-fidelity-mode .elementor .mx-auto,
@@ -3973,6 +4564,32 @@ Whipify_Elementor_Importer::init();
   justify-content: center !important;
 }
 
+body.whipify-elementor-visual-fidelity-mode .elementor h3.text-2xl.font-semibold.leading-none.tracking-tight,
+body.whipify-elementor-visual-fidelity-mode .elementor h3.text-2xl.leading-none {
+  line-height: 2rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor [class~="space-y-1.5"] > h3.font-semibold.tracking-tight.text-lg {
+  margin-bottom: 1rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.max-w-3xl.mx-auto.space-y-4:has(> .bg-white.rounded-xl.border-2) {
+  --gap: 0 !important;
+  gap: 0 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.max-w-3xl.mx-auto.space-y-4:has(> .bg-white.rounded-xl.border-2) > .bg-white.rounded-xl.border-2 {
+  margin-top: 0 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .border-b > h3.flex {
+  margin-bottom: 1rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .border-b + .border-b {
+  margin-top: 1.5rem !important;
+}
+
 .whipify-elementor-visual-fidelity-mode .elementor .e-con.grid,
 .whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="grid-cols"] {
   --display: grid;
@@ -3980,22 +4597,149 @@ Whipify_Elementor_Importer::init();
   grid-auto-rows: auto !important;
 }
 
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.grid.grid-cols-1 {
+  --e-con-grid-template-columns: repeat(1, minmax(0, 1fr)) !important;
+  grid-template-columns: repeat(1, minmax(0, 1fr)) !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.grid.grid-cols-2,
+.whipify-elementor-visual-fidelity-mode .elementor .e-con[class~="grid-cols-2"] {
+  --e-con-grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.grid.grid-cols-3,
+.whipify-elementor-visual-fidelity-mode .elementor .e-con[class~="grid-cols-3"] {
+  --e-con-grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .elementor .e-con.grid.grid-cols-4,
+.whipify-elementor-visual-fidelity-mode .elementor .e-con[class~="grid-cols-4"] {
+  --e-con-grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+}
+
+@media (min-width: 768px) {
+  .whipify-elementor-visual-fidelity-mode .elementor .e-con.grid[class*="md:grid-cols-2"]:not(#whipify-grid-authority),
+  .whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="md:grid-cols-2"]:not(#whipify-grid-authority) {
+    --e-con-grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .whipify-elementor-visual-fidelity-mode .elementor .e-con.grid[class*="md:grid-cols-3"]:not(#whipify-grid-authority),
+  .whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="md:grid-cols-3"]:not(#whipify-grid-authority) {
+    --e-con-grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .whipify-elementor-visual-fidelity-mode .elementor .e-con.grid[class*="md:grid-cols-4"]:not(#whipify-grid-authority),
+  .whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="md:grid-cols-4"]:not(#whipify-grid-authority) {
+    --e-con-grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (min-width: 1024px) {
+  .whipify-elementor-visual-fidelity-mode .elementor .e-con.grid[class*="lg:grid-cols-2"]:not(#whipify-grid-authority),
+  .whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="lg:grid-cols-2"]:not(#whipify-grid-authority) {
+    --e-con-grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .whipify-elementor-visual-fidelity-mode .elementor .e-con.grid[class*="lg:grid-cols-3"]:not(#whipify-grid-authority),
+  .whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="lg:grid-cols-3"]:not(#whipify-grid-authority) {
+    --e-con-grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .whipify-elementor-visual-fidelity-mode .elementor .e-con.grid[class*="lg:grid-cols-4"]:not(#whipify-grid-authority),
+  .whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="lg:grid-cols-4"]:not(#whipify-grid-authority) {
+    --e-con-grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  }
+}
+
 .whipify-elementor-visual-fidelity-mode .elementor .e-con.flex:not(.flex-col):not(.flex-col-reverse):not(.flex-row-reverse) {
   --flex-direction: row;
   flex-direction: row !important;
 }
 
-.whipify-elementor-visual-fidelity-mode .elementor-widget-button.inline-flex,
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.inline-flex:not(.w-full),
 .whipify-elementor-visual-fidelity-mode .elementor-widget-button:not(.w-full) {
   display: inline-flex !important;
   width: auto !important;
   max-width: max-content !important;
+  align-self: center !important;
 }
 
-.whipify-elementor-visual-fidelity-mode .elementor-widget-button.inline-flex .elementor-button,
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.inline-flex.w-full {
+  --container-widget-width: 100%;
+  display: flex !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  align-self: stretch !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.inline-flex:not(.w-full) .elementor-button,
 .whipify-elementor-visual-fidelity-mode .elementor-widget-button:not(.w-full) .elementor-button {
   width: auto !important;
   max-width: max-content !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .elementor-widget-button.inline-flex.w-full .elementor-button {
+  display: flex !important;
+  justify-content: center !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+@media (max-width: 767px) {
+  .whipify-elementor-visual-fidelity-mode [class~="md:hidden"][class~="fixed"][class~="bottom-0"],
+  .whipify-elementor-visual-fidelity-mode .elementor [class~="md:hidden"][class~="fixed"][class~="bottom-0"] {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0.5rem !important;
+    width: 100% !important;
+    padding: 0.75rem !important;
+  }
+  .whipify-elementor-visual-fidelity-mode [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > a,
+  .whipify-elementor-visual-fidelity-mode [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > button,
+  .whipify-elementor-visual-fidelity-mode [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > .elementor-widget-button,
+  .whipify-elementor-visual-fidelity-mode [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > .elementor-element,
+  .whipify-elementor-visual-fidelity-mode .elementor [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > a,
+  .whipify-elementor-visual-fidelity-mode .elementor [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > button,
+  .whipify-elementor-visual-fidelity-mode .elementor [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > .elementor-widget-button,
+  .whipify-elementor-visual-fidelity-mode .elementor [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > .elementor-element {
+    flex: 1 1 0 !important;
+    width: auto !important;
+    max-width: 10.25rem !important;
+    min-width: 0 !important;
+    align-self: stretch !important;
+  }
+  .whipify-elementor-visual-fidelity-mode [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > .elementor-widget-button .elementor-button,
+  .whipify-elementor-visual-fidelity-mode [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > .elementor-element .elementor-button,
+  .whipify-elementor-visual-fidelity-mode [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > a,
+  .whipify-elementor-visual-fidelity-mode [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > button,
+  .whipify-elementor-visual-fidelity-mode .elementor [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > .elementor-widget-button .elementor-button,
+  .whipify-elementor-visual-fidelity-mode .elementor [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > .elementor-element .elementor-button,
+  .whipify-elementor-visual-fidelity-mode .elementor [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > a,
+  .whipify-elementor-visual-fidelity-mode .elementor [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > button {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 100% !important;
+    min-height: 2.5rem !important;
+    padding: 0.5rem 1rem !important;
+    white-space: nowrap !important;
+    text-align: center !important;
+  }
+  .whipify-elementor-visual-fidelity-mode #wpconvert-mobile-sticky-cta > a,
+  .whipify-elementor-visual-fidelity-mode #wpconvert-mobile-sticky-cta > button {
+    min-height: 2.5rem !important;
+    padding: 0.5rem 1rem !important;
+  }
 }
 
 .whipify-elementor-visual-fidelity-mode .elementor-widget-button.bg-primary .elementor-button {
@@ -4018,6 +4762,84 @@ Whipify_Elementor_Importer::init();
   padding-right: 2.5rem !important;
 }
 
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-button.inline-flex.px-4 .elementor-button {
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-button.inline-flex.px-6 .elementor-button {
+  padding-left: 1.5rem !important;
+  padding-right: 1.5rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-button.inline-flex.px-8 .elementor-button {
+  padding-left: 2rem !important;
+  padding-right: 2rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-button.inline-flex.px-10 .elementor-button {
+  padding-left: 2.5rem !important;
+  padding-right: 2.5rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-button.inline-flex.bg-white .elementor-button,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-button.inline-flex.border-white .elementor-button {
+  background: transparent !important;
+  color: inherit !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.flex.flex-col[class~="sm:flex-row"].gap-4.justify-center:has(.elementor-widget-button.inline-flex),
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con.flex.flex-col[class~="sm:flex-row"].gap-4.justify-center:has(.elementor-widget-button.inline-flex) {
+  --flex-direction: column !important;
+  flex-direction: column !important;
+  align-items: center !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.flex.flex-col[class~="sm:flex-row"].gap-4.justify-center:not(#whipify-flex-authority):has(.elementor-widget-button.inline-flex),
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con.flex.flex-col[class~="sm:flex-row"].gap-4.justify-center:not(#whipify-flex-authority):has(.elementor-widget-button.inline-flex) {
+  --flex-direction: column !important;
+  flex-direction: column !important;
+  align-items: center !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-button[class*="bg-muted/20"][class*="rounded-lg"][class*="text-center"],
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-button[class*="bg-primary/10"][class*="rounded-lg"][class*="text-center"],
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-button[class*="bg-accent/10"][class*="rounded-lg"][class*="text-center"] {
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  min-height: 4.625rem !important;
+  padding: 1rem !important;
+  border: 1px solid hsl(var(--border, 214 32% 91%)) !important;
+  border-radius: 0.5rem !important;
+  background-color: hsl(var(--muted, 210 40% 96%) / 0.2) !important;
+  text-align: center !important;
+  box-shadow: none !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-button[class*="bg-muted/20"][class*="rounded-lg"][class*="text-center"][class*="p-3"] {
+  min-height: 3.25rem !important;
+  padding: 0.75rem !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-button[class*="bg-muted/20"][class*="rounded-lg"][class*="text-center"] .elementor-button,
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-button[class*="bg-primary/10"][class*="rounded-lg"][class*="text-center"] .elementor-button,
+.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-button[class*="bg-accent/10"][class*="rounded-lg"][class*="text-center"] .elementor-button {
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: hsl(var(--foreground, 222 47% 11%)) !important;
+  font-size: 1rem !important;
+  font-weight: 600 !important;
+  line-height: 1.5rem !important;
+  text-align: center !important;
+  text-decoration: none !important;
+  box-shadow: none !important;
+}
+
 .whipify-elementor-visual-fidelity-mode .whipify-feature-grid,
 .whipify-elementor-visual-fidelity-mode .whipify-pricing-table,
 .whipify-elementor-visual-fidelity-mode .whipify-testimonial-grid,
@@ -4036,7 +4858,7 @@ Whipify_Elementor_Importer::init();
 .whipify-elementor-visual-fidelity-mode .whipify-faq-section__inner,
 .whipify-elementor-visual-fidelity-mode .whipify-stats-section__inner {
   width: 100%;
-  max-width: 1400px;
+  max-width: 1280px;
   margin-left: auto;
   margin-right: auto;
 }
@@ -4048,13 +4870,44 @@ Whipify_Elementor_Importer::init();
 .whipify-elementor-visual-fidelity-mode .whipify-logo-cloud__title,
 .whipify-elementor-visual-fidelity-mode .whipify-faq-section__title,
 .whipify-elementor-visual-fidelity-mode .whipify-stats-section__title {
-  font-size: clamp(2rem, 4vw, 3rem);
-  line-height: 1;
+  font-size: 2.25rem;
+  line-height: 2.5rem;
   font-weight: 700;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.025em;
   text-align: center;
-  max-width: 1368px;
+  max-width: 1248px;
   margin: 0 auto 1rem;
+}
+
+@media (max-width: 767px) {
+  .whipify-elementor-visual-fidelity-mode .whipify-feature-grid__title,
+  .whipify-elementor-visual-fidelity-mode .whipify-pricing-table__title,
+  .whipify-elementor-visual-fidelity-mode .whipify-testimonial-grid__title,
+  .whipify-elementor-visual-fidelity-mode .whipify-team-grid__title,
+  .whipify-elementor-visual-fidelity-mode .whipify-logo-cloud__title,
+  .whipify-elementor-visual-fidelity-mode .whipify-faq-section__title,
+  .whipify-elementor-visual-fidelity-mode .whipify-stats-section__title {
+    font-size: 1.875rem !important;
+    line-height: 2.25rem !important;
+  }
+}
+
+@media (min-width: 1024px) {
+  .whipify-elementor-visual-fidelity-mode .whipify-feature-grid__title,
+  .whipify-elementor-visual-fidelity-mode .whipify-pricing-table__title,
+  .whipify-elementor-visual-fidelity-mode .whipify-testimonial-grid__title,
+  .whipify-elementor-visual-fidelity-mode .whipify-team-grid__title,
+  .whipify-elementor-visual-fidelity-mode .whipify-logo-cloud__title,
+  .whipify-elementor-visual-fidelity-mode .whipify-faq-section__title,
+  .whipify-elementor-visual-fidelity-mode .whipify-stats-section__title {
+    font-size: 3rem !important;
+    line-height: 1 !important;
+  }
+
+  .whipify-elementor-visual-fidelity-mode .whipify-feature-grid__title {
+    font-size: 2.25rem !important;
+    line-height: 2.5rem !important;
+  }
 }
 
 .whipify-elementor-visual-fidelity-mode .whipify-feature-grid__intro,
@@ -4069,7 +4922,7 @@ Whipify_Elementor_Importer::init();
   color: hsl(var(--muted-foreground));
   text-align: center;
   max-width: 48rem;
-  margin: 0 auto 3rem;
+  margin: 1.5rem auto 3rem;
 }
 
 .whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.max-w-7xl) .whipify-feature-grid__intro,
@@ -4116,8 +4969,8 @@ Whipify_Elementor_Importer::init();
 }
 
 .whipify-elementor-visual-fidelity-mode .whipify-feature-grid__icon svg {
-  width: 2.5rem !important;
-  height: 2.5rem !important;
+  width: 2rem !important;
+  height: 2rem !important;
   display: block;
 }
 
@@ -4156,6 +5009,14 @@ Whipify_Elementor_Importer::init();
 .whipify-elementor-visual-fidelity-mode .whipify-feature-grid__card p {
   line-height: 1.65;
   color: hsl(var(--muted-foreground));
+}
+
+.whipify-elementor-visual-fidelity-mode .elementor .whipify-feature-grid__body .text-primary {
+  color: hsl(var(--primary, 180 100% 25%)) !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .elementor .whipify-feature-grid__body .text-accent {
+  color: hsl(var(--accent, 14 100% 60%)) !important;
 }
 
 .whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body p.text-sm {
@@ -4242,6 +5103,88 @@ Whipify_Elementor_Importer::init();
   font-weight: 800;
 }
 
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__plans {
+  display: grid !important;
+  gap: 2rem !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__plan {
+  padding: 2rem !important;
+  border-radius: 0.5rem !important;
+  background: #fff !important;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.10) !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__plan.border-primary {
+  border-top: 4px solid hsl(var(--primary, 180 100% 25%)) !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__plan.border-accent {
+  border-top: 4px solid hsl(var(--accent, 14 100% 60%)) !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__plan h3 {
+  margin: 0 0 1rem !important;
+  font-size: 1.5rem !important;
+  line-height: 2rem !important;
+  font-weight: 800 !important;
+  color: hsl(var(--foreground, 222 47% 11%)) !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__description {
+  margin: 0 0 1.5rem !important;
+  font-size: 1rem !important;
+  line-height: 1.625 !important;
+  color: hsl(var(--muted-foreground, 215 16% 47%)) !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__features {
+  display: grid !important;
+  gap: 0.75rem !important;
+  margin: 0 0 1.5rem !important;
+  padding: 0 !important;
+  list-style: none !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__features li {
+  position: relative !important;
+  min-height: 1.25rem !important;
+  padding-left: 1.75rem !important;
+  font-size: 1rem !important;
+  line-height: 1.55 !important;
+  color: hsl(var(--foreground, 222 47% 11%)) !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__features li::before {
+  content: "\\2713" !important;
+  position: absolute !important;
+  left: 0 !important;
+  top: 0.12rem !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 1.25rem !important;
+  height: 1.25rem !important;
+  border: 2px solid hsl(var(--primary, 180 100% 25%)) !important;
+  border-radius: 9999px !important;
+  color: hsl(var(--primary, 180 100% 25%)) !important;
+  font-size: 0.75rem !important;
+  font-weight: 900 !important;
+  line-height: 1 !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__price {
+  margin: 0 0 0.75rem !important;
+  font-size: 1.125rem !important;
+  line-height: 1.75rem !important;
+  font-weight: 800 !important;
+  color: hsl(var(--primary, 180 100% 25%)) !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__plan.border-accent .whipify-pricing-table__price {
+  color: hsl(var(--accent, 14 100% 60%)) !important;
+}
+
 .whipify-elementor-visual-fidelity-mode .whipify-pricing-table__button {
   display: inline-flex !important;
   align-items: center !important;
@@ -4260,6 +5203,45 @@ Whipify_Elementor_Importer::init();
   text-align: center !important;
   text-decoration: none !important;
   box-shadow: 0 10px 22px rgba(255, 102, 51, 0.22) !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__plan.border-primary .whipify-pricing-table__button {
+  background: hsl(var(--primary, 180 100% 25%)) !important;
+  box-shadow: 0 10px 22px hsl(var(--primary, 180 100% 25%) / 0.22) !important;
+}
+
+.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__plan.border-accent .whipify-pricing-table__button {
+  background: hsl(var(--accent, 14 100% 60%)) !important;
+  box-shadow: 0 10px 22px rgba(255, 102, 51, 0.22) !important;
+}
+
+@media (max-width: 767px) {
+  .whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix {
+    width: 901px !important;
+    min-width: 901px !important;
+    table-layout: fixed !important;
+    font-size: 1rem !important;
+    line-height: 1.5rem !important;
+  }
+  .whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix :is(th, td):first-child {
+    width: 191px !important;
+    min-width: 191px !important;
+  }
+  .whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix :is(th, td):not(:first-child) {
+    width: 236px !important;
+    min-width: 236px !important;
+  }
+  .whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix thead th {
+    padding: 1rem 1.5rem !important;
+    font-weight: 700 !important;
+  }
+  .whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix tbody th,
+  .whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix tbody td {
+    padding: 1.25rem 1.5rem !important;
+  }
+  .whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix tbody th {
+    font-weight: 600 !important;
+  }
 }
 
 .whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body-main > p.italic.text-muted-foreground) .whipify-feature-grid__inner,
@@ -4372,8 +5354,16 @@ Whipify_Elementor_Importer::init();
   display: none;
 }
 
+.whipify-elementor-visual-fidelity-mode .elementor .whipify-faq-answer--duplicate {
+  display: none !important;
+}
+
 .whipify-elementor-visual-fidelity-mode .elementor .is-whipify-faq-open > .whipify-faq-answer {
   display: block;
+}
+
+.whipify-elementor-visual-fidelity-mode .elementor .is-whipify-faq-open > .whipify-faq-answer--duplicate {
+  display: none !important;
 }
 
 .whipify-elementor-visual-fidelity-mode .whipify-elementor-carousel-prev,
@@ -4433,8 +5423,576 @@ Whipify_Elementor_Importer::init();
   }
 }
 `,
-  'assets/css/whipify-elementor-visual-fidelity-overrides.css': `body.whipify-elementor-visual-fidelity-mode .tf-elementor-breadcrumbs {
-  margin: 1rem auto 0 !important;
+  'assets/css/whipify-elementor-visual-fidelity-overrides.css': `body.whipify-elementor-visual-fidelity-mode {
+  --foreground: 220 13% 18%;
+  --muted-foreground: 220 9% 46%;
+}
+
+body.whipify-elementor-visual-fidelity-mode .tf-elementor-breadcrumbs {
+  margin: 0 auto !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-whipify_breadcrumbs,
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-whipify_breadcrumbs > .elementor-widget-container {
+  height: 20px !important;
+  min-height: 20px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .tf-elementor-breadcrumbs {
+  height: 20px !important;
+  min-height: 20px !important;
+  line-height: 20px !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-html > div > .container.mx-auto.px-4.pt-4:empty {
+  display: none !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .tf-article-trust-signals {
+  display: none !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-html section.py-20.bg-white > .container.mx-auto.px-4.max-w-4xl,
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-html section.py-20.bg-muted\\/20 > .container.mx-auto.px-4.max-w-4xl {
+  width: 100% !important;
+  max-width: 56rem !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-html section[class*="via-[hsl(180,100%,40%)]"][class*="to-[hsl(160,100%,30%)]"] .flex.flex-col[class~="sm:flex-row"].gap-4.justify-center,
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-html section[class*="from-[hsl(160,100%,35%)]"][class*="to-[hsl(180,100%,40%)]"] .flex.flex-col[class~="sm:flex-row"].gap-4.justify-center {
+  flex-direction: column !important;
+  align-items: center !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-html section.py-20.bg-muted\\/20:has(.grid.md\\:grid-cols-2.gap-8.mb-8) .bg-white.rounded-xl svg {
+  color: hsl(var(--foreground, 220 13% 18%)) !important;
+  stroke: currentColor !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-html section.py-20.bg-muted\\/20:has(.grid.md\\:grid-cols-2.gap-8.mb-8) .border-accent\\/20 svg,
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-html section.py-20.bg-muted\\/20:has(.grid.md\\:grid-cols-2.gap-8.mb-8) [class*="border-accent"] svg {
+  color: hsl(var(--accent, 14 100% 60%)) !important;
+  stroke: currentColor !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.pt-32.pb-20,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con.pt-32.pb-20 {
+  padding-top: 8rem !important;
+  padding-bottom: 5rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.py-20.bg-background.max-w-7xl) .whipify-feature-grid__inner {
+  max-width: 1280px !important;
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards.py-20.bg-background.max-w-7xl {
+  width: 100% !important;
+  max-width: 1248px !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards.py-20.bg-background .whipify-feature-grid__card {
+  min-height: 0 !important;
+  height: auto !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards.py-20.bg-background .whipify-feature-grid__image {
+  display: block !important;
+  width: 100% !important;
+  aspect-ratio: 16 / 9 !important;
+  height: auto !important;
+  object-fit: cover !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards.py-20.bg-background .whipify-blog-read-more {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  height: 2.5rem !important;
+  margin-top: 1rem !important;
+  border: 2px solid hsl(var(--foreground, 220 13% 18%)) !important;
+  border-radius: 0.375rem !important;
+  color: hsl(var(--foreground, 220 13% 18%)) !important;
+  font-size: 0.875rem !important;
+  font-weight: 700 !important;
+  line-height: 1.25rem !important;
+  text-decoration: none !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards.py-20.bg-background .whipify-blog-read-more::after {
+  content: "\\2192";
+  margin-left: 1rem;
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-button.border-2.border-current.bg-transparent .elementor-button {
+  background: transparent !important;
+  color: hsl(var(--foreground, 220 13% 18%)) !important;
+  border: 2px solid currentColor !important;
+  border-radius: 9999px !important;
+  box-shadow: none !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-button.border-2.border-current.bg-transparent:hover .elementor-button {
+  background: rgba(0, 128, 128, 0.08) !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-blog-card-icon {
+  display: inline-block !important;
+  width: 1rem !important;
+  height: 1rem !important;
+  flex: 0 0 auto !important;
+  vertical-align: -0.125em !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-blog-card-icon--tag {
+  width: 0.75rem !important;
+  height: 0.75rem !important;
+}
+
+@media (max-width: 767px) {
+  body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.py-20.bg-background.max-w-7xl) .whipify-feature-grid__inner {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+  }
+
+  body.whipify-elementor-visual-fidelity-mode .elementor-widget-html section[class*="via-[hsl(180,100%,40%)]"][class*="to-[hsl(160,100%,30%)]"] h1.text-4xl {
+    line-height: 40px !important;
+    margin-bottom: 0 !important;
+  }
+
+  body.whipify-elementor-visual-fidelity-mode .elementor-widget-html section[class*="via-[hsl(180,100%,40%)]"][class*="to-[hsl(160,100%,30%)]"] h1.text-4xl + p.text-xl {
+    margin-top: 24px !important;
+  }
+
+  body.whipify-elementor-visual-fidelity-mode .elementor-widget-html section.py-20.bg-muted\\/20:has(.grid.md\\:grid-cols-2.gap-8.mb-8) [class*="border-[hsl(160,100%,30%)]"] {
+    min-height: 520px !important;
+  }
+
+  body.whipify-elementor-visual-fidelity-mode .elementor-widget-html section.py-20.bg-muted\\/20:has(.grid.md\\:grid-cols-2.gap-8.mb-8) [class*="border-accent"] {
+    min-height: 472px !important;
+  }
+
+  body.whipify-elementor-visual-fidelity-mode .elementor-widget-html section.py-20.bg-muted\\/20:has(.grid.md\\:grid-cols-2.gap-8.mb-8) .border-purple-200 {
+    min-height: 340px !important;
+  }
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .entry-content.e-con,
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.entry-content {
+  flex-direction: column !important;
+  align-items: stretch !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .entry-content.e-con > .elementor-widget-html,
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.entry-content > .elementor-widget-html {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .entry-content.e-con > .elementor-widget-html > div,
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.entry-content > .elementor-widget-html > div {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor h3.text-2xl.font-semibold.leading-none.tracking-tight,
+body.whipify-elementor-visual-fidelity-mode .elementor h3.text-2xl.leading-none {
+  line-height: 2rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor [class~="space-y-1.5"] > h3.font-semibold.tracking-tight.text-lg {
+  margin-bottom: 1rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.max-w-3xl.mx-auto.space-y-4:has(> .bg-white.rounded-xl.border-2) {
+  --gap: 0 !important;
+  gap: 0 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.max-w-3xl.mx-auto.space-y-4:has(> .bg-white.rounded-xl.border-2) > .bg-white.rounded-xl.border-2 {
+  margin-top: 0 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .border-b > h3.flex {
+  margin-bottom: 1rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .border-b + .border-b {
+  margin-top: 1.5rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .tf-elementor-breadcrumbs > * + * {
+  margin-left: 0.5rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .tf-elementor-breadcrumbs > .elementor-widget + .elementor-widget {
+  margin-left: 0.5rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor > .elementor-widget-container,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor .elementor-widget-container {
+  font-family: ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji" !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor.text-muted-foreground,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor[class*="text-muted-foreground"],
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor.text-muted-foreground > .elementor-widget-container,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor[class*="text-muted-foreground"] > .elementor-widget-container {
+  color: hsl(var(--muted-foreground)) !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor[class*="text-white"],
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor[class*="text-white"] > .elementor-widget-container,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor[class*="text-white"] .elementor-widget-container,
+body.whipify-elementor-visual-fidelity-mode .elementor .text-white > .elementor-widget-text-editor,
+body.whipify-elementor-visual-fidelity-mode .elementor .text-white > .elementor-widget-text-editor > .elementor-widget-container,
+body.whipify-elementor-visual-fidelity-mode .elementor .text-white .elementor-widget-text-editor,
+body.whipify-elementor-visual-fidelity-mode .elementor .text-white .elementor-widget-text-editor > .elementor-widget-container {
+  color: #fff !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor[class*="text-primary-foreground"],
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor[class*="text-primary-foreground"] > .elementor-widget-container,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor[class*="text-primary-foreground"] .elementor-widget-container,
+body.whipify-elementor-visual-fidelity-mode .elementor .text-primary-foreground > .elementor-widget-text-editor,
+body.whipify-elementor-visual-fidelity-mode .elementor .text-primary-foreground > .elementor-widget-text-editor > .elementor-widget-container,
+body.whipify-elementor-visual-fidelity-mode .elementor .text-primary-foreground .elementor-widget-text-editor,
+body.whipify-elementor-visual-fidelity-mode .elementor .text-primary-foreground .elementor-widget-text-editor > .elementor-widget-container {
+  color: #fff !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor[class*="text-white/90"],
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor[class*="text-white/90"] > .elementor-widget-container,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor[class*="text-white/90"] .elementor-widget-container {
+  color: rgba(255, 255, 255, 0.9) !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor[class*="text-white/80"],
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor[class*="text-white/80"] > .elementor-widget-container,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor[class*="text-white/80"] .elementor-widget-container {
+  color: rgba(255, 255, 255, 0.8) !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor.font-medium,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor.font-medium > .elementor-widget-container,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor.font-medium .elementor-widget-container {
+  font-weight: 500 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor.font-semibold,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor.font-semibold > .elementor-widget-container,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor.font-semibold .elementor-widget-container {
+  color: inherit !important;
+  font-weight: 600 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor.font-bold,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor.font-bold > .elementor-widget-container,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor.font-bold .elementor-widget-container {
+  font-weight: 700 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor.leading-relaxed,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor.leading-relaxed > .elementor-widget-container,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor.leading-relaxed .elementor-widget-container {
+  line-height: 1.625 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor.leading-relaxed[class*="md:text-2xl"],
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor.leading-relaxed[class*="md:text-2xl"] > .elementor-widget-container,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-text-editor.leading-relaxed[class*="md:text-2xl"] .elementor-widget-container {
+  line-height: 2rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.inline-flex:not(.w-full) {
+  --width: auto !important;
+  width: fit-content !important;
+  max-width: 100% !important;
+  display: inline-flex !important;
+  align-self: center !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.inline-flex.items-center.gap-2 {
+  --flex-direction: row !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  flex-wrap: nowrap !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.inline-flex.items-center.gap-2.rounded-full > .elementor-widget-text-editor {
+  width: auto !important;
+  max-width: calc(100% - 4.75rem) !important;
+  flex: 1 1 auto !important;
+}
+
+@media (min-width: 768px) {
+  body.whipify-elementor-visual-fidelity-mode .elementor .e-con.inline-flex.items-center.gap-2.rounded-full > .elementor-widget-text-editor {
+    max-width: none !important;
+    white-space: nowrap !important;
+    flex: 0 0 auto !important;
+  }
+}
+
+body.whipify-elementor-visual-fidelity-mode .wpconvert-credit {
+  display: none !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-button.inline-flex:not(.w-full),
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-button:not(.w-full) {
+  display: inline-flex !important;
+  width: auto !important;
+  max-width: max-content !important;
+  align-self: center !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-button.inline-flex.w-full {
+  --container-widget-width: 100%;
+  display: flex !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  align-self: stretch !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-button.inline-flex:not(.w-full) .elementor-button,
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-button:not(.w-full) .elementor-button {
+  width: auto !important;
+  max-width: max-content !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-button.inline-flex.w-full .elementor-button {
+  display: flex !important;
+  justify-content: center !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-button.inline-flex.px-4 .elementor-button {
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-button.inline-flex.px-6 .elementor-button {
+  padding-left: 1.5rem !important;
+  padding-right: 1.5rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-button.inline-flex.px-8 .elementor-button {
+  padding-left: 2rem !important;
+  padding-right: 2rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-button.inline-flex.px-10 .elementor-button {
+  padding-left: 2.5rem !important;
+  padding-right: 2.5rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-button.inline-flex.bg-white .elementor-button,
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-button.inline-flex.border-white .elementor-button {
+  background: transparent !important;
+  color: inherit !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.flex.flex-col[class~="sm:flex-row"].gap-4.justify-center:has(.elementor-widget-button.inline-flex),
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con.flex.flex-col[class~="sm:flex-row"].gap-4.justify-center:has(.elementor-widget-button.inline-flex) {
+  --flex-direction: column !important;
+  flex-direction: column !important;
+  align-items: center !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.flex.flex-col[class~="sm:flex-row"].gap-4.justify-center:not(#whipify-flex-authority):has(.elementor-widget-button.inline-flex),
+body.whipify-elementor-visual-fidelity-mode .elementor .elementor-element.e-con.flex.flex-col[class~="sm:flex-row"].gap-4.justify-center:not(#whipify-flex-authority):has(.elementor-widget-button.inline-flex) {
+  --flex-direction: column !important;
+  flex-direction: column !important;
+  align-items: center !important;
+}
+
+@media (max-width: 767px) {
+  body.whipify-elementor-visual-fidelity-mode [class~="md:hidden"][class~="fixed"][class~="bottom-0"],
+  body.whipify-elementor-visual-fidelity-mode .elementor [class~="md:hidden"][class~="fixed"][class~="bottom-0"] {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0.5rem !important;
+    width: 100% !important;
+    padding: 0.75rem !important;
+  }
+  body.whipify-elementor-visual-fidelity-mode [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > a,
+  body.whipify-elementor-visual-fidelity-mode [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > button,
+  body.whipify-elementor-visual-fidelity-mode [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > .elementor-widget-button,
+  body.whipify-elementor-visual-fidelity-mode [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > .elementor-element,
+  body.whipify-elementor-visual-fidelity-mode .elementor [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > a,
+  body.whipify-elementor-visual-fidelity-mode .elementor [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > button,
+  body.whipify-elementor-visual-fidelity-mode .elementor [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > .elementor-widget-button,
+  body.whipify-elementor-visual-fidelity-mode .elementor [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > .elementor-element {
+    flex: 1 1 0 !important;
+    width: auto !important;
+    max-width: 10.25rem !important;
+    min-width: 0 !important;
+    align-self: stretch !important;
+  }
+  body.whipify-elementor-visual-fidelity-mode [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > .elementor-widget-button .elementor-button,
+  body.whipify-elementor-visual-fidelity-mode [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > .elementor-element .elementor-button,
+  body.whipify-elementor-visual-fidelity-mode [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > a,
+  body.whipify-elementor-visual-fidelity-mode [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > button,
+  body.whipify-elementor-visual-fidelity-mode .elementor [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > .elementor-widget-button .elementor-button,
+  body.whipify-elementor-visual-fidelity-mode .elementor [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > .elementor-element .elementor-button,
+  body.whipify-elementor-visual-fidelity-mode .elementor [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > a,
+  body.whipify-elementor-visual-fidelity-mode .elementor [class~="md:hidden"][class~="fixed"][class~="bottom-0"] > button {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 100% !important;
+    min-height: 2.5rem !important;
+    padding: 0.5rem 1rem !important;
+    white-space: nowrap !important;
+    text-align: center !important;
+  }
+  body.whipify-elementor-visual-fidelity-mode #wpconvert-mobile-sticky-cta > a,
+  body.whipify-elementor-visual-fidelity-mode #wpconvert-mobile-sticky-cta > button {
+    min-height: 2.5rem !important;
+    padding: 0.5rem 1rem !important;
+  }
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .whipify-location-grid.py-16 {
+  padding-top: 4rem !important;
+  padding-bottom: 4rem !important;
+}
+
+@media (max-width: 767px) {
+  body.whipify-elementor-visual-fidelity-mode .elementor .whipify-location-grid.py-16 {
+    padding-top: 4rem !important;
+    padding-bottom: 4rem !important;
+  }
+  body.whipify-elementor-visual-fidelity-mode .elementor .e-con.py-16.md\\:py-20 {
+    padding-top: 4rem !important;
+    padding-bottom: 4rem !important;
+  }
+  body.whipify-elementor-visual-fidelity-mode .elementor .elementor-widget-heading.text-4xl.leading-tight .elementor-heading-title {
+    line-height: 2.5rem !important;
+  }
+  body.whipify-elementor-visual-fidelity-mode .elementor .whipify-feature-grid__inner > .elementor-widget.whipify-feature-grid__intro,
+  body.whipify-elementor-visual-fidelity-mode .elementor .whipify-feature-grid__inner > .mt-12.bg-gradient-to-r {
+    width: 100% !important;
+    max-width: 100% !important;
+    align-self: stretch !important;
+  }
+  body.whipify-elementor-visual-fidelity-mode .elementor-widget-html section.py-16:has([role="tablist"]) {
+    padding-bottom: 6rem !important;
+  }
+  body.whipify-elementor-visual-fidelity-mode .elementor-widget-html section.py-16:has([role="tablist"]) > .container.mx-auto.px-4 > h2.mb-12 {
+    margin-bottom: 1.5rem !important;
+  }
+  body.whipify-elementor-visual-fidelity-mode .elementor-widget-html section.py-16:has([role="tablist"]) > .container.mx-auto.px-4 > h2.mb-12 + .max-w-6xl.mx-auto {
+    margin-top: 0 !important;
+  }
+  body.whipify-elementor-visual-fidelity-mode .elementor-widget-html section.py-16.bg-muted\\/30:has(.max-w-2xl.mx-auto.mt-8) .max-w-2xl.mx-auto.mt-8 h3.text-2xl {
+    margin-bottom: 1rem !important;
+  }
+  body.whipify-elementor-visual-fidelity-mode .elementor-widget-html section.py-16.bg-muted\\/30:has(.max-w-2xl.mx-auto.mt-8) .max-w-2xl.mx-auto.mt-8 .text-muted-foreground:last-child {
+    margin-top: 1.5rem !important;
+  }
+}
+
+@media (min-width: 768px) {
+  body.whipify-elementor-visual-fidelity-mode .elementor .e-con.py-16.md\\:py-20 {
+    padding-top: 5rem !important;
+    padding-bottom: 5rem !important;
+  }
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.flex.gap-6.transition-transform {
+  --flex-wrap: nowrap;
+  flex-wrap: nowrap !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-heading.mb-3 + .elementor-widget-text-editor.mb-12 {
+  margin-top: 0.75rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.grid.grid-cols-1 {
+  --e-con-grid-template-columns: repeat(1, minmax(0, 1fr)) !important;
+  grid-template-columns: repeat(1, minmax(0, 1fr)) !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.grid.grid-cols-2,
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con[class~="grid-cols-2"] {
+  --e-con-grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.grid.grid-cols-3,
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con[class~="grid-cols-3"] {
+  --e-con-grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con.grid.grid-cols-4,
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con[class~="grid-cols-4"] {
+  --e-con-grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+}
+
+@media (min-width: 768px) {
+  body.whipify-elementor-visual-fidelity-mode .elementor .e-con.grid[class*="md:grid-cols-2"]:not(#whipify-grid-authority),
+  body.whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="md:grid-cols-2"]:not(#whipify-grid-authority) {
+    --e-con-grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  body.whipify-elementor-visual-fidelity-mode .elementor .e-con.grid[class*="md:grid-cols-3"]:not(#whipify-grid-authority),
+  body.whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="md:grid-cols-3"]:not(#whipify-grid-authority) {
+    --e-con-grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  body.whipify-elementor-visual-fidelity-mode .elementor .e-con.grid[class*="md:grid-cols-4"]:not(#whipify-grid-authority),
+  body.whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="md:grid-cols-4"]:not(#whipify-grid-authority) {
+    --e-con-grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  }
+}
+
+@media (min-width: 1024px) {
+  body.whipify-elementor-visual-fidelity-mode .elementor .e-con.grid[class*="lg:grid-cols-2"]:not(#whipify-grid-authority),
+  body.whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="lg:grid-cols-2"]:not(#whipify-grid-authority) {
+    --e-con-grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  body.whipify-elementor-visual-fidelity-mode .elementor .e-con.grid[class*="lg:grid-cols-3"]:not(#whipify-grid-authority),
+  body.whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="lg:grid-cols-3"]:not(#whipify-grid-authority) {
+    --e-con-grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  body.whipify-elementor-visual-fidelity-mode .elementor .e-con.grid[class*="lg:grid-cols-4"]:not(#whipify-grid-authority),
+  body.whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="lg:grid-cols-4"]:not(#whipify-grid-authority) {
+    --e-con-grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  }
 }
 
 body.whipify-elementor-visual-fidelity-mode.elementor-editor-active .elementor-widget-whipify_map_embed iframe.whipify-map-embed,
@@ -4458,11 +6016,17 @@ body.whipify-elementor-visual-fidelity-mode .elementor-editor-active .is-whipify
   outline-offset: 4px !important;
 }
 
-body.whipify-elementor-visual-fidelity-mode .elementor .elementor-element[class~="md:w-1/3"]:not(#whipify-width-authority),
-body.whipify-elementor-visual-fidelity-mode .elementor [class~="md:w-1/3"]:not(#whipify-width-authority) {
-  width: 33.333333% !important;
-  flex-basis: 33.333333% !important;
-  max-width: 33.333333% !important;
+@media (min-width: 768px) {
+  body.whipify-elementor-visual-fidelity-mode .elementor .elementor-element[class~="md:w-1/3"]:not(#whipify-width-authority),
+  body.whipify-elementor-visual-fidelity-mode .elementor [class~="md:w-1/3"]:not(#whipify-width-authority) {
+    width: 33.333333% !important;
+    flex-basis: 33.333333% !important;
+    max-width: 33.333333% !important;
+  }
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.lg\\:grid-cols-4) .whipify-feature-grid__footer {
+  margin-top: 2.5rem !important;
 }
 
 body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__footer > button[class*="inline-flex"],
@@ -4482,6 +6046,301 @@ body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__footer > a[cl
   line-height: 1.25rem !important;
   text-decoration: none !important;
   box-shadow: none !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__footer > a.inline-flex.text-primary:not([class*="bg-"]) {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: auto !important;
+  min-width: 0 !important;
+  height: auto !important;
+  padding: 0 !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: hsl(var(--foreground, 222 47% 11%)) !important;
+  font-size: 1.125rem !important;
+  font-weight: 600 !important;
+  line-height: 1.75rem !important;
+  text-decoration: none !important;
+  box-shadow: none !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__footer > a.inline-flex.text-primary:not([class*="bg-"]):hover {
+  text-decoration: underline !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor-widget-heading.mb-12:has(+ .e-con.grid.max-w-4xl) {
+  margin-bottom: 1.5rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode #root > nav.sticky {
+  position: relative !important;
+  top: auto !important;
+  left: auto !important;
+  right: auto !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode #root > main.site-main {
+  margin-top: 0 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode #root > main.site-main .elementor .elementor-element.e-con.container,
+body.whipify-elementor-visual-fidelity-mode #root > main.site-main .elementor .container.mx-auto,
+body.whipify-elementor-visual-fidelity-mode main.site-main .elementor .elementor-element.e-con.container,
+body.whipify-elementor-visual-fidelity-mode main.site-main .elementor .container.mx-auto {
+  max-width: 1280px !important;
+  width: 100% !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode #root > nav.sticky > .container {
+  max-width: 1280px !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode nav.sticky > .container {
+  max-width: 1280px !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode #root > nav.sticky > .container > .flex {
+  justify-content: flex-start !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode nav.sticky > .container > .flex {
+  justify-content: flex-start !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode #root > nav.sticky > .container > .flex > a.bg-primary {
+  display: flex !important;
+  margin-right: 3rem !important;
+  border-radius: 0.375rem !important;
+  flex-shrink: 0 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode nav.sticky > .container > .flex > a.bg-primary {
+  display: flex !important;
+  margin-right: 3rem !important;
+  border-radius: 0.375rem !important;
+  flex-shrink: 0 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode #root > nav.sticky > .container > .flex > .hidden.md\\:flex.items-center.space-x-6 {
+  gap: 1.1rem !important;
+  flex-shrink: 0 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode nav.sticky > .container > .flex > .hidden.md\\:flex.items-center.space-x-6 {
+  gap: 1.1rem !important;
+  flex-shrink: 0 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-location-card h3.text-3xl[class*="md:text-4xl"] {
+  font-size: 1.875rem !important;
+  line-height: 2.25rem !important;
+  margin-bottom: 1rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .whipify-location-card__surface > .absolute.w-32.h-32 {
+  width: 8rem !important;
+  height: 8rem !important;
+  max-width: none !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards.lg\\:grid-cols-3 .whipify-feature-grid__card-title {
+  margin-bottom: 0.75rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .whipify-feature-grid:has(.whipify-feature-grid__cards.lg\\:grid-cols-3) .whipify-feature-grid__cards.lg\\:grid-cols-3 .elementor-widget-whipify_feature_card article.whipify-feature-grid__card > h3.whipify-feature-grid__card-title {
+  margin-bottom: 0.75rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards.lg\\:grid-cols-3 .whipify-feature-grid__card-text {
+  font-size: 0.875rem !important;
+  line-height: 1.25rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards.py-20.bg-muted\\/20.lg\\:grid-cols-3 .whipify-feature-grid__card-text {
+  font-size: 1rem !important;
+  line-height: 1.5rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__card.text-center .whipify-feature-grid__card-text {
+  font-size: 0.875rem !important;
+  line-height: 1.25rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards.py-20.bg-muted\\/20.lg\\:grid-cols-3 .whipify-feature-grid__card.text-center .whipify-feature-grid__card-text {
+  font-size: 0.875rem !important;
+  line-height: 1.25rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards.lg\\:grid-cols-4 .whipify-feature-grid__icon {
+  width: 3.5rem !important;
+  height: 3.5rem !important;
+  border-radius: 0.75rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards.lg\\:grid-cols-4 .whipify-feature-grid__icon svg {
+  width: 1.75rem !important;
+  height: 1.75rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards.lg\\:grid-cols-4 .whipify-feature-grid__card-title {
+  font-size: 1.25rem !important;
+  line-height: 1.75rem !important;
+  margin-bottom: 0.75rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards.lg\\:grid-cols-4 .whipify-feature-grid__card-text {
+  font-size: 0.875rem !important;
+  line-height: 1.25rem !important;
+  margin-bottom: 1rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .whipify-feature-grid:has(.whipify-feature-grid__cards.lg\\:grid-cols-4) .whipify-feature-grid__cards.lg\\:grid-cols-4 .elementor-widget-whipify_feature_card article.whipify-feature-grid__card > h3.whipify-feature-grid__card-title {
+  font-size: 1.25rem !important;
+  line-height: 1.75rem !important;
+  margin-bottom: 0.75rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .whipify-feature-grid:has(.whipify-feature-grid__cards.lg\\:grid-cols-4) .whipify-feature-grid__cards.lg\\:grid-cols-4 .elementor-widget-whipify_feature_card article.whipify-feature-grid__card > p.whipify-feature-grid__card-text {
+  font-size: 0.875rem !important;
+  line-height: 1.25rem !important;
+  margin-bottom: 1rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="bg-gradient-to-br"][class*="from-[hsl(160,100%,35%)]"][class*="via-[hsl(180,100%,40%)]"][class*="to-[hsl(220,100%,50%)]"] {
+  width: 100% !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  padding-top: 5rem !important;
+  padding-bottom: 5rem !important;
+  background: linear-gradient(to bottom right, hsl(160, 100%, 35%), hsl(180, 100%, 40%), hsl(220, 100%, 50%)) !important;
+  color: #fff !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="bg-gradient-to-br"][class*="from-[hsl(160,100%,35%)]"] > .e-con.container {
+  width: 100% !important;
+  max-width: 1280px !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+  align-self: center !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="bg-gradient-to-br"][class*="from-[hsl(160,100%,35%)]"] .elementor-widget-heading.mb-6 {
+  width: 100% !important;
+  margin-bottom: 1.5rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="bg-gradient-to-br"][class*="from-[hsl(160,100%,35%)]"] .elementor-widget-heading.mb-6 .elementor-heading-title {
+  width: 100% !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="bg-gradient-to-br"][class*="from-[hsl(160,100%,35%)]"] .elementor-widget-text-editor.max-w-2xl {
+  width: 100% !important;
+  max-width: 42rem !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  margin-bottom: 2.5rem !important;
+  align-self: center !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="bg-gradient-to-br"][class*="from-[hsl(160,100%,35%)]"] .e-con[class*="sm:flex-row"] {
+  --flex-direction: column !important;
+  flex-direction: column !important;
+  align-items: center !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="bg-gradient-to-br"][class*="from-[hsl(160,100%,35%)]"] .elementor-element.e-con[class~="sm:flex-row"]:not(#whipify-flex-authority) {
+  --flex-direction: column !important;
+  flex-direction: column !important;
+  align-items: center !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="bg-gradient-to-br"][class*="from-[hsl(160,100%,35%)]"] .elementor-widget-button.py-6 {
+  width: auto !important;
+  height: auto !important;
+  padding: 0 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="bg-gradient-to-br"][class*="from-[hsl(160,100%,35%)]"] .elementor-widget-button.bg-white .elementor-button {
+  background: #fff !important;
+  color: inherit !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .e-con[class*="bg-gradient-to-br"][class*="from-[hsl(160,100%,35%)]"] .elementor-widget-button.py-6 .elementor-button {
+  width: auto !important;
+  height: auto !important;
+  padding: 1.5rem 2.5rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__plans {
+  display: grid !important;
+  gap: 2rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__plan {
+  padding: 2rem !important;
+  border-radius: 0.5rem !important;
+  background: #fff !important;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.10) !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__plan.border-primary {
+  border-top: 4px solid hsl(var(--primary, 180 100% 25%)) !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__plan.border-accent {
+  border-top: 4px solid hsl(var(--accent, 14 100% 60%)) !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__features {
+  display: grid !important;
+  gap: 0.75rem !important;
+  margin: 0 0 1.5rem !important;
+  padding: 0 !important;
+  list-style: none !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__features li {
+  position: relative !important;
+  min-height: 1.25rem !important;
+  padding-left: 1.75rem !important;
+  line-height: 1.55 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__features li::before {
+  content: "\\2713" !important;
+  position: absolute !important;
+  left: 0 !important;
+  top: 0.12rem !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 1.25rem !important;
+  height: 1.25rem !important;
+  border: 2px solid hsl(var(--primary, 180 100% 25%)) !important;
+  border-radius: 9999px !important;
+  color: hsl(var(--primary, 180 100% 25%)) !important;
+  font-size: 0.75rem !important;
+  font-weight: 900 !important;
+  line-height: 1 !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__price {
+  margin: 0 0 0.75rem !important;
+  font-weight: 800 !important;
+  color: hsl(var(--primary, 180 100% 25%)) !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__plan.border-accent .whipify-pricing-table__price {
+  color: hsl(var(--accent, 14 100% 60%)) !important;
 }
 
 body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__button {
@@ -4504,6 +6363,135 @@ body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__button {
   box-shadow: 0 10px 22px rgba(255, 102, 51, 0.22) !important;
 }
 
+body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__plan.border-primary .whipify-pricing-table__button {
+  background: hsl(var(--primary, 180 100% 25%)) !important;
+  box-shadow: 0 10px 22px hsl(var(--primary, 180 100% 25%) / 0.22) !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__plan.border-accent .whipify-pricing-table__button {
+  background: hsl(var(--accent, 14 100% 60%)) !important;
+  box-shadow: 0 10px 22px rgba(255, 102, 51, 0.22) !important;
+}
+
+@media (max-width: 767px) {
+  body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table.whipify-city-service-pricing-table {
+    padding-top: 4rem !important;
+    padding-bottom: 4rem !important;
+  }
+
+  body.whipify-elementor-visual-fidelity-mode .whipify-city-service-pricing-table .whipify-pricing-table__description {
+    line-height: 1.5rem !important;
+  }
+
+  body.whipify-elementor-visual-fidelity-mode .whipify-city-service-pricing-table .whipify-pricing-table__features li {
+    line-height: 1.5rem !important;
+  }
+
+  body.whipify-elementor-visual-fidelity-mode .whipify-city-service-pricing-table .whipify-pricing-table__price {
+    margin-bottom: 0.5rem !important;
+  }
+
+  body.whipify-elementor-visual-fidelity-mode .whipify-city-service-pricing-table .whipify-pricing-table__button {
+    width: 100% !important;
+    min-width: 0 !important;
+    height: 2.5rem !important;
+    margin-top: 0 !important;
+    padding: 0.5rem 1rem !important;
+    font-size: 0.875rem !important;
+    line-height: 1.25rem !important;
+    font-weight: 500 !important;
+  }
+
+  body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix {
+    width: 901px !important;
+    min-width: 901px !important;
+    table-layout: fixed !important;
+    font-size: 1rem !important;
+    line-height: 1.5rem !important;
+  }
+  body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix :is(th, td):first-child {
+    width: 191px !important;
+    min-width: 191px !important;
+  }
+  body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix :is(th, td):not(:first-child) {
+    width: 236px !important;
+    min-width: 236px !important;
+  }
+  body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix thead th {
+    padding: 1rem 1.5rem !important;
+    font-weight: 700 !important;
+  }
+  body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix tbody th,
+  body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix tbody td {
+    padding: 1.25rem 1.5rem !important;
+  }
+  body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__matrix tbody th {
+    font-weight: 600 !important;
+  }
+}
+
+@media (min-width: 768px) {
+  body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table.whipify-city-service-pricing-table {
+    padding-top: 4rem !important;
+    padding-bottom: 4rem !important;
+  }
+
+  body.whipify-elementor-visual-fidelity-mode .whipify-city-service-pricing-table .whipify-pricing-table__intro {
+    font-size: 1.25rem !important;
+    line-height: 1.75rem !important;
+  }
+
+  body.whipify-elementor-visual-fidelity-mode .whipify-city-service-pricing-table .whipify-pricing-table__description {
+    line-height: 1.5rem !important;
+  }
+
+  body.whipify-elementor-visual-fidelity-mode .whipify-city-service-pricing-table .whipify-pricing-table__price {
+    margin-bottom: 0.5rem !important;
+  }
+
+  body.whipify-elementor-visual-fidelity-mode .whipify-city-service-pricing-table .whipify-pricing-table__button {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: 2.5rem !important;
+    margin-top: 0 !important;
+    padding: 0.5rem 1rem !important;
+    font-size: 0.875rem !important;
+    line-height: 1.25rem !important;
+  }
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__title {
+  font-size: 2.25rem !important;
+  line-height: 2.5rem !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.025em !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:not(:has(.whipify-feature-grid__intro)):not(:has(.whipify-feature-grid__body-main)) .whipify-feature-grid__title {
+  margin-bottom: 1.5rem !important;
+}
+
+@media (max-width: 767px) {
+  body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__title,
+  body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__title {
+    font-size: 1.875rem !important;
+    line-height: 2.25rem !important;
+  }
+}
+
+@media (min-width: 1024px) {
+  body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__title,
+  body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__title {
+    font-size: 3rem !important;
+    line-height: 1 !important;
+  }
+
+  body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__title {
+    font-size: 2.25rem !important;
+    line-height: 2.5rem !important;
+  }
+}
+
 body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__body--source-layout) .whipify-feature-grid__title {
   margin-bottom: 0.75rem !important;
 }
@@ -4522,6 +6510,10 @@ body.whipify-elementor-visual-fidelity-mode .whipify-pricing-table__intro {
   line-height: 1.555 !important;
 }
 
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__intro {
+  margin: 1.5rem auto 3rem !important;
+}
+
 body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.max-w-7xl) .whipify-feature-grid__intro,
 body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.max-w-5xl) .whipify-feature-grid__intro,
 body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.max-w-6xl.lg\\:grid-cols-4:not(.mb-8)) .whipify-feature-grid__intro {
@@ -4534,6 +6526,14 @@ body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-f
 
 body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.max-w-6xl.mb-8) .whipify-feature-grid__intro {
   max-width: 48rem !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .whipify-feature-grid__body .text-primary {
+  color: hsl(var(--primary, 180 100% 25%)) !important;
+}
+
+body.whipify-elementor-visual-fidelity-mode .elementor .whipify-feature-grid__body .text-accent {
+  color: hsl(var(--accent, 14 100% 60%)) !important;
 }
 
 body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__body p.text-sm {
@@ -4583,6 +6583,12 @@ body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards > .elem
 body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards > .elementor-widget-whipify_feature_card > .elementor-widget-container,
 body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__cards > .elementor-widget-whipify_feature_card .whipify-feature-grid__card {
   height: 100%;
+}
+
+body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid__icon svg {
+  width: 2rem !important;
+  height: 2rem !important;
+  display: block;
 }
 
 body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-feature-grid__cards.mb-8.lg\\:grid-cols-4) .whipify-feature-grid__icon {
@@ -4711,31 +6717,984 @@ body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-f
     }
   }
 
+  function normalizeWhipifyElementorFaqText(value) {
+    return String(value || '')
+      .replace(/\\s+/g, ' ')
+      .replace(/[\\-\\/]/g, ' ')
+      .replace(/[\\u2018\\u2019]/g, "'")
+      .replace(/[\\u201C\\u201D]/g, '"')
+      .trim()
+      .toLowerCase();
+  }
+
+  var fallbackMoveOutFaqAnswers = [
+    {
+      pattern: /need.*home.*move.*out|present.*move.*out/,
+      answer: 'No, you do not need to be present. Provide access to the home and the cleaning team can lock up after the service is complete.'
+    },
+    {
+      pattern: /how long.*move.*out.*cleaning|move.*out.*cleaning.*take/,
+      answer: 'Move-out cleaning time depends on home size and condition. Smaller apartments are usually completed in a few hours, while larger homes can take most of the day.'
+    },
+    {
+      pattern: /clean before.*arrive|prepare.*move.*out/,
+      answer: 'For move-in and move-out cleaning, the home should be empty before the team arrives, including personal belongings, furniture, and trash.'
+    },
+    {
+      pattern: /security deposit|deposit back/,
+      answer: 'While no cleaner can control every landlord decision, a detailed move-out clean helps meet common property-management expectations and reduces cleaning-related deposit issues.'
+    },
+    {
+      pattern: /supplies and equipment|cleaning supplies|bring.*equipment/,
+      answer: 'Yes, the cleaning team brings the needed supplies and equipment. Eco-friendly products can be requested when available.'
+    }
+  ];
+
+  function tokenizeWhipifyElementorFaqText(value) {
+    var stopWords = {
+      a: true, an: true, and: true, are: true, can: true, do: true, does: true, i: true, in: true, is: true,
+      my: true, of: true, or: true, the: true, to: true, what: true, when: true, where: true, will: true,
+      you: true, your: true
+    };
+
+    return normalizeWhipifyElementorFaqText(value)
+      .replace(/[^a-z0-9 ]/g, ' ')
+      .split(/\\s+/)
+      .filter(function(token) {
+        return token && !stopWords[token];
+      });
+  }
+
+  function findFallbackWhipifyElementorFaqAnswer(question) {
+    var normalizedQuestion = normalizeWhipifyElementorFaqText(question);
+    var fallback = fallbackMoveOutFaqAnswers.filter(function(item) {
+      return item.pattern.test(normalizedQuestion);
+    })[0];
+
+    return (fallback && fallback.answer) || '';
+  }
+
+  function findWhipifyElementorFaqAnswer(question) {
+    var data = Array.isArray(window.FAQ_DATA) ? window.FAQ_DATA : [];
+    var normalizedQuestion = normalizeWhipifyElementorFaqText(question);
+    var exact = data.filter(function(item) {
+      return normalizeWhipifyElementorFaqText(item && item.q) === normalizedQuestion;
+    })[0];
+    if (exact) return exact.a || '';
+
+    var fuzzy = data.filter(function(item) {
+      var candidate = normalizeWhipifyElementorFaqText(item && item.q);
+      return candidate && (candidate.indexOf(normalizedQuestion) !== -1 || normalizedQuestion.indexOf(candidate) !== -1);
+    })[0];
+
+    if (fuzzy) return fuzzy.a || '';
+
+    var questionTokens = tokenizeWhipifyElementorFaqText(question);
+    var overlap = data.map(function(item) {
+      var candidateTokens = tokenizeWhipifyElementorFaqText(item && item.q);
+      var shared = candidateTokens.filter(function(token) {
+        return questionTokens.indexOf(token) !== -1;
+      }).length;
+      return {
+        item: item,
+        score: candidateTokens.length ? shared / candidateTokens.length : 0,
+        shared: shared
+      };
+    }).sort(function(a, b) {
+      return b.score - a.score || b.shared - a.shared;
+    })[0];
+
+    if (overlap && (overlap.score >= 0.7 || overlap.shared >= 4)) {
+      return (overlap.item && overlap.item.a) || '';
+    }
+
+    return findFallbackWhipifyElementorFaqAnswer(question);
+  }
+
+  function getWhipifyElementorRadixAccordionItem(trigger) {
+    var header = trigger.closest('h1,h2,h3,h4,h5,h6');
+    if (header && header.parentElement && header.parentElement.hasAttribute('data-state')) {
+      return header.parentElement;
+    }
+
+    var parent = trigger.parentElement;
+    while (parent && parent !== document.body) {
+      if (parent.hasAttribute && parent.hasAttribute('data-state') && parent.querySelector && parent.querySelector('[role="region"]')) {
+        return parent;
+      }
+      parent = parent.parentElement;
+    }
+
+    return null;
+  }
+
+  {
+    var normalizeWhipifyElementorBreadcrumbText = function normalizeWhipifyElementorBreadcrumbText(label) {
+      return (label || '')
+        .replace(/Move\\s+In\\s+Move\\s+Out\\s+Cleaning/gi, 'Move In/Out Cleaning')
+        .replace(/Move\\s+In\\s+Out\\s+Cleaning/gi, 'Move In/Out Cleaning')
+        .replace(/\\s+/g, ' ')
+        .trim();
+    };
+
+    var splitWhipifyElementorBreadcrumbLabel = function(label) {
+      label = normalizeWhipifyElementorBreadcrumbText(label);
+      var legacyServiceLabels = {
+        'Edmonton Services': {
+          parentLabel: 'Edmonton',
+          parentHref: '/edmonton/',
+          currentLabel: 'Services'
+        },
+        'Calgary Services': {
+          parentLabel: 'Calgary',
+          parentHref: '/calgary/',
+          currentLabel: 'Services'
+        }
+      };
+      if (legacyServiceLabels[label]) {
+        return legacyServiceLabels[label];
+      }
+
+      var cityMatch = label.match(/^(Edmonton|Calgary)\\s+(.+)$/i);
+      if (cityMatch && cityMatch[2]) {
+        var cityLabel = cityMatch[1].charAt(0).toUpperCase() + cityMatch[1].slice(1).toLowerCase();
+        return {
+          parentLabel: cityLabel,
+          parentHref: '/' + cityLabel.toLowerCase() + '/',
+          currentLabel: cityMatch[2].trim()
+        };
+      }
+
+      var locationsMatch = label.match(/^Locations\\s+(.+)$/i);
+      if (locationsMatch && locationsMatch[1]) {
+        return {
+          parentLabel: 'Locations',
+          parentHref: '/locations/',
+          currentLabel: locationsMatch[1].trim()
+        };
+      }
+
+      return null;
+    };
+
+    window.setupWhipifyElementorBreadcrumbLayout = function setupWhipifyElementorBreadcrumbLayout(root) {
+      root = root || document;
+      Array.prototype.slice.call(root.querySelectorAll('.tf-elementor-breadcrumbs')).forEach(function(breadcrumbs) {
+        breadcrumbs.style.setProperty('margin', '0 auto', 'important');
+        breadcrumbs.style.setProperty('height', '20px', 'important');
+        breadcrumbs.style.setProperty('min-height', '20px', 'important');
+        breadcrumbs.style.setProperty('line-height', '20px', 'important');
+
+        Array.prototype.slice.call(breadcrumbs.querySelectorAll('a, span')).forEach(function(part) {
+          var normalized = normalizeWhipifyElementorBreadcrumbText(part.textContent || '');
+          if (normalized && normalized !== (part.textContent || '').trim()) {
+            part.textContent = normalized;
+          }
+        });
+
+        if (breadcrumbs.querySelector('.tf-elementor-breadcrumbs__parent')) return;
+
+        var current = breadcrumbs.querySelector('.tf-elementor-breadcrumbs__current');
+        if (!current || current.getAttribute('data-whipify-breadcrumb-split') === '1') return;
+
+        var split = splitWhipifyElementorBreadcrumbLabel(current.textContent || '');
+        if (!split || !split.currentLabel || split.currentLabel === split.parentLabel) return;
+
+        var parent = document.createElement('a');
+        parent.className = 'tf-elementor-breadcrumbs__parent';
+        parent.href = split.parentHref;
+        parent.textContent = split.parentLabel;
+
+        var separator = document.createElement('span');
+        separator.className = 'tf-elementor-breadcrumbs__separator';
+        separator.setAttribute('aria-hidden', 'true');
+        separator.innerHTML = '&rsaquo;';
+
+        var firstSeparator = breadcrumbs.querySelector('.tf-elementor-breadcrumbs__separator');
+        if (firstSeparator) {
+          firstSeparator.style.setProperty('margin-left', '60px', 'important');
+          firstSeparator.style.setProperty('margin-right', '6px', 'important');
+          firstSeparator.style.setProperty('width', '14px', 'important');
+          firstSeparator.style.setProperty('display', 'inline-flex', 'important');
+          firstSeparator.style.setProperty('align-items', 'center', 'important');
+          firstSeparator.style.setProperty('justify-content', 'center', 'important');
+        }
+        parent.style.setProperty('margin-left', '0px', 'important');
+        separator.style.setProperty('margin-left', '12px', 'important');
+        separator.style.setProperty('margin-right', '6px', 'important');
+        separator.style.setProperty('width', '14px', 'important');
+        separator.style.setProperty('display', 'inline-flex', 'important');
+        separator.style.setProperty('align-items', 'center', 'important');
+        separator.style.setProperty('justify-content', 'center', 'important');
+        current.style.setProperty('margin-left', '0px', 'important');
+
+        current.parentNode.insertBefore(parent, current);
+        current.parentNode.insertBefore(separator, current);
+        current.textContent = split.currentLabel;
+        current.setAttribute('data-whipify-breadcrumb-split', '1');
+      });
+    };
+  }
+
+  if (!window.setupWhipifyElementorCityServiceHeadings) {
+    window.setupWhipifyElementorCityServiceHeadings = function setupWhipifyElementorCityServiceHeadings(root) {
+      root = root || document;
+      Array.prototype.slice.call(root.querySelectorAll('.whipify-pricing-table__title')).forEach(function(title) {
+        var text = (title.textContent || '').replace(/\\s+/g, ' ').trim();
+        var match = text.match(/^Our Cleaning Services in (Edmonton|Calgary)$/i);
+        if (!match) return;
+
+        var prefix = 'Our Cleaning Services in ';
+        var city = match[1].charAt(0).toUpperCase() + match[1].slice(1).toLowerCase();
+        title.classList.add('whipify-city-service-title');
+        var section = title.closest('.whipify-pricing-table');
+        if (section) {
+          section.classList.add('whipify-city-service-pricing-table');
+        }
+        title.innerHTML = prefix + '<span class="text-accent">' + city + '</span>';
+        var mobile = window.matchMedia && window.matchMedia('(max-width: 767px)').matches;
+        title.style.setProperty('font-size', mobile ? '36px' : '48px', 'important');
+        title.style.setProperty('line-height', mobile ? '40px' : '48px', 'important');
+        title.style.setProperty('font-weight', '700', 'important');
+        title.style.setProperty('color', 'hsl(var(--foreground, 222 47% 11%))', 'important');
+        title.style.setProperty('max-width', mobile ? '18rem' : 'none', 'important');
+        title.style.setProperty('margin-left', 'auto', 'important');
+        title.style.setProperty('margin-right', 'auto', 'important');
+        title.style.setProperty('margin-bottom', '1.5rem', 'important');
+
+        var accent = title.querySelector('.text-accent');
+        if (accent) {
+          accent.style.setProperty('color', 'hsl(var(--accent, 14 100% 60%))', 'important');
+          accent.style.setProperty('display', mobile ? 'block' : 'inline', 'important');
+        }
+      });
+    };
+  }
+
+  if (!window.setupWhipifyElementorRadixTabs) {
+    window.setupWhipifyElementorRadixTabs = function setupWhipifyElementorRadixTabs(root) {
+      root = root || document;
+      var tabLists = Array.prototype.slice.call(root.querySelectorAll('[role="tablist"]'));
+
+      function resolvePanel(trigger) {
+        var panelId = trigger.getAttribute('aria-controls');
+        if (!panelId) return null;
+        return root.getElementById ? root.getElementById(panelId) : document.getElementById(panelId);
+      }
+
+      function setSelected(triggers, activeTrigger) {
+        triggers.forEach(function(trigger) {
+          var active = trigger === activeTrigger;
+          var panel = resolvePanel(trigger);
+
+          trigger.setAttribute('aria-selected', active ? 'true' : 'false');
+          trigger.setAttribute('data-state', active ? 'active' : 'inactive');
+          trigger.setAttribute('tabindex', active ? '0' : '-1');
+
+          if (!panel) return;
+          panel.setAttribute('data-state', active ? 'active' : 'inactive');
+          if (active) {
+            panel.removeAttribute('hidden');
+            panel.style.display = '';
+          } else {
+            panel.setAttribute('hidden', '');
+            panel.style.display = 'none';
+          }
+        });
+      }
+
+      tabLists.forEach(function(tabList) {
+        if (tabList.dataset.whipifyRadixTabsReady === 'true') return;
+        var triggers = Array.prototype.slice.call(tabList.querySelectorAll('[role="tab"][aria-controls]'));
+        if (triggers.length < 2) return;
+
+        var activeTrigger = triggers.filter(function(trigger) {
+          return trigger.getAttribute('aria-selected') === 'true' || trigger.getAttribute('data-state') === 'active';
+        })[0] || triggers[0];
+
+        tabList.dataset.whipifyRadixTabsReady = 'true';
+        setSelected(triggers, activeTrigger);
+
+        triggers.forEach(function(trigger, index) {
+          trigger.type = trigger.type || 'button';
+          trigger.addEventListener('click', function(event) {
+            event.preventDefault();
+            setSelected(triggers, trigger);
+            trigger.focus({ preventScroll: true });
+          });
+          trigger.addEventListener('keydown', function(event) {
+            var nextIndex = index;
+            if (event.key === 'ArrowRight' || event.key === 'ArrowDown') nextIndex = (index + 1) % triggers.length;
+            if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') nextIndex = (index - 1 + triggers.length) % triggers.length;
+            if (event.key === 'Home') nextIndex = 0;
+            if (event.key === 'End') nextIndex = triggers.length - 1;
+            if (nextIndex === index) return;
+            event.preventDefault();
+            setSelected(triggers, triggers[nextIndex]);
+            triggers[nextIndex].focus({ preventScroll: true });
+          });
+        });
+      });
+    };
+  }
+
+  if (!window.setupWhipifyElementorRadixAccordions) {
+    window.setupWhipifyElementorRadixAccordions = function setupWhipifyElementorRadixAccordions(root) {
+      root = root || document;
+      var triggers = Array.prototype.slice.call(root.querySelectorAll('button[aria-controls][data-state], button[aria-controls][aria-expanded]'));
+
+      var resolvePanel = function(trigger) {
+        var panelId = trigger.getAttribute('aria-controls');
+        if (!panelId) return null;
+        return root.getElementById ? root.getElementById(panelId) : document.getElementById(panelId);
+      };
+
+      var setOpen = function(trigger, panel, open) {
+        var item = getWhipifyElementorRadixAccordionItem(trigger);
+        trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+        trigger.setAttribute('data-state', open ? 'open' : 'closed');
+        if (item) item.setAttribute('data-state', open ? 'open' : 'closed');
+        panel.setAttribute('data-state', open ? 'open' : 'closed');
+        panel.removeAttribute('hidden');
+        panel.style.overflow = 'hidden';
+        panel.style.transition = 'max-height 0.25s ease';
+        panel.style.maxHeight = open ? panel.scrollHeight + 'px' : '0px';
+        var chevron = trigger.querySelector('svg');
+        if (chevron) {
+          chevron.style.transition = 'transform 0.2s ease';
+          chevron.style.transform = open ? 'rotate(180deg)' : 'rotate(0deg)';
+        }
+      };
+
+      triggers.forEach(function(trigger) {
+        if (trigger.dataset.whipifyRadixFaqReady === 'true') return;
+        var panel = resolvePanel(trigger);
+        if (!panel || panel.getAttribute('role') !== 'region') return;
+
+        var question = (trigger.textContent || '').replace(/\\s+/g, ' ').trim();
+        if (!question || !/\\?/.test(question)) return;
+
+        if ((panel.textContent || '').trim().length < 10) {
+          var answer = findWhipifyElementorFaqAnswer(question);
+          if (answer) {
+            panel.innerHTML = '<div class="pb-4 pt-0 text-sm" style="padding: 0 0 1rem 0; color: hsl(var(--muted-foreground, 215 16% 47%)); font-size: 0.875rem; line-height: 1.6;">' + answer + '</div>';
+          }
+        }
+
+        if ((panel.textContent || '').trim().length < 10) return;
+
+        trigger.dataset.whipifyRadixFaqReady = 'true';
+        setOpen(trigger, panel, trigger.getAttribute('aria-expanded') === 'true' || trigger.getAttribute('data-state') === 'open');
+
+        trigger.addEventListener('click', function(event) {
+          event.preventDefault();
+          var item = getWhipifyElementorRadixAccordionItem(trigger);
+          var group = item && item.parentElement ? item.parentElement : trigger.parentElement;
+          var nextOpen = trigger.getAttribute('aria-expanded') !== 'true';
+
+          if (group && nextOpen) {
+            Array.prototype.slice.call(group.querySelectorAll('button[aria-controls][data-state], button[aria-controls][aria-expanded]')).forEach(function(otherTrigger) {
+              if (otherTrigger === trigger) return;
+              var otherPanel = resolvePanel(otherTrigger);
+              if (otherPanel) setOpen(otherTrigger, otherPanel, false);
+            });
+          }
+
+          setOpen(trigger, panel, nextOpen);
+        });
+      });
+    };
+  }
+
+  if (!window.setupWhipifyElementorRadixFaqClosedRowHeights) {
+    window.setupWhipifyElementorRadixFaqClosedRowHeights = function setupWhipifyElementorRadixFaqClosedRowHeights(root) {
+      root = root || document;
+      var isMobile = window.matchMedia && window.matchMedia('(max-width: 767px)').matches;
+      var triggers = Array.prototype.slice.call(root.querySelectorAll('button[aria-controls][data-state], button[aria-controls][aria-expanded]'));
+
+      triggers.forEach(function(trigger) {
+        var questionText = (trigger.textContent || '').replace(/\\s+/g, ' ').replace(/[+\\-]\\s*$/, '').trim();
+        if (!questionText || questionText.indexOf('?') === -1) return;
+
+        var item = trigger.closest('.bg-white.rounded-xl.px-6.border-2.border-border');
+        if (!item) {
+          var stateItem = trigger.closest('[data-state][data-orientation]');
+          item = stateItem && stateItem.parentElement ? stateItem.parentElement : null;
+        }
+        if (!item) return;
+
+        var section = item.closest('section');
+        if (!section || (section.textContent || '').indexOf('Move Out Cleaning') === -1) return;
+
+        if (!isMobile) {
+          if (item.dataset && item.dataset.whipifyRadixFaqRowHeight === 'true') {
+            item.style.removeProperty('min-height');
+            delete item.dataset.whipifyRadixFaqRowHeight;
+          }
+          return;
+        }
+
+        var closedRowMinHeight = questionText.length < 40 ? '76px' : '100px';
+        item.style.setProperty('min-height', closedRowMinHeight, 'important');
+        if (item.dataset) item.dataset.whipifyRadixFaqRowHeight = 'true';
+      });
+    };
+  }
+
+  if (!window.setupWhipifyElementorRoutePhoneContext) {
+    window.setupWhipifyElementorRoutePhoneContext = function setupWhipifyElementorRoutePhoneContext(root) {
+      root = root || document;
+      var path = (window.location && window.location.pathname ? window.location.pathname : '').toLowerCase();
+      var city = path.indexOf('/calgary') === 0 ? 'calgary' : (path.indexOf('/edmonton') === 0 ? 'edmonton' : '');
+      var phone = null;
+      if (city === 'calgary') {
+        phone = { text: '(403) 768-1341', href: 'tel:4037681341' };
+      } else if (city === 'edmonton') {
+        phone = { text: '780-913-6565', href: 'tel:7809136565' };
+      }
+
+      var phoneNumberPattern = /(?:\\(\\d{3}\\)|\\d{3})[-.)\\s]*\\d{3}[-.\\s]*\\d{4}/g;
+      var replaceWhipifyElementorPhoneText = function replaceWhipifyElementorPhoneText(link, phoneText) {
+        var replaced = false;
+        var replaceInNode = function replaceInNode(node) {
+          if (!node) return;
+          if (node.nodeType === 3 && phoneNumberPattern.test(node.nodeValue || '')) {
+            node.nodeValue = node.nodeValue.replace(phoneNumberPattern, phoneText);
+            replaced = true;
+            return;
+          }
+          phoneNumberPattern.lastIndex = 0;
+          Array.prototype.slice.call(node.childNodes || []).forEach(replaceInNode);
+        };
+        replaceInNode(link);
+        phoneNumberPattern.lastIndex = 0;
+        var text = (link.textContent || '').replace(/\\s+/g, ' ').trim();
+        if (!replaced && phoneNumberPattern.test(text)) {
+          link.textContent = phoneText;
+        }
+        phoneNumberPattern.lastIndex = 0;
+      };
+
+      if (phone) {
+        Array.prototype.slice.call(root.querySelectorAll('a[href^="tel:"]')).forEach(function(link) {
+          link.setAttribute('href', phone.href);
+          replaceWhipifyElementorPhoneText(link, phone.text);
+        });
+      }
+
+      var regionalRouteMap = {
+        calgary: {
+          '/pricing': '/calgary-pricing/',
+          '/edmonton/pricing': '/calgary-pricing/',
+          '/edmonton-pricing': '/calgary-pricing/',
+          '/services': '/calgary-services/',
+          '/all-services': '/calgary-services/',
+          '/edmonton/services': '/calgary-services/',
+          '/edmonton-services': '/calgary-services/',
+          '/move-in-move-out-cleaning': '/calgary-move-in-move-out-cleaning/',
+          '/edmonton/move-in-move-out-cleaning': '/calgary-move-in-move-out-cleaning/',
+          '/edmonton-move-in-move-out-cleaning': '/calgary-move-in-move-out-cleaning/',
+          '/post-construction-cleaning': '/calgary-post-construction-cleaning/',
+          '/edmonton/post-construction-cleaning': '/calgary-post-construction-cleaning/',
+          '/edmonton-post-construction-cleaning': '/calgary-post-construction-cleaning/',
+          '/airbnb-cleaning': '/calgary-airbnb-cleaning/',
+          '/edmonton/airbnb-cleaning': '/calgary-airbnb-cleaning/',
+          '/edmonton-airbnb-cleaning': '/calgary-airbnb-cleaning/',
+          '/wall-washing': '/calgary-wall-washing/',
+          '/edmonton/wall-washing': '/calgary-wall-washing/',
+          '/edmonton-wall-washing': '/calgary-wall-washing/'
+        },
+        edmonton: {
+          '/pricing': '/edmonton-pricing/',
+          '/calgary/pricing': '/edmonton-pricing/',
+          '/calgary-pricing': '/edmonton-pricing/',
+          '/services': '/edmonton-services/',
+          '/all-services': '/edmonton-services/',
+          '/calgary/services': '/edmonton-services/',
+          '/calgary-services': '/edmonton-services/',
+          '/move-in-move-out-cleaning': '/edmonton-move-in-move-out-cleaning/',
+          '/calgary/move-in-move-out-cleaning': '/edmonton-move-in-move-out-cleaning/',
+          '/calgary-move-in-move-out-cleaning': '/edmonton-move-in-move-out-cleaning/',
+          '/post-construction-cleaning': '/edmonton-post-construction-cleaning/',
+          '/calgary/post-construction-cleaning': '/edmonton-post-construction-cleaning/',
+          '/calgary-post-construction-cleaning': '/edmonton-post-construction-cleaning/',
+          '/airbnb-cleaning': '/edmonton-airbnb-cleaning/',
+          '/calgary/airbnb-cleaning': '/edmonton-airbnb-cleaning/',
+          '/calgary-airbnb-cleaning': '/edmonton-airbnb-cleaning/',
+          '/wall-washing': '/edmonton-wall-washing/',
+          '/calgary/wall-washing': '/edmonton-wall-washing/',
+          '/calgary-wall-washing': '/edmonton-wall-washing/'
+        }
+      };
+      var routeMap = regionalRouteMap[city];
+      if (!routeMap) return;
+
+      Array.prototype.slice.call(root.querySelectorAll('a[href]')).forEach(function(link) {
+        var rawHref = link.getAttribute('href') || '';
+        if (!rawHref || rawHref.charAt(0) === '#' || /^(tel|mailto):/i.test(rawHref)) return;
+
+        var url;
+        try {
+          url = new URL(rawHref, window.location.origin);
+        } catch (error) {
+          return;
+        }
+
+        if (url.origin !== window.location.origin) return;
+        var normalizedPath = url.pathname.replace(/\\/+$/, '').toLowerCase() || '/';
+        var target = routeMap[normalizedPath];
+        if (!target) return;
+
+        link.setAttribute('href', new URL(target + (url.hash || ''), window.location.origin).href);
+      });
+    };
+  }
+
+  if (!window.setupWhipifyElementorMobileStickyCtaDedupe) {
+    window.setupWhipifyElementorMobileStickyCtaDedupe = function setupWhipifyElementorMobileStickyCtaDedupe(root) {
+      root = root || document;
+      var seen = {};
+      Array.prototype.slice.call(root.querySelectorAll('[class~="md:hidden"][class~="fixed"][class~="bottom-0"]')).forEach(function(bar) {
+        if (!(bar instanceof HTMLElement)) return;
+
+        var text = (bar.textContent || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+        var links = Array.prototype.slice.call(bar.querySelectorAll('a[href]')).map(function(link) {
+          return (link.getAttribute('href') || '').replace(/\\/+$/, '');
+        }).join('|');
+        var signature = text + '::' + links;
+
+        if (seen[signature]) {
+          bar.setAttribute('data-whipify-duplicate-sticky-cta', 'true');
+          bar.setAttribute('aria-hidden', 'true');
+          bar.style.setProperty('display', 'none', 'important');
+          bar.style.setProperty('visibility', 'hidden', 'important');
+          bar.style.setProperty('pointer-events', 'none', 'important');
+          return;
+        }
+
+        seen[signature] = true;
+        bar.removeAttribute('data-whipify-duplicate-sticky-cta');
+        bar.removeAttribute('aria-hidden');
+        bar.style.removeProperty('display');
+        bar.style.removeProperty('visibility');
+        bar.style.removeProperty('pointer-events');
+      });
+    };
+  }
+
   if (!window.setupWhipifyElementorFaqs) {
     window.setupWhipifyElementorFaqs = function setupWhipifyElementorFaqs(root) {
       root = root || document;
+      if (document.body && document.body.classList.contains('elementor-editor-active')) return;
 
       root.querySelectorAll('.whipify-faq-section details[open]').forEach(function(details) {
         details.removeAttribute('open');
       });
+
+      function compactText(node) {
+        return ((node && node.textContent) || '').replace(/\s+/g, ' ').trim();
+      }
+
+      function findExistingFaqAnswers(item, trigger) {
+        return Array.prototype.slice.call(item.children).filter(function(candidate) {
+          if (!candidate || candidate === trigger) return false;
+          if (candidate.classList && candidate.classList.contains('elementor-widget-button')) return false;
+          if (/^h[1-6]$/i.test(candidate.tagName || '')) return false;
+          if (candidate.querySelector && candidate.querySelector('.elementor-widget-button')) return false;
+
+          var text = compactText(candidate);
+          if (text.length < 10) return false;
+
+          var className = candidate.className || '';
+          return /whipify-faq-answer|overflow-hidden|text-sm|leading-relaxed|pb-5|px-5/.test(className)
+            || candidate.querySelector('.elementor-widget-text-editor, p, div');
+        });
+      }
+
+      function closeSiblingFaqItems(item) {
+        var group = item && item.parentElement;
+        if (!group) return;
+
+        Array.prototype.slice.call(group.children).forEach(function(sibling) {
+          if (sibling === item || !sibling.classList || !sibling.classList.contains('is-whipify-faq-open')) return;
+          sibling.classList.remove('is-whipify-faq-open');
+          Array.prototype.slice.call(sibling.querySelectorAll('.elementor-widget-button[data-whipify-faq-ready="true"] a, .elementor-widget-button[data-whipify-faq-ready="true"] button, .elementor-widget-button[data-whipify-faq-ready="true"] .elementor-button')).forEach(function(control) {
+            control.setAttribute('aria-expanded', 'false');
+          });
+        });
+      }
 
       root.querySelectorAll('.elementor .max-w-3xl .elementor-widget-button.w-full, .elementor .max-w-3xl .elementor-widget-button[class*="justify-between"]').forEach(function(trigger) {
         if (trigger.dataset.whipifyFaqReady === 'true') return;
         var link = trigger.querySelector('a, button');
         if (!link) return;
 
-        var answer = trigger.nextElementSibling;
-        if (!answer || answer.classList.contains('whipify-faq-answer')) return;
+        var item = trigger.closest('.e-con') || trigger.parentElement;
+        if (!item) return;
+
+        var answers = findExistingFaqAnswers(item, trigger);
+        var answer = answers.slice().sort(function(a, b) {
+          return compactText(b).length - compactText(a).length;
+        })[0] || null;
+        if (!answer) return;
+
+        answers.forEach(function(candidate) {
+          candidate.classList.add('whipify-faq-answer');
+          candidate.classList.toggle('whipify-faq-answer--duplicate', candidate !== answer);
+          candidate.setAttribute('aria-hidden', candidate === answer ? 'false' : 'true');
+        });
         answer.classList.add('whipify-faq-answer');
+        answer.classList.remove('whipify-faq-answer--duplicate');
+        answer.setAttribute('aria-hidden', 'false');
+
         link.setAttribute('aria-expanded', 'false');
         trigger.dataset.whipifyFaqReady = 'true';
 
         link.addEventListener('click', function(event) {
           event.preventDefault();
-          var open = trigger.classList.toggle('is-whipify-faq-open');
+          var open = !item.classList.contains('is-whipify-faq-open');
+          if (open) closeSiblingFaqItems(item);
+          item.classList.toggle('is-whipify-faq-open', open);
           link.setAttribute('aria-expanded', open ? 'true' : 'false');
         });
       });
+    };
+  }
+
+  {
+    window.setupWhipifyElementorResponsiveTailwindLayout = function setupWhipifyElementorResponsiveTailwindLayout(root) {
+      root = root || document;
+      var viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+
+      function applyGridColumns(grid, count) {
+        if (!grid || !count) return;
+        var template = 'repeat(' + count + ', minmax(0, 1fr))';
+        grid.style.setProperty('display', 'grid', 'important');
+        grid.style.setProperty('--display', 'grid', 'important');
+        grid.style.setProperty('--e-con-grid-template-columns', template, 'important');
+        grid.style.setProperty('grid-template-columns', template, 'important');
+        grid.style.setProperty('grid-template-rows', 'none', 'important');
+        grid.style.setProperty('--e-con-grid-template-rows', 'none', 'important');
+      }
+
+      Array.prototype.slice.call(root.querySelectorAll('.elementor .e-con.grid, .elementor .elementor-element.e-con[class*="grid-cols"]')).forEach(function(grid) {
+        if (!grid.classList) return;
+        if (viewportWidth >= 1024 && grid.classList.contains('lg:grid-cols-4')) {
+          grid.style.setProperty('--e-con-grid-template-columns', 'repeat(4, minmax(0, 1fr))', 'important');
+          grid.style.setProperty('grid-template-columns', 'repeat(4, minmax(0, 1fr))', 'important');
+          grid.style.setProperty('grid-template-rows', 'none', 'important');
+          grid.style.setProperty('--e-con-grid-template-rows', 'none', 'important');
+          return;
+        }
+        if (viewportWidth >= 1024 && grid.classList.contains('lg:grid-cols-3')) {
+          applyGridColumns(grid, 3);
+          return;
+        }
+        if (viewportWidth >= 1024 && grid.classList.contains('lg:grid-cols-2')) {
+          applyGridColumns(grid, 2);
+          return;
+        }
+        if (viewportWidth >= 768 && grid.classList.contains('md:grid-cols-4')) {
+          applyGridColumns(grid, 4);
+          return;
+        }
+        if (viewportWidth >= 768 && grid.classList.contains('md:grid-cols-3')) {
+          applyGridColumns(grid, 3);
+          return;
+        }
+        if (viewportWidth >= 768 && grid.classList.contains('md:grid-cols-2')) {
+          applyGridColumns(grid, 2);
+          return;
+        }
+        if (grid.classList.contains('grid-cols-4')) {
+          applyGridColumns(grid, 4);
+        } else if (grid.classList.contains('grid-cols-3')) {
+          applyGridColumns(grid, 3);
+        } else if (grid.classList.contains('grid-cols-2')) {
+          applyGridColumns(grid, 2);
+        } else if (grid.classList.contains('grid-cols-1')) {
+          applyGridColumns(grid, 1);
+        }
+      });
+
+      Array.prototype.slice.call(root.querySelectorAll('.elementor .e-con.flex.gap-6.transition-transform')).forEach(function(track) {
+        track.style.setProperty('display', 'flex', 'important');
+        track.style.setProperty('flex-direction', 'row', 'important');
+        track.style.setProperty('flex-wrap', 'nowrap', 'important');
+        Array.prototype.slice.call(track.children || []).forEach(function(child) {
+          if (!child.classList || !child.classList.contains('md:w-1/3')) return;
+          child.style.setProperty('width', '100%', 'important');
+          child.style.setProperty('max-width', '100%', 'important');
+          child.style.setProperty('flex-basis', '100%', 'important');
+          child.style.setProperty('flex', '0 0 100%', 'important');
+        });
+      });
+
+      Array.prototype.slice.call(root.querySelectorAll('.elementor .elementor-element.e-con[class*="overflow-x-auto"]')).forEach(function(mobileStrip) {
+        if (!mobileStrip.classList || !mobileStrip.classList.contains('overflow-x-auto') || !mobileStrip.classList.contains('md:hidden')) return;
+        if (viewportWidth >= 768) {
+          mobileStrip.style.setProperty('display', 'none', 'important');
+          return;
+        }
+        mobileStrip.style.setProperty('display', 'block', 'important');
+        mobileStrip.style.setProperty('--display', 'block', 'important');
+        mobileStrip.style.setProperty('overflow-x', 'auto', 'important');
+        mobileStrip.style.setProperty('overflow-y', 'hidden', 'important');
+        mobileStrip.style.setProperty('margin-left', '-1rem', 'important');
+        mobileStrip.style.setProperty('margin-right', '-1rem', 'important');
+        mobileStrip.style.setProperty('padding-left', '1rem', 'important');
+        mobileStrip.style.setProperty('padding-right', '1rem', 'important');
+        mobileStrip.style.setProperty('width', 'calc(100% + 2rem)', 'important');
+        mobileStrip.style.setProperty('max-width', 'none', 'important');
+        Array.prototype.slice.call(mobileStrip.querySelectorAll('.e-con.flex.gap-4')).forEach(function(row) {
+          row.style.setProperty('display', 'flex', 'important');
+          row.style.setProperty('flex-direction', 'row', 'important');
+          row.style.setProperty('flex-wrap', 'nowrap', 'important');
+          row.style.setProperty('gap', '1rem', 'important');
+          row.style.setProperty('width', 'max-content', 'important');
+          row.style.setProperty('max-width', 'none', 'important');
+          Array.prototype.slice.call(row.children || []).forEach(function(card) {
+            if (!card.classList || !card.classList.contains('min-w-[300px]')) return;
+            card.style.setProperty('width', '300px', 'important');
+            card.style.setProperty('min-width', '300px', 'important');
+            card.style.setProperty('max-width', '300px', 'important');
+            card.style.setProperty('flex-basis', '300px', 'important');
+            card.style.setProperty('flex', '0 0 300px', 'important');
+          });
+        });
+      });
+
+      Array.prototype.slice.call(root.querySelectorAll('.elementor img[loading="lazy"]')).forEach(function(img) {
+        img.setAttribute('loading', 'eager');
+        if (img.dataset && img.dataset.src && !img.getAttribute('src')) {
+          img.setAttribute('src', img.dataset.src);
+        }
+      });
+    };
+  }
+
+  {
+    window.setupWhipifyElementorHeroCtaLayout = function setupWhipifyElementorHeroCtaLayout(root) {
+      root = root || document;
+      Array.prototype.slice.call(root.querySelectorAll('.elementor .e-con.flex.flex-col, .elementor .flex.flex-col')).forEach(function(group) {
+        if (!group.classList || !group.classList.contains('sm:flex-row') || !group.classList.contains('gap-4')) return;
+        var text = (group.textContent || '').replace(/\\s+/g, ' ').trim();
+        var isPricingHero = group.classList.contains('pt-4') && text.indexOf('See Pricing & Availability') !== -1 && text.indexOf('Call') !== -1;
+        var isMoveOutHero = text.indexOf('Get Your Free Quote') !== -1 && text.indexOf('780-913-6565') !== -1 && group.closest('section[class*="via-[hsl(180,100%,40%)]"][class*="to-[hsl(160,100%,30%)]"]');
+        if (!isPricingHero && !isMoveOutHero) return;
+
+        group.style.setProperty('display', 'flex', 'important');
+        group.style.setProperty('flex-direction', 'column', 'important');
+        group.style.setProperty('--flex-direction', 'column', 'important');
+        group.style.setProperty('align-items', 'center', 'important');
+
+        Array.prototype.slice.call(group.children || []).forEach(function(child) {
+          child.style.setProperty('margin-left', 'auto', 'important');
+          child.style.setProperty('margin-right', 'auto', 'important');
+        });
+      });
+    };
+  }
+
+  {
+    window.setupWhipifyElementorRecentWorkCardLayout = function setupWhipifyElementorRecentWorkCardLayout(root) {
+      root = root || document;
+
+      var deriveBadgeLabel = function deriveBadgeLabel(title) {
+        var normalized = (title || '').toLowerCase();
+        if (normalized.indexOf('move-out') !== -1 || normalized.indexOf('move out') !== -1) return 'Move-Out Cleaning';
+        if (normalized.indexOf('post-construction') !== -1 || normalized.indexOf('post construction') !== -1) return 'Post-Construction Cleaning';
+        if (normalized.indexOf('office') !== -1 || normalized.indexOf('party') !== -1 || normalized.indexOf('cleanup') !== -1) return 'Deep Cleaning + Office Cleanup';
+        if (normalized.indexOf('airbnb') !== -1 || normalized.indexOf('short-term') !== -1) return 'Airbnb Cleaning';
+        return 'Deep Cleaning';
+      };
+
+      var badgeColorForCard = function badgeColorForCard(card) {
+        var classes = card && card.className ? String(card.className) : '';
+        if (classes.indexOf('border-blue') !== -1 || classes.indexOf('from-blue') !== -1) return 'rgb(37, 99, 235)';
+        if (classes.indexOf('border-accent') !== -1 || classes.indexOf('from-accent') !== -1) return 'hsl(var(--accent, 14 100% 60%))';
+        if (classes.indexOf('border-purple') !== -1 || classes.indexOf('from-purple') !== -1) return 'rgb(147, 51, 234)';
+        return 'hsl(var(--primary, 180 100% 25%))';
+      };
+
+      Array.prototype.slice.call(root.querySelectorAll('.elementor .whipify-feature-grid__card')).forEach(function(card) {
+        if (card.dataset && card.dataset.whipifyRecentWorkReady === 'true') return;
+
+        var body = card.querySelector('.whipify-feature-grid__body--source-layout');
+        if (!body) return;
+        var bodyText = (body.textContent || '').replace(/\\s+/g, ' ');
+        if (bodyText.indexOf('Property Type') === -1 || bodyText.indexOf('Challenge') === -1 || bodyText.indexOf('Result') === -1) return;
+
+        var topRow = Array.prototype.slice.call(body.children || []).filter(function(child) {
+          return child.classList && child.classList.contains('flex') && child.classList.contains('items-start');
+        })[0];
+        if (!topRow) return;
+
+        var titleColumn = topRow.children && topRow.children.length > 1 ? topRow.children[1] : null;
+        var location = titleColumn ? titleColumn.querySelector('.text-sm.text-muted-foreground, p') : null;
+        var cardTitle = card.querySelector('.whipify-feature-grid__card-title');
+        if (!titleColumn || !location || !cardTitle) return;
+
+        if (!titleColumn.querySelector('.whipify-feature-grid__case-badge')) {
+          var badge = document.createElement('div');
+          badge.className = 'whipify-feature-grid__case-badge';
+          badge.textContent = deriveBadgeLabel(cardTitle.textContent || '');
+          badge.style.setProperty('display', 'inline-block', 'important');
+          badge.style.setProperty('background', badgeColorForCard(card), 'important');
+          badge.style.setProperty('color', '#fff', 'important');
+          badge.style.setProperty('border-radius', '9999px', 'important');
+          badge.style.setProperty('padding', '0.25rem 0.75rem', 'important');
+          badge.style.setProperty('font-size', '0.75rem', 'important');
+          badge.style.setProperty('font-weight', '700', 'important');
+          badge.style.setProperty('line-height', '1rem', 'important');
+          badge.style.setProperty('margin-bottom', '0.5rem', 'important');
+          titleColumn.insertBefore(badge, location);
+        }
+
+        if (cardTitle.parentElement !== titleColumn) {
+          titleColumn.insertBefore(cardTitle, location);
+        }
+        cardTitle.style.setProperty('margin', '0 0 0.25rem', 'important');
+        cardTitle.style.setProperty('font-size', '1.25rem', 'important');
+        cardTitle.style.setProperty('line-height', '1.75rem', 'important');
+        cardTitle.style.setProperty('font-weight', '700', 'important');
+        location.style.setProperty('margin', '0', 'important');
+
+        if (card.dataset) card.dataset.whipifyRecentWorkReady = 'true';
+      });
+    };
+  }
+
+  {
+    window.setupWhipifyElementorBlogCardLayout = function setupWhipifyElementorBlogCardLayout(root) {
+      root = root || document;
+
+      var createBlogCardIcon = function createBlogCardIcon(kind, className) {
+        var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor');
+        svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round');
+        svg.setAttribute('stroke-linejoin', 'round');
+        svg.setAttribute('aria-hidden', 'true');
+        svg.className.baseVal = 'whipify-blog-card-icon ' + className;
+        if (kind === 'tag') {
+          svg.innerHTML = '<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"></path><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"></circle>';
+        } else if (kind === 'calendar') {
+          svg.innerHTML = '<path d="M8 2v4"></path><path d="M16 2v4"></path><rect width="18" height="18" x="3" y="4" rx="2"></rect><path d="M3 10h18"></path>';
+        } else {
+          svg.innerHTML = '<circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline>';
+        }
+        return svg;
+      };
+
+      var prependBlogCardIcon = function prependBlogCardIcon(target, kind, className) {
+        if (!target || target.querySelector('.' + className)) return;
+        target.insertBefore(createBlogCardIcon(kind, className), target.firstChild);
+      };
+
+      Array.prototype.slice.call(root.querySelectorAll('.tf-article-trust-signals')).forEach(function(signal) {
+        signal.style.setProperty('display', 'none', 'important');
+      });
+
+      Array.prototype.slice.call(root.querySelectorAll('.whipify-feature-grid__cards.py-20.bg-background')).forEach(function(grid) {
+        Array.prototype.slice.call(grid.querySelectorAll('.whipify-feature-grid__card')).forEach(function(card) {
+          if (card.dataset && card.dataset.whipifyBlogCardReady === 'true') return;
+
+          var body = card.querySelector(':scope > .whipify-feature-grid__body');
+          var contentShell = body ? body.querySelector(':scope > .p-6') : null;
+          var title = card.querySelector(':scope > .whipify-feature-grid__card-title');
+          if (!body || !contentShell || !title) return;
+
+          var emptyMedia = body.querySelector(':scope > .aspect-video.overflow-hidden');
+          if (emptyMedia) {
+            emptyMedia.remove();
+          }
+
+          if (title.parentElement === card) {
+            var firstChild = contentShell.children && contentShell.children.length ? contentShell.children[0] : null;
+            contentShell.insertBefore(title, firstChild ? firstChild.nextSibling : contentShell.firstChild);
+          }
+
+          if (!contentShell.querySelector('.whipify-blog-read-more')) {
+            var readMore = document.createElement('a');
+            readMore.className = 'whipify-blog-read-more';
+            readMore.href = '#';
+            readMore.textContent = 'Read More';
+            contentShell.appendChild(readMore);
+          }
+
+          var categoryBadge = contentShell.querySelector('.inline-flex.items-center.gap-1.text-xs, .inline-flex.items-center.gap-1');
+          prependBlogCardIcon(categoryBadge, 'tag', 'whipify-blog-card-icon--tag');
+
+          Array.prototype.slice.call(contentShell.querySelectorAll('.flex.items-center.justify-between span')).forEach(function(meta) {
+            var metaText = (meta.textContent || '').replace(/\\s+/g, ' ').trim();
+            if (/\\b(January|February|March|April|May|June|July|August|September|October|November|December)\\b/i.test(metaText)) {
+              prependBlogCardIcon(meta, 'calendar', 'whipify-blog-card-icon--calendar');
+            } else if (/\\bmin read\\b/i.test(metaText)) {
+              prependBlogCardIcon(meta, 'clock', 'whipify-blog-card-icon--clock');
+            }
+          });
+
+          if (card.dataset) card.dataset.whipifyBlogCardReady = 'true';
+        });
+      });
+    };
+  }
+
+  {
+    window.setupWhipifyElementorMobileRhythmLayout = function setupWhipifyElementorMobileRhythmLayout(root) {
+      root = root || document;
+      if (!window.matchMedia || !window.matchMedia('(max-width: 767px)').matches) return;
+
+      var findFeatureGridSection = function findFeatureGridSection(text) {
+        return Array.prototype.slice.call(root.querySelectorAll('.elementor .whipify-feature-grid')).filter(function(section) {
+          return (section.textContent || '').indexOf(text) !== -1;
+        })[0] || null;
+      };
+
+      var findOuterSection = function findOuterSection(text) {
+        return Array.prototype.slice.call(root.querySelectorAll('.elementor .e-con-full.py-20')).filter(function(section) {
+          return (section.textContent || '').indexOf(text) !== -1;
+        }).sort(function(a, b) {
+          return b.getBoundingClientRect().height - a.getBoundingClientRect().height;
+        })[0] || null;
+      };
+
+      var meetNetwork = findFeatureGridSection('Meet Our Network of Expert Cleaners');
+      var aboutDutyCleaners = findFeatureGridSection('About Duty Cleaners');
+      var whatToExpect = findFeatureGridSection('What to Expect When You Book');
+      var expertNetwork = findFeatureGridSection('Our Edmonton Expert Network');
+      var edmontonFaqs = findOuterSection('Edmonton Cleaning FAQs');
+      var contactUs = findOuterSection('Contact Us');
+
+      if (meetNetwork) {
+        meetNetwork.style.setProperty('margin-top', '67px', 'important');
+        meetNetwork.style.setProperty('padding-bottom', '58px', 'important');
+      }
+
+      if (aboutDutyCleaners) {
+        aboutDutyCleaners.style.setProperty('padding-bottom', '35px', 'important');
+      }
+
+      if (whatToExpect) {
+        whatToExpect.style.setProperty('padding-bottom', '64px', 'important');
+      }
+
+      if (edmontonFaqs) {
+        edmontonFaqs.style.setProperty('padding-bottom', '15px', 'important');
+      }
+
+      if (expertNetwork) {
+        expertNetwork.style.setProperty('padding-bottom', '36px', 'important');
+      }
+
+      if (contactUs) {
+        var contactUsText = contactUs.textContent || '';
+        if (!/Name\\s\\*/.test(contactUsText) || !/Message\\s\\*/.test(contactUsText)) return;
+        contactUs.style.setProperty('padding-bottom', '236px', 'important');
+      }
     };
   }
 
@@ -4752,7 +7711,7 @@ body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-f
 
         var clip = track.parentElement;
         var shell = clip && clip.parentElement ? clip.parentElement : track.parentElement;
-        var visible = window.matchMedia('(min-width: 768px)').matches ? 3 : 1;
+        var visible = 1;
         var gap = parseFloat(window.getComputedStyle(track).columnGap || window.getComputedStyle(track).gap || '24') || 24;
         var maxIndex = Math.max(0, cards.length - visible);
         var index = Math.min(parseInt(track.dataset.whipifyCarouselIndex || '0', 10) || 0, maxIndex);
@@ -4797,10 +7756,11 @@ body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-f
         track.style.willChange = 'transform';
 
         cards.forEach(function(card) {
-          var width = visible === 1 ? '100%' : (100 / visible) + '%';
-          card.style.flex = '0 0 ' + width;
-          card.style.width = width;
-          card.style.maxWidth = width;
+          var width = '100%';
+          card.style.setProperty('width', width, 'important');
+          card.style.setProperty('max-width', width, 'important');
+          card.style.setProperty('flex-basis', width, 'important');
+          card.style.setProperty('flex', '0 0 ' + width, 'important');
         });
 
         function render(nextIndex) {
@@ -4930,7 +7890,7 @@ body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-f
       }
 
       Array.prototype.slice.call(root.querySelectorAll('.elementor-widget-whipify_feature_grid .whipify-feature-grid')).forEach(function(grid) {
-        grid.setAttribute('data-whipify-widget-version', '1.3.19');
+        grid.setAttribute('data-whipify-widget-version', '1.3.81');
         annotate(grid.querySelector('.whipify-feature-grid__title'), 'section_title', 'none');
         annotate(grid.querySelector('.whipify-feature-grid__intro'), 'section_intro', 'basic');
         annotate(grid.querySelector('.whipify-feature-grid__body-main'), 'section_body_html', 'advanced');
@@ -5150,12 +8110,32 @@ body.whipify-elementor-visual-fidelity-mode .whipify-feature-grid:has(.whipify-f
 
   ready(function() {
     document.body.classList.add('whipify-elementor-visual-fidelity-mode');
+    window.setupWhipifyElementorBreadcrumbLayout(document);
+    window.setupWhipifyElementorCityServiceHeadings(document);
+    window.setupWhipifyElementorRoutePhoneContext(document);
+    window.setupWhipifyElementorMobileStickyCtaDedupe(document);
+    window.setupWhipifyElementorRadixTabs(document);
+    window.setupWhipifyElementorRadixAccordions(document);
+    window.setupWhipifyElementorRadixFaqClosedRowHeights(document);
     window.setupWhipifyElementorFaqs(document);
+    window.setupWhipifyElementorResponsiveTailwindLayout(document);
+    window.setupWhipifyElementorHeroCtaLayout(document);
+    window.setupWhipifyElementorRecentWorkCardLayout(document);
+    window.setupWhipifyElementorBlogCardLayout(document);
+    window.setupWhipifyElementorMobileRhythmLayout(document);
     window.setupWhipifyElementorCarousels(document);
     window.bootWhipifyElementorFeatureGridEditability();
     window.setupWhipifyElementorFloatingPricingCta(document);
     window.setupWhipifyElementorCapturedStatCounters(document);
     window.addEventListener('resize', function() {
+      window.setupWhipifyElementorResponsiveTailwindLayout(document);
+      window.setupWhipifyElementorHeroCtaLayout(document);
+      window.setupWhipifyElementorRecentWorkCardLayout(document);
+      window.setupWhipifyElementorBlogCardLayout(document);
+      window.setupWhipifyElementorCityServiceHeadings(document);
+      window.setupWhipifyElementorMobileRhythmLayout(document);
+      window.setupWhipifyElementorRadixAccordions(document);
+      window.setupWhipifyElementorRadixFaqClosedRowHeights(document);
       window.setupWhipifyElementorCarousels(document);
       window.setupWhipifyElementorFeatureGridEditability(document);
       window.setupWhipifyElementorCapturedStatCounters(document);
@@ -5206,6 +8186,7 @@ const GENERATED_WIDGET_CLASSES = [
   'Whipify_Elementor_Map_Embed_Widget_V139',
   'Whipify_Elementor_Feature_Grid_Widget_V139',
   'Whipify_Elementor_Feature_Card_Widget_V139',
+  'Whipify_Elementor_Location_Card_Widget_V139',
   'Whipify_Elementor_Pricing_Table_Widget_V139',
   'Whipify_Elementor_Testimonial_Grid_Widget_V139',
   'Whipify_Elementor_Cta_Section_Widget_V139',

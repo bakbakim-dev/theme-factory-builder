@@ -111,3 +111,151 @@ Status values: `reviewed`, `partially reviewed`, `needs second pass`, `fixed`, `
 - reason if ignored:
 - notes: Added regression coverage for standalone Feature Card widget registration, direct card controls, converter output shape, legacy importer migration, and version marker bump.
 - related tests: npm run test:elementor-export
+
+## Focused Review Update - 2026-05-06 FAQ Answer Editor-Only Repair
+
+- path: utils/elementorPluginTemplates.ts
+- category: source
+- lane/scope: Elementor / generated importer plugin
+- review status: fixed
+- reason if ignored:
+- notes: Reviewed the FAQ accordion editor gap after a broad live patch regressed unrelated output. Added only FAQ-answer Text Editor injection, activation/import repair, and Elementor-preview-only visibility hooks. Confirmed standalone Feature Cards and zero HTML widgets were preserved.
+- related tests: npm run test:elementor-export; npm run test:elementor-output-doctor; npm run test:gutenberg-parity; php -l generated importer PHP; live public/editor verification
+
+- path: scripts/elementor-export-regression.mjs
+- category: test
+- lane/scope: Elementor
+- review status: fixed
+- reason if ignored:
+- notes: Updated importer version assertions to 1.3.26 and added guards that the FAQ editor fix is implemented through scoped answer-widget injection and preview-only visibility hooks rather than broad public CSS/runtime changes.
+- related tests: npm run test:elementor-export
+
+## Focused Review Update - 2026-05-06 Homepage Elementor Visual Parity
+
+- path: components/Dashboard.tsx
+- category: source
+- lane/scope: Elementor / generated theme CSS
+- review status: fixed
+- reason if ignored:
+- notes: Reviewed homepage visual-fidelity CSS after the live Elementor homepage diverged from the static reference. Added durable generated-theme rules for normal-flow header chrome, 1280px header max width, logo/nav spacing, source `inline-flex` sizing, and location-card decorative bubble dimensions.
+- related tests: npm run test:elementor-export; live homepage DOM/screenshot comparison
+
+- path: utils/elementorPluginTemplates.ts
+- category: source
+- lane/scope: Elementor / generated importer plugin
+- review status: fixed
+- reason if ignored:
+- notes: Mirrored the homepage header-flow, inline-flex, and location-bubble visual-fidelity rules into importer high-priority override CSS so active Elementor exports can be corrected through the importer package without relying on a separate patch plugin.
+- related tests: npm run test:elementor-export; npm run test:elementor-output-doctor; php -l generated importer PHP; live wp-admin activation; live homepage verification
+
+- path: scripts/elementor-export-regression.mjs
+- category: test
+- lane/scope: Elementor
+- review status: fixed
+- reason if ignored:
+- notes: Added regression coverage for importer/theme version 1.3.46 homepage parity rules, including header normal-flow CSS, `inline-flex` fit-content restoration, and location-card decorative bubble sizing.
+- related tests: npm run test:elementor-export
+
+## Focused Review Update - 2026-05-06 Elementor Header/FAQ/Duplicate Content
+
+- path: components/Dashboard.tsx
+- category: source
+- lane/scope: Elementor / generated theme chrome / generated visual-fidelity runtime
+- review status: fixed
+- reason if ignored:
+- notes: Reviewed existing WordPress-theme input handling and live FAQ runtime after the user requested header, FAQ, and duplicate-content verification. Added source `header.php`/`footer.php` chrome extraction, PHP-safe setup data serialization, and Radix FAQ hydration in the Elementor visual-fidelity runtime.
+- related tests: npm run test:elementor-export; npm run test:elementor-output-doctor; npm run test:gutenberg-parity; npm run build; PHP lint generated v2/v4 theme files; live 99-route crawl; live FAQ interaction check
+
+- path: scripts/elementor-export-regression.mjs
+- category: test
+- lane/scope: Elementor
+- review status: fixed
+- reason if ignored:
+- notes: Added regression assertions for WordPress-theme chrome extraction, generated `setup.php` JSON decoding, and Radix FAQ runtime hydration/one-open initialization.
+- related tests: npm run test:elementor-export
+
+## Focused Review Update - 2026-05-07 Elementor Header Routes, FAQ Scope, Locations, and Breadcrumbs
+
+- path: components/Dashboard.tsx
+- category: source
+- lane/scope: Elementor / generated theme routing / generated theme CSS
+- review status: fixed
+- reason if ignored:
+- notes: Reviewed the generated WordPress route fallback and menu rendering helpers after live header dropdowns and nested aliases still behaved incorrectly. Added default route-prefix detection from menu/route evidence, title-aware menu URL normalization, generic route fallback ordering, nested `/locations/*` fallback, and stronger generated breadcrumb spacing CSS.
+- related tests: npm run test:elementor-export; npm run build; php -l generated functions.php; live route/menu/FAQ/location verification; live crawl
+
+- path: utils/elementorPluginTemplates.ts
+- category: source
+- lane/scope: Elementor / generated importer plugin / visual-fidelity override CSS
+- review status: fixed
+- reason if ignored:
+- notes: Added the stronger `.tf-elementor-breadcrumbs > .elementor-widget + .elementor-widget` spacing rule to importer-bundled visual-fidelity CSS so breadcrumb spacing survives Elementor widget margin resets in already-installed exports.
+- related tests: npm run test:elementor-export; live locations breadcrumb metric verification
+
+- path: scripts/elementor-export-regression.mjs
+- category: test
+- lane/scope: Elementor
+- review status: fixed
+- reason if ignored:
+- notes: Added regression coverage for default route-prefix detection, title-aware menu normalization, child menu title passing, direct generic route fallback ordering, and breadcrumb child-widget spacing selectors.
+- related tests: npm run test:elementor-export
+
+## Elementor V41 Visual Parity Checkpoint - 2026-05-10
+
+- path: components/Dashboard.tsx
+- category: source
+- lane/scope: Elementor / generated theme runtime
+- review status: partially reviewed / fixed
+- notes: Reviewed and modified the visual-fidelity runtime around recent-work card headers, `.text-accent` restoration, hero CTA layout, and guarded mobile-only long-form section rhythm repair. Not a full-file audit.
+- related tests: `npm run test:elementor-export`; targeted live visual parity smoke.
+
+- path: utils/elementorPluginTemplates.ts
+- category: source
+- lane/scope: Elementor / importer plugin template/runtime
+- review status: partially reviewed / fixed
+- notes: Reviewed and modified importer-bundled visual-fidelity runtime/CSS equivalents and bumped importer version to `1.3.52`. Not a full-file audit.
+- related tests: `npm run test:elementor-export`; generated importer PHP lint; generated runtime `node --check`.
+
+- path: scripts/elementor-export-regression.mjs
+- category: test
+- lane/scope: Elementor / regression harness
+- review status: partially reviewed / fixed
+- notes: Added assertions for recent-work card header repair, mobile rhythm repair, importer/runtime version, and eager-image visual parity harness behavior.
+- related tests: `npm run test:elementor-export`.
+
+- path: scripts/elementor-visual-parity-regression.mjs
+- category: test
+- lane/scope: Elementor / visual parity harness
+- review status: partially reviewed / fixed
+- notes: Updated screenshot capture to force eager image loading and wait for image load/decode before full-page screenshots.
+- related tests: targeted and broader live visual parity runs.
+
+## Elementor V81 SaaS Visual + Interaction Parity Checkpoint - 2026-05-13
+
+- path: components/Dashboard.tsx
+- category: source
+- lane/scope: Elementor / generated theme runtime and visual-fidelity CSS
+- review status: partially reviewed / fixed
+- notes: Reviewed and modified only the Elementor visual-fidelity runtime/CSS areas needed for V81: move-out mobile service-card source heights, scoped Radix FAQ row-height repair, safer Radix accordion item lookup, FAQ answer fallback matching, and generated runtime boot order. Not a full-file audit.
+- related tests: `npm run test:elementor-export`; `npm run test:gutenberg-parity`; `npm run build`; live visual parity and interaction smoke.
+
+- path: utils/elementorPluginTemplates.ts
+- category: source
+- lane/scope: Elementor / generated importer plugin runtime and CSS
+- review status: partially reviewed / fixed
+- notes: Reviewed and modified importer-bundled Elementor runtime/CSS for active live deployments: importer version `1.3.81`, scoped move-out row-height repair, importer-bundled Radix FAQ hydrator, sibling-close behavior, token-overlap FAQ matching, and common move-out FAQ fallbacks for older generated `faq-data.js` payloads. Not a full-file audit.
+- related tests: `npm run test:elementor-export`; `npm run test:elementor-output-doctor`; generated importer PHP lint; live FAQ/tab/header smoke.
+
+- path: scripts/elementor-export-regression.mjs
+- category: test
+- lane/scope: Elementor / regression harness
+- review status: partially reviewed / fixed
+- notes: Added regression assertions for importer version `1.3.81`, move-out source-height CSS, scoped Radix row-height repair, importer-bundled FAQ hydration, sibling-close behavior, boot order, and fallback FAQ answer mapping.
+- related tests: `npm run test:elementor-export`.
+
+- path: scripts/elementor-visual-parity-regression.mjs
+- category: test
+- lane/scope: Elementor / visual parity harness
+- review status: partially reviewed / fixed
+- notes: Updated live/reference visual parity harness to classify effectively blank reference pages instead of failing valid live pages against blank screenshots. This keeps broad SaaS crawl evidence honest when the reference domain serves empty pages for some routes.
+- related tests: targeted and broader live visual parity runs.

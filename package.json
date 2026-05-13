@@ -23,6 +23,7 @@
     "test:whipify-frontend-editor-playground": "node scripts/whipify-frontend-editor-playground.mjs",
     "test:gutenberg-parity": "node scripts/gutenberg-parity-regression.mjs",
     "test:elementor-export": "node scripts/elementor-export-regression.mjs",
+    "test:elementor-visual-parity": "node scripts/elementor-visual-parity-regression.mjs",
     "test:elementor-output-doctor": "node scripts/elementor-output-doctor-regression.mjs",
     "doctor:elementor": "node scripts/elementor-output-doctor.mjs",
     "test:block-bindings": "node scripts/block-bindings-regression.mjs",
@@ -47,6 +48,8 @@
     "@playwright/test": "^1.59.1",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "pixelmatch": "^7.2.0",
+    "pngjs": "^7.0.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }

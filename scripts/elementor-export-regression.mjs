@@ -8,17 +8,37 @@ import {
   shouldPreserveElementorVisualHtml,
 } from '../utils/elementorConverter.ts';
 import { ELEMENTOR_IMPORTER_PLUGIN_FILES, WHIPIFY_ELEMENTOR_WIDGET_RUNTIME_PHP } from '../utils/elementorPluginTemplates.ts';
+import {
+  buildWordPressRouteAliasPaths,
+  selectBestRouteHtmlCandidate,
+} from '../utils/routeHtmlSelection.ts';
+import { stripWordPressPhpTemplateCode } from '../utils/wordpressPhpTemplate.ts';
 
 const repoRoot = process.cwd();
 const dashboardSource = fs.readFileSync(path.join(repoRoot, 'components', 'Dashboard.tsx'), 'utf8');
+const wordpressPhpTemplateSource = fs.readFileSync(path.join(repoRoot, 'utils', 'wordpressPhpTemplate.ts'), 'utf8');
+const visualParityRegressionSource = fs.readFileSync(path.join(repoRoot, 'scripts', 'elementor-visual-parity-regression.mjs'), 'utf8');
 const edmontonLivePatchPhpPath = path.join(repoRoot, '.tools', 'live-patches', '000-whipify-edmonton-elementor-patch', '000-whipify-edmonton-elementor-patch.php');
 const edmontonLivePatchPhp = fs.existsSync(edmontonLivePatchPhpPath) ? fs.readFileSync(edmontonLivePatchPhpPath, 'utf8') : '';
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8'));
+const importerPluginSource = ELEMENTOR_IMPORTER_PLUGIN_FILES['whipify-elementor-importer.php'] || '';
+const importerOverrideCss = ELEMENTOR_IMPORTER_PLUGIN_FILES['assets/css/whipify-elementor-visual-fidelity-overrides.css'] || '';
+const importerRuntimeJs = ELEMENTOR_IMPORTER_PLUGIN_FILES['assets/js/whipify-elementor-visual-fidelity.js'] || '';
 
 assert.equal(
   packageJson.scripts['test:elementor-export'],
   'node scripts/elementor-export-regression.mjs',
   'Expected npm regression script for Elementor export mode.',
+);
+assert.equal(
+  packageJson.scripts['test:elementor-visual-parity'],
+  'node scripts/elementor-visual-parity-regression.mjs',
+  'Expected a reusable live/reference screenshot-diff regression command for SaaS-grade Elementor visual parity checks.',
+);
+assert.match(
+  visualParityRegressionSource,
+  /isEffectivelyBlankPng[\s\S]*reference-blank[\s\S]*blankReferenceCount/,
+  'Expected visual parity harness to classify blank reference captures separately instead of reporting them as converter failures.',
 );
 
 assert.match(dashboardSource, /type ConversionMode = 'gutenberg-native' \| 'wordpress-elementor' \| 'react-spa' \| 'static-site'/);
@@ -29,6 +49,76 @@ assert.match(
   dashboardSource,
   /tf-elementor-breadcrumbs/,
   'Expected Elementor exports to inject the same visible breadcrumb affordance as the static/Gutenberg lanes.',
+);
+assert.match(
+  dashboardSource,
+  /buildElementorBreadcrumbHtml[\s\S]*cityPrefixedSlugMatch[\s\S]*locationsSlugMatch[\s\S]*tf-elementor-breadcrumbs__current/,
+  'Expected Elementor exports to generate segmented breadcrumb trails like Home > Edmonton > Pricing instead of one combined current label.',
+);
+assert.match(
+  dashboardSource,
+  /\.tf-elementor-breadcrumbs > \* \+ \*[\s\S]*margin-left:\s*0\.5rem !important/,
+  'Expected Elementor breadcrumb child widgets to keep visible spacing between Home, separator, and current page even when Elementor wrapper gap collapses.',
+);
+assert.match(
+  dashboardSource,
+  /\.tf-elementor-breadcrumbs > \.elementor-widget \+ \.elementor-widget[\s\S]*margin-left:\s*0\.5rem !important/,
+  'Expected Elementor breadcrumb spacing to beat the widget margin reset with an Elementor-widget sibling selector.',
+);
+assert.match(
+  importerOverrideCss,
+  /body\.whipify-elementor-visual-fidelity-mode \.tf-elementor-breadcrumbs \{[\s\S]*margin:\s*0 auto !important/,
+  'Expected importer-bundled breadcrumb override CSS not to reintroduce the old 1rem top margin after the theme CSS loads.',
+);
+assert.match(
+  importerOverrideCss,
+  /body\.whipify-elementor-visual-fidelity-mode \.elementor-widget-whipify_breadcrumbs[\s\S]*height:\s*20px !important[\s\S]*body\.whipify-elementor-visual-fidelity-mode \.tf-elementor-breadcrumbs[\s\S]*min-height:\s*20px !important/,
+  'Expected importer-bundled breadcrumb override CSS to force the Elementor breadcrumb wrapper to the same 20px source row height.',
+);
+assert.match(
+  importerRuntimeJs,
+  /window\.setupWhipifyElementorBreadcrumbLayout[\s\S]*querySelectorAll\('\.tf-elementor-breadcrumbs'\)[\s\S]*setProperty\('margin', '0 auto', 'important'\)/,
+  'Expected importer-bundled visual-fidelity runtime to force breadcrumb margin to the reference layout when plugin CSS wins the cascade.',
+);
+assert.match(
+  importerRuntimeJs,
+  /normalizeWhipifyElementorBreadcrumbText[\s\S]*Move In\/Out Cleaning/,
+  'Expected importer-bundled breadcrumb runtime to normalize generated route labels like "Move In Move Out Cleaning" back to the source breadcrumb text.',
+);
+assert.match(
+  importerRuntimeJs,
+  /splitWhipifyElementorBreadcrumbLabel[\s\S]*Edmonton[\s\S]*Calgary[\s\S]*Locations[\s\S]*tf-elementor-breadcrumbs__parent/,
+  'Expected importer-bundled visual-fidelity runtime to split legacy one-label city/location breadcrumbs into source-style parent/current crumbs.',
+);
+assert.match(
+  importerRuntimeJs,
+  /Edmonton Services[\s\S]*currentLabel:\s*'Services'[\s\S]*Calgary Services[\s\S]*currentLabel:\s*'Services'/,
+  'Expected importer-bundled breadcrumb runtime to split legacy "Edmonton Services" and "Calgary Services" labels into city parent + Services current crumbs.',
+);
+assert.match(
+  importerRuntimeJs,
+  /firstSeparator[\s\S]*margin-left', '60px'[\s\S]*parent\.style\.setProperty\('margin-left', '0px'[\s\S]*separator\.style\.setProperty\('width', '14px'/,
+  'Expected importer-bundled breadcrumb runtime to match the source mobile breadcrumb spacing after splitting stale combined labels.',
+);
+assert.doesNotMatch(
+  importerRuntimeJs,
+  /if \(!window\.setupWhipifyElementorBreadcrumbLayout\)/,
+  'Expected importer-bundled breadcrumb runtime to override older theme-bundled breadcrumb repair functions instead of silently keeping stale logic.',
+);
+assert.match(
+  importerRuntimeJs,
+  /setupWhipifyElementorCityServiceHeadings[\s\S]*Our Cleaning Services in[\s\S]*text-accent[\s\S]*font-size', mobile \? '36px' : '48px'/,
+  'Expected importer-bundled runtime to restore the source services heading with accent-colored city text when an older generated theme runtime renders the title as plain text.',
+);
+assert.match(
+  importerRuntimeJs,
+  /setupWhipifyElementorCityServiceHeadings[\s\S]*closest\('\.whipify-pricing-table'\)[\s\S]*whipify-city-service-pricing-table[\s\S]*matchMedia\('\(max-width: 767px\)'\)[\s\S]*'18rem'[\s\S]*display', mobile \? 'block' : 'inline'/,
+  'Expected importer-bundled runtime to match the source mobile service heading wrap: "Our Cleaning" / "Services in" / city.',
+);
+assert.match(
+  importerRuntimeJs,
+  /ready\(function\(\) \{[\s\S]*window\.setupWhipifyElementorBreadcrumbLayout\(document\);[\s\S]*window\.setupWhipifyElementorCityServiceHeadings\(document\);[\s\S]*window\.setupWhipifyElementorRadixTabs\(document\);/,
+  'Expected importer-bundled visual-fidelity boot to normalize breadcrumb layout before initializing interactive page widgets.',
 );
 assert.match(
   edmontonLivePatchPhp,
@@ -92,6 +182,337 @@ assert.match(
   /shellClassName:\s*elementorShellClasses/,
   'Expected Elementor converter to receive page shell class context.',
 );
+const thinRouteShell = `
+  <html><body><div id="root"><main>
+    <nav class="tf-elementor-breadcrumbs">Home › Edmonton</nav>
+    <section class="trust-logos"><img alt="Google Reviews"><img alt="BBB Accredited"></section>
+  </main></div></body></html>
+`;
+const fullRoutePage = `
+  <html><body><div id="root"><main>
+    <section class="hero"><h1>Top-Rated House Cleaning Services in Edmonton</h1><p>Licensed and insured local cleaners with same-day availability.</p></section>
+    <section><h2>Why Choose Duty Cleaners?</h2><p>${'Detailed local service copy. '.repeat(60)}</p></section>
+    <section><h2>Frequently Asked Questions</h2><h3>How does booking work?</h3><p>Book online and our team confirms quickly.</p></section>
+  </main></div></body></html>
+`;
+const selectedRouteCandidate = selectBestRouteHtmlCandidate([
+  { path: 'prerendered/edmonton.html', html: thinRouteShell },
+  { path: 'edmonton/index.html', html: fullRoutePage },
+]);
+assert.equal(
+  selectedRouteCandidate.path,
+  'edmonton/index.html',
+  'Expected Elementor exports to choose the most complete route HTML candidate instead of the first thin shell/chrome file.',
+);
+assert.equal(
+  selectBestRouteHtmlCandidate([
+    { path: 'page-reviews-short-valid.php', html: '<h1>Short Valid Blog Post</h1><p>Compact imported post body.</p>' },
+  ]).path,
+  'page-reviews-short-valid.php',
+  'Expected short but valid route templates to be selected instead of returning the empty fallback candidate at score zero.',
+);
+assert.deepEqual(
+  buildWordPressRouteAliasPaths({ path: '/locations/st-albert/', slug: 'locations-st-albert' }),
+  ['/locations/st-albert/', '/locations-st-albert/'],
+  'Expected WordPress route link rewriting to understand nested React routes and flattened WordPress slugs as aliases.',
+);
+assert.deepEqual(
+  buildWordPressRouteAliasPaths({ path: '/calgary-pricing/', slug: 'calgary-pricing' }),
+  ['/calgary-pricing/', '/calgary/pricing/'],
+  'Expected flat city-service WordPress routes to recognize nested React URL aliases like /calgary/pricing/ so header/footer links never point at 404s.',
+);
+assert.match(
+  dashboardSource,
+  /selectBestRouteHtmlCandidate/,
+  'Expected Dashboard route extraction to score all candidate HTML files and avoid thin prerender shells.',
+);
+assert.match(
+  dashboardSource,
+  /page-\(\.\+\)\\\.php/,
+  'Expected route scanning to discover Platinum/classic theme page-*.php templates when converting an existing generated WordPress theme into Elementor.',
+);
+assert.match(
+  dashboardSource,
+  /page-\$\{slug\}\.php/,
+  'Expected route HTML candidates to include page-${slug}.php so Elementor conversion can use full Platinum page bodies instead of thin prerender shells.',
+);
+assert.ok(
+  wordpressPhpTemplateSource.includes('get_(?:template|stylesheet)_directory_uri'),
+  'Expected PHP route-template cleanup to preserve theme asset URLs as __THEME_URI__ instead of deleting get_template_directory_uri() image prefixes.',
+);
+assert.ok(
+  dashboardSource.includes("|| allFiles.find(f => /(^|\\/)front-page\\.php$/i.test(f))"),
+  'Expected Elementor exports to accept generated Platinum WordPress theme ZIPs by using front-page.php/index.php as the shell source when index.html is absent.',
+);
+assert.match(
+  dashboardSource,
+  /const wordpressFooterFile = allFiles\.find\(f => \/\(\^\|\\\/\)footer\\\.php\$\/i\.test\(f\)\)/,
+  'Expected Elementor exports of existing WordPress themes to read footer.php, not use front-page.php body HTML as generated footer chrome.',
+);
+assert.match(
+  dashboardSource,
+  /extractWordPressThemeChromeFromPhpFiles[\s\S]*extractWordPressThemeHeaderChrome[\s\S]*extractWordPressThemeFooterChrome/,
+  'Expected existing WordPress theme inputs to extract header/footer chrome from source PHP theme files before generating Elementor chrome partials.',
+);
+assert.match(
+  dashboardSource,
+  /const wordpressThemeChrome = isWordPressThemeInput[\s\S]*extractWordPressThemeChromeFromPhpFiles\(wordpressHeaderHtml, wordpressFooterHtml\)/,
+  'Expected Elementor chrome variants to prefer source WordPress header.php/footer.php chrome for generated WordPress theme inputs.',
+);
+assert.match(
+  dashboardSource,
+  /finalHeaderContent = isWordPressThemeInput && wordpressHeaderHtml[\s\S]*finalFooterContent = isWordPressThemeInput && wordpressFooterHtml/,
+  'Expected generated Elementor header.php/footer.php to start from source header.php/footer.php when converting an existing WordPress theme.',
+);
+assert.ok(
+  dashboardSource.includes("finalFooterContent = finalFooterContent.replace(/^\\s*<\\/main>\\s*/i, '');"),
+  'Expected generated Elementor footer.php to strip the source template closing </main> instead of duplicating page-body structure.',
+);
+assert.match(
+  dashboardSource,
+  /function wpconvert_dropdown_fallback_menu[\s\S]*class WPConvert_Dropdown_Menu_Walker/,
+  'Expected generated Elementor themes to provide fallback WPConvert menu helpers when reusing source WordPress theme header chrome.',
+);
+assert.match(
+  dashboardSource,
+  /\$theme_routes = json_decode\('\$\{phpSingleQuotedJson\(routesToProcess\)\}'\);[\s\S]*\$llm_locations = json_decode\('\$\{phpSingleQuotedJson\(llmLocationsHtml\)\}', true\);/,
+  'Expected generated setup.php to write route data as valid PHP strings decoded with json_decode(), not raw JavaScript object syntax.',
+);
+assert.match(
+  dashboardSource,
+  /window\.setupWhipifyElementorRadixAccordions[\s\S]*button\[aria-controls\]\[data-state\][\s\S]*findFaqAnswer\(question\)/,
+  'Expected Elementor visual-fidelity runtime to hydrate Radix-style FAQ accordion panels from faq-data.js when HTML fallback pages contain empty closed regions.',
+);
+assert.match(
+  importerRuntimeJs,
+  /window\.setupWhipifyElementorRadixAccordions[\s\S]*button\[aria-controls\]\[data-state\][\s\S]*findWhipifyElementorFaqAnswer\(question\)/,
+  'Expected importer-bundled runtime to hydrate Radix-style FAQ accordion panels when an older generated theme runtime does not include the accordion hydrator.',
+);
+assert.match(
+  importerRuntimeJs,
+  /fallbackMoveOutFaqAnswers[\s\S]*security deposit[\s\S]*supplies and equipment[\s\S]*findWhipifyElementorFaqAnswer/,
+  'Expected importer-bundled FAQ lookup to provide scoped move-out FAQ fallbacks when an older generated theme did not bundle page-specific FAQ answers.',
+);
+assert.match(
+  dashboardSource,
+  /group\.querySelectorAll\('button\[aria-controls\]\[data-state\], button\[aria-controls\]\[aria-expanded\]'\)[\s\S]*setOpen\(otherTrigger, otherPanel, false\)/,
+  'Expected Elementor Radix FAQ runtime to close sibling panels so only one answer is open per accordion group.',
+);
+assert.match(
+  importerRuntimeJs,
+  /group\.querySelectorAll\('button\[aria-controls\]\[data-state\], button\[aria-controls\]\[aria-expanded\]'\)[\s\S]*setOpen\(otherTrigger, otherPanel, false\)/,
+  'Expected importer-bundled Radix FAQ runtime to close sibling panels so only one answer is open per accordion group.',
+);
+assert.match(
+  dashboardSource,
+  /ready\(function\(\) \{[\s\S]*window\.setupWhipifyElementorRadixAccordions\(document\);[\s\S]*window\.setupWhipifyElementorFaqs\(document\);/,
+  'Expected Elementor visual-fidelity boot to initialize Radix FAQ accordions before native Elementor FAQ wrappers.',
+);
+assert.match(
+  importerRuntimeJs,
+  /ready\(function\(\) \{[\s\S]*window\.setupWhipifyElementorRadixTabs\(document\);[\s\S]*window\.setupWhipifyElementorRadixAccordions\(document\);[\s\S]*window\.setupWhipifyElementorRadixFaqClosedRowHeights\(document\);/,
+  'Expected importer-bundled visual-fidelity boot to initialize Radix FAQ accordions before the closed-row height normalizer.',
+);
+assert.match(
+  dashboardSource,
+  /window\.setupWhipifyElementorRadixTabs[\s\S]*querySelectorAll\('\[role="tablist"\]'[\s\S]*aria-controls[\s\S]*removeAttribute\('hidden'\)/,
+  'Expected Elementor visual-fidelity runtime to hydrate Radix tablists so imported pricing tabs switch panels without the React runtime.',
+);
+assert.match(
+  dashboardSource,
+  /window\.setupWhipifyElementorRoutePhoneContext[\s\S]*\/calgary[\s\S]*tel:4037681341[\s\S]*ready\(function\(\) \{[\s\S]*window\.setupWhipifyElementorRoutePhoneContext\(document\);/,
+  'Expected Elementor visual-fidelity runtime to localize phone CTAs on city routes such as Calgary instead of leaving captured Edmonton header phone data.',
+);
+assert.match(
+  dashboardSource,
+  /replaceWhipifyElementorPhoneText[\s\S]*nodeType === 3[\s\S]*node\.nodeValue = node\.nodeValue\.replace[\s\S]*childNodes[\s\S]*replaceWhipifyElementorPhoneText\(link, phone\.text\)/,
+  'Expected route phone localization to update phone text nodes without replacing the whole link and deleting source SVG icons or city prefixes.',
+);
+assert.match(
+  importerRuntimeJs,
+  /replaceWhipifyElementorPhoneText[\s\S]*nodeType === 3[\s\S]*node\.nodeValue = node\.nodeValue\.replace[\s\S]*childNodes[\s\S]*replaceWhipifyElementorPhoneText\(link, phone\.text\)/,
+  'Expected importer-bundled phone localization to preserve source SVG icons and city prefixes while updating phone numbers.',
+);
+assert.match(
+  dashboardSource,
+  /window\.setupWhipifyElementorRoutePhoneContext[\s\S]*regionalRouteMap[\s\S]*calgary-pricing[\s\S]*edmonton-pricing[\s\S]*querySelectorAll\('a\[href\]'\)[\s\S]*setAttribute\('href'/,
+  'Expected Elementor visual-fidelity runtime to localize page-body regional route links on city pages, not only header/menu phone links.',
+);
+assert.match(
+  importerRuntimeJs,
+  /window\.setupWhipifyElementorRoutePhoneContext[\s\S]*regionalRouteMap[\s\S]*calgary-pricing[\s\S]*edmonton-pricing[\s\S]*querySelectorAll\('a\[href\]'\)[\s\S]*setAttribute\('href'/,
+  'Expected importer-bundled visual-fidelity runtime to localize page-body regional route links on city pages.',
+);
+assert.ok(
+  dashboardSource.includes("url.pathname.replace(/\\\\/+$/, '').toLowerCase()"),
+  'Expected generated Elementor route-link runtime source to keep a syntactically valid escaped slash regex.',
+);
+assert.ok(
+  importerRuntimeJs.includes("url.pathname.replace(/\\/+$/, '').toLowerCase()"),
+  'Expected importer-bundled route-link runtime to keep a syntactically valid escaped slash regex.',
+);
+assert.ok(
+  !importerRuntimeJs.includes("url.pathname.replace(//+$/, '').toLowerCase()"),
+  'Importer runtime must not emit the invalid //+$ route-normalization regex.',
+);
+assert.match(
+  dashboardSource,
+  /Supplemental scanning \$\{buildFiles\.length\} JS\/HTML files for FAQ content[\s\S]*beforeBuildFaqCount[\s\S]*beforeHtmlFaqCount/,
+  'Expected FAQ extraction to keep scanning build/prerender artifacts even when source extraction already found some FAQ items, so page-specific pricing FAQs are not skipped.',
+);
+assert.match(
+  dashboardSource,
+  /ready\(function\(\) \{[\s\S]*window\.setupWhipifyElementorRadixTabs\(document\);[\s\S]*window\.setupWhipifyElementorRadixAccordions\(document\);/,
+  'Expected Elementor visual-fidelity boot to initialize Radix tabs before FAQ accordions.',
+);
+assert.match(
+  dashboardSource,
+  /window\.setupWhipifyElementorResponsiveTailwindLayout[\s\S]*classList\.contains\('lg:grid-cols-4'\)[\s\S]*setProperty\('--e-con-grid-template-columns', 'repeat\(4, minmax\(0, 1fr\)\)', 'important'\)/,
+  'Expected generated Elementor visual-fidelity runtime to restore responsive Tailwind grid columns inline when Elementor/Tailwind CSS cascade keeps base grid-cols-2 active.',
+);
+assert.match(
+  dashboardSource,
+  /window\.setupWhipifyElementorResponsiveTailwindLayout[\s\S]*transition-transform[\s\S]*classList\.contains\('md:w-1\/3'\)[\s\S]*setProperty\('width', '100%', 'important'\)/,
+  'Expected generated Elementor visual-fidelity runtime to keep review carousel slides full-width instead of showing three md:w-1/3 cards at desktop.',
+);
+assert.match(
+  importerRuntimeJs,
+  /window\.setupWhipifyElementorResponsiveTailwindLayout[\s\S]*classList\.contains\('lg:grid-cols-4'\)[\s\S]*setProperty\('--e-con-grid-template-columns', 'repeat\(4, minmax\(0, 1fr\)\)', 'important'\)/,
+  'Expected importer-bundled visual-fidelity runtime to restore responsive Tailwind grid columns inline after theme/plugin cascade ordering.',
+);
+assert.match(
+  dashboardSource,
+  /window\.setupWhipifyElementorResponsiveTailwindLayout[\s\S]*overflow-x-auto[\s\S]*md:hidden[\s\S]*setProperty\('display', 'block', 'important'\)[\s\S]*querySelectorAll\('\.e-con\.flex\.gap-4'\)[\s\S]*setProperty\('flex-wrap', 'nowrap', 'important'\)[\s\S]*min-w-\[300px\][\s\S]*setProperty\('flex', '0 0 300px', 'important'\)/,
+  'Expected generated Elementor visual-fidelity runtime to preserve mobile-only horizontal review strips instead of stacking every review card vertically.',
+);
+assert.match(
+  dashboardSource,
+  /window\.setupWhipifyElementorResponsiveTailwindLayout[\s\S]*overflow-x-auto[\s\S]*md:hidden[\s\S]*viewportWidth >= 768[\s\S]*setProperty\('display', 'none', 'important'\)/,
+  'Expected generated Elementor visual-fidelity runtime not to reveal md:hidden mobile review strips on desktop/tablet widths.',
+);
+assert.match(
+  importerRuntimeJs,
+  /window\.setupWhipifyElementorResponsiveTailwindLayout[\s\S]*overflow-x-auto[\s\S]*md:hidden[\s\S]*setProperty\('display', 'block', 'important'\)[\s\S]*querySelectorAll\('\.e-con\.flex\.gap-4'\)[\s\S]*setProperty\('flex-wrap', 'nowrap', 'important'\)[\s\S]*min-w-\[300px\][\s\S]*setProperty\('flex', '0 0 300px', 'important'\)/,
+  'Expected importer-bundled visual-fidelity runtime to preserve mobile-only horizontal review strips when plugin assets override older themes.',
+);
+assert.match(
+  importerRuntimeJs,
+  /window\.setupWhipifyElementorResponsiveTailwindLayout[\s\S]*overflow-x-auto[\s\S]*md:hidden[\s\S]*viewportWidth >= 768[\s\S]*setProperty\('display', 'none', 'important'\)/,
+  'Expected importer-bundled visual-fidelity runtime not to reveal md:hidden mobile review strips on desktop/tablet widths.',
+);
+assert.match(
+  dashboardSource,
+  /ready\(function\(\) \{[\s\S]*window\.setupWhipifyElementorResponsiveTailwindLayout\(document\);[\s\S]*window\.setupWhipifyElementorCarousels\(document\);/,
+  'Expected Elementor visual-fidelity boot to apply responsive layout corrections before carousel measurement.',
+);
+assert.match(
+  dashboardSource,
+  /wp_lazy_loading_enabled[\s\S]*_converter_lane[\s\S]*elementor-native[\s\S]*return false/,
+  'Expected generated Elementor themes to disable WordPress lazy loading only for Elementor-native converted page bodies so below-fold gallery images are present in visual parity captures.',
+);
+assert.match(
+  dashboardSource,
+  /elementorRouteAliasRedirectMap[\s\S]*buildWordPressRouteAliasPaths\(route\)[\s\S]*_elementor_route_alias_redirect/,
+  'Expected Elementor theme exports to redirect nested React-style URL aliases to their generated flat WordPress pages.',
+);
+assert.match(
+  dashboardSource,
+  /function wpconvert_elementor_known_route_url_map[\s\S]*assets\/data\/routes\.json[\s\S]*function wpconvert_elementor_resolve_known_route_url[\s\S]*wpconvert_elementor_menu_item_url[\s\S]*wpconvert_elementor_resolve_known_route_url/,
+  'Expected Elementor header/footer menu URLs to resolve known React-style route aliases to generated WordPress page URLs before rendering links.',
+);
+assert.match(
+  dashboardSource,
+  /function wpconvert_elementor_detect_default_route_prefix[\s\S]*assets\/data\/menus\.json[\s\S]*footer[\s\S]*function wpconvert_elementor_preferred_menu_route_url/,
+  'Expected Elementor menu rendering to infer the default city/region from generated menu data, so a stale captured header cannot force Calgary links across an Edmonton-first site.',
+);
+assert.match(
+  dashboardSource,
+  /function wpconvert_elementor_preferred_menu_route_url[\s\S]*all-services[\s\S]*move-in-move-out-cleaning[\s\S]*post-construction-cleaning[\s\S]*pricing/,
+  'Expected generic header menu titles to be normalized to the detected default city route while preserving explicit city route aliases for direct requests.',
+);
+assert.match(
+  dashboardSource,
+  /function wpconvert_elementor_detect_current_route_prefix[\s\S]*REQUEST_URI[\s\S]*calgary[\s\S]*edmonton[\s\S]*function wpconvert_elementor_route_prefix_for_request/,
+  'Expected Elementor menu rendering to detect the current city route context so Calgary pages render Calgary-localized header/internal links instead of default Edmonton links.',
+);
+assert.match(
+  dashboardSource,
+  /wpconvert_elementor_route_prefix_for_request\(\)[\s\S]*wpconvert_elementor_detect_default_route_prefix\(\)/,
+  'Expected current request route prefix to take precedence before falling back to the generated default city prefix.',
+);
+assert.match(
+  dashboardSource,
+  /wpconvert_elementor_menu_item_url\(\$child\['url'\] \?\? '\/', \$child\['title'\] \?\? ''\)/,
+  'Expected child menu rendering to pass the visible title into route normalization so generic labels like Pricing and All Services resolve to the correct default region.',
+);
+assert.match(
+  dashboardSource,
+  /wpconvert_elementor_first_route_slug_ending_with[\s\S]*services[\s\S]*get-instant-quote[\s\S]*contact[\s\S]*strpos\(\$path, 'locations\/'\)/,
+  'Expected Elementor route alias resolver to provide safe fallbacks for common source links that have no generated page, such as /services, /get-instant-quote/, and missing nested /locations/* links.',
+);
+assert.match(
+  dashboardSource,
+  /if \(\$resolved_slug === '' && \$path === 'services'\)[\s\S]*\$preferred_services[\s\S]*wpconvert_elementor_first_route_slug_ending_with\('services', \$preferred_services\)[\s\S]*if \(\$resolved_slug === ''\) \{[\s\S]*wpconvert_elementor_first_route_slug_ending_with\(\$path\)/,
+  'Expected generic /services/ route resolution to prefer the default/Edmonton services page before falling back to the first city slug in route order.',
+);
+assert.match(
+  dashboardSource,
+  /wpconvert_elementor_print_nav_dropdown_runtime[\s\S]*data-tf-nav-dropdown[\s\S]*data-tf-nav-trigger[\s\S]*mouseenter[\s\S]*focusin[\s\S]*add_action\('wp_footer', 'wpconvert_elementor_print_nav_dropdown_runtime'/,
+  'Expected Elementor theme exports to include a nav dropdown runtime so generated fallback menus can open hidden submenu panels.',
+);
+assert.match(
+  dashboardSource,
+  /findExistingFaqAnswers[\s\S]*item\.children[\s\S]*whipify-faq-answer--duplicate[\s\S]*closeSiblingFaqItems/,
+  'Expected page-level Elementor FAQ runtime to bind existing answer siblings, suppress duplicates, and close sibling answers instead of injecting duplicate visible content.',
+);
+assert.match(
+  fs.readFileSync(path.join(repoRoot, 'utils', 'elementorConverter.ts'), 'utf8'),
+  /tagName === 'div'[\s\S]*stripTags\(element\.outerHTML\) === ''[\s\S]*buildTrustLogoRowWidgetFromHtml/,
+  'Expected browser DOM conversion to build Trust Logo Row widgets only for image-only divs, not broad page wrappers that merely contain a logo row descendant.',
+);
+assert.match(
+  dashboardSource,
+  /isWordPressThemeInput[\s\S]*hasWordPressThemeHeadViewport[\s\S]*meta\[name="viewport"\]/,
+  'Expected pre-export QA to validate generated WordPress theme inputs against header.php head metadata instead of failing every page template body for missing viewport tags.',
+);
+const generatedBlogPhpTemplate = `<?php
+$wpc_post_title = "10 Essential Spring Cleaning Tips for Your Alberta Home";
+$wpc_feat = "photo-1581578731548-c64695cc6952";
+?>
+<h1><?php echo esc_html($wpc_post_title); ?></h1>
+<img src="<?php echo esc_url(get_template_directory_uri() . '/assets/images/' . $wpc_feat); ?>" alt="<?php echo esc_attr($wpc_post_title); ?>">
+<?php
+$post_body = <<<'WPCBLOGBODY043'
+Get your home ready for spring with these professional cleaning tips that will help you tackle every corner efficiently and effectively.
+WPCBLOGBODY043;
+echo wp_kses_post($post_body);
+?>`;
+const normalizedBlogPhpTemplate = stripWordPressPhpTemplateCode(generatedBlogPhpTemplate);
+assert.match(
+  normalizedBlogPhpTemplate,
+  /10 Essential Spring Cleaning Tips for Your Alberta Home/,
+  'Expected generated WordPress PHP templates to preserve PHP string variables rendered through esc_html().',
+);
+assert.match(
+  normalizedBlogPhpTemplate,
+  /Get your home ready for spring with these professional cleaning tips/,
+  'Expected generated WordPress PHP templates to preserve heredoc body content rendered through wp_kses_post().',
+);
+assert.match(
+  normalizedBlogPhpTemplate,
+  /__THEME_URI__\/assets\/images\/photo-1581578731548-c64695cc6952/,
+  'Expected generated WordPress PHP image expressions to resolve get_template_directory_uri() plus variables into usable theme asset URLs.',
+);
+assert.match(
+  dashboardSource,
+  /buildWordPressRouteAliasPaths/,
+  'Expected Dashboard link rewriting to use route aliases so nested React hrefs map to flattened WordPress page slugs.',
+);
+assert.match(
+  dashboardSource,
+  /allValidPaths[\s\S]*buildWordPressRouteAliasPaths\(route\)[\s\S]*replace\(\/\\\/\$\/,\s*''\)/,
+  'Expected QA dead-link validation to accept route aliases with and without trailing slashes.',
+);
 assert.match(
   dashboardSource,
   /folder\.file\("assets\/css\/whipify-elementor-visual-fidelity\.css"/,
@@ -129,8 +550,23 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /\.whipify-elementor-visual-fidelity-mode \.elementor-widget-button\.inline-flex/,
-  'Expected generated Elementor visual fidelity CSS to keep inline-flex buttons from stretching full width.',
+  /\.whipify-elementor-visual-fidelity-mode \.elementor-widget-button\.inline-flex:not\(\.w-full\)[\s\S]*width:\s*fit-content !important[\s\S]*align-self:\s*center !important/,
+  'Expected generated Elementor visual fidelity CSS to keep non-w-full inline-flex buttons centered at fit-content width instead of stretching full width.',
+);
+assert.match(
+  dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.elementor-widget-button\.inline-flex\.w-full[\s\S]*--container-widget-width:\s*100%[\s\S]*width:\s*100% !important[\s\S]*align-self:\s*stretch !important[\s\S]*\.whipify-elementor-visual-fidelity-mode \.elementor-widget-button\.inline-flex\.w-full \.elementor-button[\s\S]*width:\s*100% !important/,
+  'Expected generated Elementor visual fidelity CSS to preserve source w-full button widgets instead of shrinking contact/location CTAs.',
+);
+assert.match(
+  dashboardSource,
+  /\.elementor-widget-button\[class\*="bg-muted\/20"\]\[class\*="rounded-lg"\]\[class\*="text-center"\][\s\S]*min-height:\s*4\.625rem !important[\s\S]*\.elementor-button[\s\S]*display:\s*block !important/,
+  'Expected converted location/service card buttons to render as full-width source cards instead of tiny centered Elementor button text.',
+);
+assert.match(
+  dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.elementor \.e-con\.inline-flex:not\(\.w-full\)[\s\S]*width:\s*fit-content !important[\s\S]*display:\s*inline-flex !important[\s\S]*align-self:\s*center !important/,
+  'Expected generated Elementor visual fidelity CSS to keep source inline-flex chips, badges, and rows from stretching to full container width.',
 );
 assert.match(
   dashboardSource,
@@ -144,8 +580,63 @@ assert.match(
 );
 assert.match(
   dashboardSource,
+  /body\.whipify-elementor-visual-fidelity-mode #root > nav\.sticky[\s\S]*position:\s*relative !important[\s\S]*top:\s*auto !important/,
+  'Expected generated Elementor visual fidelity CSS to keep the global header in normal document flow like the source/reference page.',
+);
+assert.match(
+  dashboardSource,
+  /body\.whipify-elementor-visual-fidelity-mode #root > main\.site-main[\s\S]*margin-top:\s*0 !important/,
+  'Expected generated Elementor visual fidelity CSS not to add a fake fixed-header offset above the page body.',
+);
+assert.match(
+  dashboardSource,
+  /body\.whipify-elementor-visual-fidelity-mode main\.site-main \.elementor \.elementor-element\.e-con\.container[\s\S]*max-width:\s*1280px !important/,
+  'Expected generated Elementor page-body source containers to keep the reference 1280px width instead of drifting to a 1400px Elementor layout.',
+);
+assert.match(
+  dashboardSource,
+  /body\.whipify-elementor-visual-fidelity-mode \.elementor \.entry-content\.e-con[\s\S]*flex-direction:\s*column !important[\s\S]*max-width:\s*100% !important/,
+  'Expected generated Elementor page-body shell containers to stack source page content vertically and prevent mobile flex overflow.',
+);
+assert.match(
+  dashboardSource,
+  /body\.whipify-elementor-visual-fidelity-mode #root > nav\.sticky > \.container[\s\S]*max-width:\s*1280px !important/,
+  'Expected generated Elementor visual fidelity CSS to keep global header chrome at the source 1280px container width.',
+);
+assert.match(
+  dashboardSource,
+  /body\.whipify-elementor-visual-fidelity-mode nav\.sticky > \.container[\s\S]*max-width:\s*1280px !important/,
+  'Expected generated Elementor visual fidelity CSS to keep visible header chrome at the source 1280px width even when the header is rendered outside #root.',
+);
+assert.match(
+  dashboardSource,
+  /body\.whipify-elementor-visual-fidelity-mode #root > nav\.sticky > \.container > \.flex[\s\S]*justify-content:\s*flex-start !important/,
+  'Expected generated Elementor visual fidelity CSS to match the source header flex alignment instead of spacing nav items across the wider Elementor container.',
+);
+assert.match(
+  dashboardSource,
+  /body\.whipify-elementor-visual-fidelity-mode nav\.sticky > \.container > \.flex[\s\S]*justify-content:\s*flex-start !important/,
+  'Expected generated Elementor visual fidelity CSS to match source header flex alignment when visible header chrome is outside #root.',
+);
+assert.match(
+  dashboardSource,
+  /body\.whipify-elementor-visual-fidelity-mode #root > nav\.sticky > \.container > \.flex > a\.bg-primary[\s\S]*display:\s*flex !important[\s\S]*margin-right:\s*3rem !important[\s\S]*flex-shrink:\s*0 !important/,
+  'Expected generated Elementor visual fidelity CSS to preserve source header logo display, spacing, and non-shrinking width.',
+);
+assert.match(
+  dashboardSource,
+  /body\.whipify-elementor-visual-fidelity-mode #root > nav\.sticky > \.container > \.flex > \.hidden\.md\\\\:flex\.items-center\.space-x-6[\s\S]*gap:\s*1\.1rem !important[\s\S]*flex-shrink:\s*0 !important/,
+  'Expected generated Elementor visual fidelity CSS to preserve the source desktop nav spacing in global header chrome.',
+);
+assert.match(
+  dashboardSource,
   /\[class~="md:w-1\/3"\][\s\S]*width:\s*33\.333333% !important[\s\S]*flex-basis:\s*33\.333333% !important/,
   'Expected generated Elementor visual fidelity CSS to preserve Tailwind md:w-1/3 widths without subtracting carousel gaps.',
+);
+assert.match(
+  dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.elementor \.e-con\.flex\.gap-6\.transition-transform[\s\S]*flex-wrap:\s*nowrap !important/,
+  'Expected generated Elementor CSS to preserve source non-wrapping carousel tracks instead of allowing Elementor e-con flex-wrap to stack review cards vertically.',
 );
 assert.match(
   dashboardSource,
@@ -159,13 +650,323 @@ assert.match(
 );
 assert.match(
   dashboardSource,
+  /\[class~="md:hidden"\]\[class~="fixed"\]\[class~="bottom-0"\][\s\S]*display:\s*flex !important[\s\S]*justify-content:\s*center !important[\s\S]*\[class~="md:hidden"\]\[class~="fixed"\]\[class~="bottom-0"\] > a[\s\S]*flex:\s*1 1 0 !important/,
+  'Expected generated Elementor CSS to preserve the source mobile sticky CTA bar as a centered two-button flex row.',
+);
+assert.match(
+  dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \[class~="md:hidden"\]\[class~="fixed"\]\[class~="bottom-0"\][\s\S]*display:\s*flex !important/,
+  'Expected generated Elementor CSS to target mobile sticky CTA bars even when they render outside the Elementor content root.',
+);
+assert.match(
+  dashboardSource,
+  /mode === 'wordpress-elementor'[\s\S]*wpconvert-mobile-sticky-cta[\s\S]*display:\\s\*block\\s\*!important;[\s\S]*display: flex !important/,
+  'Expected Elementor exports to rewrite inherited source-theme sticky CTA critical CSS from display:block to display:flex so ID-level rules do not beat visual-fidelity CSS.',
+);
+assert.match(
+  importerOverrideCss,
+  /\[class~="md:hidden"\]\[class~="fixed"\]\[class~="bottom-0"\][\s\S]*display:\s*flex !important[\s\S]*justify-content:\s*center !important[\s\S]*\[class~="md:hidden"\]\[class~="fixed"\]\[class~="bottom-0"\] > a[\s\S]*flex:\s*1 1 0 !important/,
+  'Expected importer-bundled CSS to preserve the source mobile sticky CTA bar as a centered two-button flex row.',
+);
+assert.match(
+  importerOverrideCss,
+  /body\.whipify-elementor-visual-fidelity-mode \[class~="md:hidden"\]\[class~="fixed"\]\[class~="bottom-0"\][\s\S]*display:\s*flex !important/,
+  'Expected importer-bundled CSS to target mobile sticky CTA bars even when they render outside the Elementor content root.',
+);
+assert.match(
+  dashboardSource,
+  /\[class~="md:hidden"\]\[class~="fixed"\]\[class~="bottom-0"\] > (?:\.elementor-widget-button \.elementor-button|[\s\S])*?min-height:\s*2\.5rem !important[\s\S]*padding:\s*0\.5rem 1rem !important/,
+  'Expected generated Elementor CSS to match the source mobile sticky CTA button height instead of adding a taller Elementor button box.',
+);
+assert.match(
+  importerOverrideCss,
+  /body\.whipify-elementor-visual-fidelity-mode \[class~="md:hidden"\]\[class~="fixed"\]\[class~="bottom-0"\] > (?:\.elementor-widget-button \.elementor-button|[\s\S])*?min-height:\s*2\.5rem !important[\s\S]*padding:\s*0\.5rem 1rem !important/,
+  'Expected importer-bundled CSS to match the source mobile sticky CTA button height even when plugin CSS wins cascade order.',
+);
+assert.match(
+  dashboardSource,
+  /#wpconvert-mobile-sticky-cta > a[\s\S]*min-height:\s*2\.5rem !important[\s\S]*padding:\s*0\.5rem 1rem !important/,
+  'Expected generated Elementor CSS to use the concrete sticky CTA ID so button sizing beats older importer body-prefixed overrides.',
+);
+assert.match(
+  importerOverrideCss,
+  /#wpconvert-mobile-sticky-cta > a[\s\S]*min-height:\s*2\.5rem !important[\s\S]*padding:\s*0\.5rem 1rem !important/,
+  'Expected importer-bundled CSS to use the concrete sticky CTA ID so button sizing survives theme/plugin cascade ordering.',
+);
+assert.match(
+  dashboardSource,
+  /@media \(max-width:\s*767px\)[\s\S]*\.whipify-elementor-visual-fidelity-mode \.elementor \.e-con\.py-16\.md\\\\:py-20[\s\S]*padding-top:\s*4rem !important[\s\S]*padding-bottom:\s*4rem !important/,
+  'Expected Elementor visual fidelity CSS to honor Tailwind py-16 as the mobile base value instead of applying md:py-20 at every breakpoint.',
+);
+assert.match(
+  dashboardSource,
+  /@media \(min-width:\s*768px\)[\s\S]*\.whipify-elementor-visual-fidelity-mode \.elementor \.e-con\.py-16\.md\\\\:py-20[\s\S]*padding-top:\s*5rem !important[\s\S]*padding-bottom:\s*5rem !important/,
+  'Expected Elementor visual fidelity CSS to apply md:py-20 only at tablet and wider breakpoints.',
+);
+assert.match(
+  importerOverrideCss,
+  /@media \(max-width:\s*767px\)[\s\S]*body\.whipify-elementor-visual-fidelity-mode \.elementor \.e-con\.py-16\.md\\:py-20[\s\S]*padding-top:\s*4rem !important[\s\S]*padding-bottom:\s*4rem !important/,
+  'Expected importer-bundled CSS to honor Tailwind py-16 as the mobile base value when plugin CSS wins cascade order.',
+);
+assert.match(
+  dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.elementor \.whipify-location-grid\.py-16[\s\S]*padding-top:\s*4rem !important[\s\S]*padding-bottom:\s*4rem !important/,
+  'Expected generated Elementor CSS to preserve source py-16 section padding on the custom location-grid widget.',
+);
+assert.match(
+  importerOverrideCss,
+  /body\.whipify-elementor-visual-fidelity-mode \.elementor \.whipify-location-grid\.py-16[\s\S]*padding-top:\s*4rem !important[\s\S]*padding-bottom:\s*4rem !important/,
+  'Expected importer-bundled CSS to preserve source py-16 section padding on the custom location-grid widget when plugin CSS wins cascade order.',
+);
+assert.match(
+  dashboardSource,
+  /@media \(max-width:\s*767px\)[\s\S]*\.whipify-elementor-visual-fidelity-mode \.elementor \.whipify-location-grid\.py-16[\s\S]*padding-top:\s*4rem !important[\s\S]*padding-bottom:\s*4rem !important/,
+  'Expected generated Elementor CSS to preserve source mobile py-16 location-grid top padding.',
+);
+assert.match(
+  importerOverrideCss,
+  /@media \(max-width:\s*767px\)[\s\S]*body\.whipify-elementor-visual-fidelity-mode \.elementor \.whipify-location-grid\.py-16[\s\S]*padding-top:\s*4rem !important[\s\S]*padding-bottom:\s*4rem !important/,
+  'Expected importer-bundled CSS to preserve source mobile py-16 location-grid top padding when plugin CSS wins cascade order.',
+);
+assert.match(
+  dashboardSource,
+  /@media \(max-width:\s*767px\)[\s\S]*\.whipify-elementor-visual-fidelity-mode \.elementor \.elementor-widget-heading\.text-4xl\.leading-tight \.elementor-heading-title[\s\S]*line-height:\s*2\.5rem !important/,
+  'Expected Elementor mobile hero h1 leading-tight output to match the reference 40px line-height instead of Elementor default 45px.',
+);
+assert.match(
+  importerOverrideCss,
+  /@media \(max-width:\s*767px\)[\s\S]*body\.whipify-elementor-visual-fidelity-mode \.elementor \.elementor-widget-heading\.text-4xl\.leading-tight \.elementor-heading-title[\s\S]*line-height:\s*2\.5rem !important/,
+  'Expected importer-bundled mobile hero h1 line-height override to survive plugin/theme cascade ordering.',
+);
+assert.match(
+  dashboardSource,
+  /@media \(max-width:\s*767px\)[\s\S]*\.whipify-elementor-visual-fidelity-mode \.elementor \.whipify-feature-grid__inner > \.elementor-widget\.whipify-feature-grid__intro[\s\S]*\.whipify-elementor-visual-fidelity-mode \.elementor \.whipify-feature-grid__inner > \.mt-12\.bg-gradient-to-r[\s\S]*width:\s*100% !important[\s\S]*max-width:\s*100% !important[\s\S]*align-self:\s*stretch !important/,
+  'Expected mobile Elementor feature-grid intro/CTA children to stay inside their 358px source container instead of expanding screenshot width.',
+);
+assert.match(
+  dashboardSource,
+  /@media \(max-width:\s*767px\)[\s\S]*body\.whipify-elementor-visual-fidelity-mode \.elementor-widget-html section\.py-16:has\(\[role="tablist"\]\)[\s\S]*padding-bottom:\s*6rem !important[\s\S]*body\.whipify-elementor-visual-fidelity-mode \.elementor-widget-html section\.py-16:has\(\[role="tablist"\]\) > \.container\.mx-auto\.px-4 > h2\.mb-12[\s\S]*margin-bottom:\s*1\.5rem !important/,
+  'Expected preserved Elementor pricing-tab HTML sections to keep mobile tabs above the fixed CTA while preserving section height.',
+);
+assert.match(
+  dashboardSource,
+  /@media \(max-width:\s*767px\)[\s\S]*body\.whipify-elementor-visual-fidelity-mode \.elementor-widget-html section\.py-16\.bg-muted\\\\\/30:has\(\.max-w-2xl\.mx-auto\.mt-8\) \.max-w-2xl\.mx-auto\.mt-8 h3\.text-2xl[\s\S]*margin-bottom:\s*1rem !important[\s\S]*body\.whipify-elementor-visual-fidelity-mode \.elementor-widget-html section\.py-16\.bg-muted\\\\\/30:has\(\.max-w-2xl\.mx-auto\.mt-8\) \.max-w-2xl\.mx-auto\.mt-8 \.text-muted-foreground:last-child[\s\S]*margin-top:\s*1\.5rem !important/,
+  'Expected preserved Elementor Additional Services office cards to keep the same mobile vertical rhythm as the reference Gutenberg output.',
+);
+assert.match(
+  importerOverrideCss,
+  /@media \(max-width:\s*767px\)[\s\S]*body\.whipify-elementor-visual-fidelity-mode \.elementor-widget-html section\.py-16\.bg-muted\\\/30:has\(\.max-w-2xl\.mx-auto\.mt-8\) \.max-w-2xl\.mx-auto\.mt-8 h3\.text-2xl[\s\S]*margin-bottom:\s*1rem !important[\s\S]*body\.whipify-elementor-visual-fidelity-mode \.elementor-widget-html section\.py-16\.bg-muted\\\/30:has\(\.max-w-2xl\.mx-auto\.mt-8\) \.max-w-2xl\.mx-auto\.mt-8 \.text-muted-foreground:last-child[\s\S]*margin-top:\s*1\.5rem !important/,
+  'Expected importer-bundled CSS to preserve Additional Services office card spacing when plugin CSS wins the cascade.',
+);
+assert.match(
+  dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.elementor \.whipify-feature-grid__body \.text-primary[\s\S]*color:\s*hsl\(var\(--primary, 180 100% 25%\)\) !important/,
+  'Expected generated Elementor CSS to restore source text-primary color inside custom feature-grid card bodies.',
+);
+assert.match(
+  importerOverrideCss,
+  /body\.whipify-elementor-visual-fidelity-mode \.elementor \.whipify-feature-grid__body \.text-primary[\s\S]*color:\s*hsl\(var\(--primary, 180 100% 25%\)\) !important/,
+  'Expected importer-bundled CSS to restore source text-primary color inside custom feature-grid card bodies when plugin CSS wins.',
+);
+assert.match(
+  dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.elementor \.whipify-feature-grid__body \.text-accent[\s\S]*color:\s*hsl\(var\(--accent, 14 100% 60%\)\) !important/,
+  'Expected generated Elementor CSS to restore source text-accent color inside custom feature-grid card bodies.',
+);
+assert.match(
+  importerOverrideCss,
+  /body\.whipify-elementor-visual-fidelity-mode \.elementor \.whipify-feature-grid__body \.text-accent[\s\S]*color:\s*hsl\(var\(--accent, 14 100% 60%\)\) !important/,
+  'Expected importer-bundled CSS to restore source text-accent color inside custom feature-grid card bodies when plugin CSS wins.',
+);
+assert.match(
+  dashboardSource,
+  /window\.setupWhipifyElementorHeroCtaLayout[\s\S]*sm:flex-row[\s\S]*See Pricing & Availability[\s\S]*setProperty\('flex-direction', 'column', 'important'\)/,
+  'Expected generated Elementor runtime to restore the source desktop hero CTA stack when Elementor turns the hero action group into a row.',
+);
+assert.match(
+  importerRuntimeJs,
+  /window\.setupWhipifyElementorHeroCtaLayout[\s\S]*sm:flex-row[\s\S]*See Pricing & Availability[\s\S]*setProperty\('flex-direction', 'column', 'important'\)/,
+  'Expected importer-bundled runtime to restore the source desktop hero CTA stack when plugin assets win the cascade.',
+);
+assert.match(
+  importerRuntimeJs,
+  /window\.setupWhipifyElementorHeroCtaLayout[\s\S]*Get Your Free Quote[\s\S]*780-913-6565[\s\S]*setProperty\('flex-direction', 'column', 'important'\)/,
+  'Expected importer-bundled runtime to restore raw HTML move-in/move-out hero CTA stacks that are not Elementor e-con containers.',
+);
+assert.match(
+  importerOverrideCss,
+  /@media \(max-width: 767px\)[\s\S]*section\[class\*="via-\[hsl\(180,100%,40%\)\]"\]\[class\*="to-\[hsl\(160,100%,30%\)\]"\] h1\.text-4xl[\s\S]*line-height:\s*40px !important[\s\S]*margin-bottom:\s*0 !important[\s\S]*h1\.text-4xl \+ p\.text-xl[\s\S]*margin-top:\s*24px !important/,
+  'Expected importer override CSS to match the raw HTML move-out hero mobile H1 line-height and paragraph gap from the source page.',
+);
+assert.match(
+  importerOverrideCss,
+  /@media \(max-width: 767px\)[\s\S]*section\.py-20\.bg-muted\\\/20:has\(\.grid\.md\\:grid-cols-2\.gap-8\.mb-8\) \[class\*="border-\[hsl\(160,100%,30%\)\]"\][\s\S]*min-height:\s*520px !important[\s\S]*\[class\*="border-accent"\][\s\S]*min-height:\s*472px !important[\s\S]*\.border-purple-200[\s\S]*min-height:\s*340px !important/,
+  'Expected importer override CSS to preserve source mobile heights for move-out service cards that Elementor renders 16px too short.',
+);
+assert.match(
+  importerRuntimeJs,
+  /window\.setupWhipifyElementorRadixFaqClosedRowHeights[\s\S]*button\[aria-controls\]\[data-state\], button\[aria-controls\]\[aria-expanded\][\s\S]*closest\('section'\)[\s\S]*Move Out Cleaning[\s\S]*questionText\.length < 40[\s\S]*76px[\s\S]*100px[\s\S]*min-height/,
+  'Expected importer-bundled FAQ runtime to restore source mobile closed-row heights only for raw HTML move-out FAQ cards, not pricing FAQ cards.',
+);
+assert.match(
+  dashboardSource,
+  /window\.setupWhipifyElementorRadixFaqClosedRowHeights[\s\S]*button\[aria-controls\]\[data-state\], button\[aria-controls\]\[aria-expanded\][\s\S]*closest\('section'\)[\s\S]*Move Out Cleaning[\s\S]*questionText\.length < 40[\s\S]*76px[\s\S]*100px[\s\S]*min-height/,
+  'Expected generated Elementor theme FAQ runtime to restore source mobile closed-row heights only for raw HTML move-out FAQ cards.',
+);
+assert.match(
+  importerOverrideCss,
+  /body\.whipify-elementor-visual-fidelity-mode \.elementor-widget-html section\.py-20\.bg-white > \.container\.mx-auto\.px-4\.max-w-4xl[\s\S]*max-width:\s*56rem !important/,
+  'Expected importer override CSS to preserve raw HTML max-w-4xl source containers instead of letting generic Elementor container width stretch prose and FAQ sections.',
+);
+assert.doesNotMatch(
+  importerOverrideCss,
+  /svg:not\(\.text-accent svg\)/,
+  'Expected importer override CSS to avoid fragile complex :not() selectors for move-out service icon neutralization.',
+);
+assert.match(
+  dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.elementor-widget-html section\.py-20\.bg-white > \.container\.mx-auto\.px-4\.max-w-4xl[\s\S]*max-width:\s*56rem !important/,
+  'Expected generated Elementor theme CSS to preserve raw HTML max-w-4xl source containers for future exports.',
+);
+assert.doesNotMatch(
+  dashboardSource,
+  /svg:not\(\.text-accent svg\)/,
+  'Expected generated Elementor theme CSS to avoid fragile complex :not() selectors for move-out service icon neutralization.',
+);
+assert.match(
+  dashboardSource,
+  /window\.setupWhipifyElementorRecentWorkCardLayout[\s\S]*return 'Deep Cleaning'[\s\S]*Property Type[\s\S]*insertBefore\(cardTitle, location\)/,
+  'Expected generated Elementor runtime to restore source-style case-study card headers without converting editable cards back to opaque HTML.',
+);
+assert.match(
+  importerRuntimeJs,
+  /window\.setupWhipifyElementorRecentWorkCardLayout[\s\S]*return 'Deep Cleaning'[\s\S]*Property Type[\s\S]*insertBefore\(cardTitle, location\)/,
+  'Expected importer-bundled runtime to restore source-style case-study card headers when plugin assets win cascade order.',
+);
+assert.match(
+  importerRuntimeJs,
+  /window\.setupWhipifyElementorBlogCardLayout[\s\S]*tf-article-trust-signals[\s\S]*whipify-feature-grid__cards\.py-20\.bg-background[\s\S]*emptyMedia\.remove\(\)[\s\S]*Read More/,
+  'Expected importer-bundled runtime to restore source blog-card structure and hide WordPress article trust signals on converted Elementor blog pages.',
+);
+assert.match(
+  importerRuntimeJs,
+  /window\.setupWhipifyElementorBlogCardLayout[\s\S]*whipify-blog-card-icon--tag[\s\S]*whipify-blog-card-icon--calendar[\s\S]*whipify-blog-card-icon--clock/,
+  'Expected importer-bundled runtime to restore source blog-card tag/date/read-time icons instead of leaving plain text-only Elementor card meta.',
+);
+assert.match(
+  importerOverrideCss,
+  /\.elementor-widget-button\.border-2\.border-current\.bg-transparent[\s\S]*background:\s*transparent !important[\s\S]*border:\s*2px solid currentColor !important/,
+  'Expected importer override CSS to prevent Elementor button skin from turning blog category filter outline chips green.',
+);
+assert.match(
+  importerOverrideCss,
+  /\.whipify-feature-grid__cards\.py-20\.bg-background\.max-w-7xl[\s\S]*padding-left:\s*0 !important[\s\S]*padding-right:\s*0 !important/,
+  'Expected importer override CSS to remove Elementor container side padding from blog card grids on mobile so cards match the source width.',
+);
+assert.match(
+  importerOverrideCss,
+  /@media \(max-width: 767px\)[\s\S]*\.whipify-feature-grid:has\(\.whipify-feature-grid__cards\.py-20\.bg-background\.max-w-7xl\) \.whipify-feature-grid__inner[\s\S]*padding-left:\s*0 !important[\s\S]*padding-right:\s*0 !important/,
+  'Expected importer override CSS to remove the blog feature-grid inner wrapper padding on mobile so the card grid starts at the source 16px page gutter.',
+);
+assert.match(
+  importerRuntimeJs,
+  /ready\(function\(\) \{[\s\S]*window\.setupWhipifyElementorBlogCardLayout\(document\);/,
+  'Expected importer-bundled visual-fidelity boot to run the blog card layout repair.',
+);
+assert.match(
+  dashboardSource,
+  /window\.setupWhipifyElementorMobileRhythmLayout[\s\S]*max-width: 767px[\s\S]*Meet Our Network of Expert Cleaners[\s\S]*Edmonton Cleaning FAQs[\s\S]*Contact Us/,
+  'Expected generated Elementor runtime to include a guarded mobile vertical-rhythm repair for converted Edmonton long-form sections.',
+);
+assert.match(
+  importerRuntimeJs,
+  /window\.setupWhipifyElementorMobileRhythmLayout[\s\S]*max-width: 767px[\s\S]*Meet Our Network of Expert Cleaners[\s\S]*Edmonton Cleaning FAQs[\s\S]*Contact Us/,
+  'Expected importer-bundled runtime to include the same guarded mobile vertical-rhythm repair when plugin assets win cascade order.',
+);
+assert.match(
+  visualParityRegressionSource,
+  /scrollPageForLazyAssets[\s\S]*img\.setAttribute\('loading', 'eager'\)[\s\S]*document\.images[\s\S]*window\.scrollTo\(0, y\)[\s\S]*page\.screenshot\(\{ fullPage: true/,
+  'Expected visual parity screenshots to force eager image loading and scroll pages before capture so lazy-loaded assets do not produce false placeholder diffs.',
+);
+assert.match(
+  dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.whipify-feature-grid:not\(:has\(\.whipify-feature-grid__intro\)\):not\(:has\(\.whipify-feature-grid__body-main\)\) \.whipify-feature-grid__title \{[\s\S]*margin-bottom:\s*1\.5rem !important/,
+  'Expected no-intro Elementor feature grids to use the source 24px mobile title-to-card gap instead of drifting cards down.',
+);
+assert.match(
+  importerOverrideCss,
+  /body\.whipify-elementor-visual-fidelity-mode \.whipify-feature-grid:not\(:has\(\.whipify-feature-grid__intro\)\):not\(:has\(\.whipify-feature-grid__body-main\)\) \.whipify-feature-grid__title \{[\s\S]*margin-bottom:\s*1\.5rem !important/,
+  'Expected importer-bundled CSS to keep no-intro feature grids at the source 24px title-to-card gap.',
+);
+assert.match(
+  dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.whipify-feature-grid__icon svg \{[\s\S]*width:\s*2rem !important[\s\S]*height:\s*2rem !important/,
+  'Expected generated Elementor feature-card icons to keep the source 32px SVG size inside 64px icon tiles.',
+);
+assert.match(
+  importerOverrideCss,
+  /body\.whipify-elementor-visual-fidelity-mode \.whipify-feature-grid__icon svg \{[\s\S]*width:\s*2rem !important[\s\S]*height:\s*2rem !important/,
+  'Expected importer-bundled CSS to keep feature-card SVG icons at the source 32px size.',
+);
+assert.match(
+  dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.elementor \.elementor-widget-text-editor\.font-semibold[\s\S]*color:\s*inherit !important[\s\S]*font-weight:\s*600 !important/,
+  'Expected generated Elementor CSS to prevent Elementor text-editor defaults from turning source font-semibold labels gray.',
+);
+assert.match(
+  importerOverrideCss,
+  /body\.whipify-elementor-visual-fidelity-mode \.elementor \.elementor-widget-text-editor\.font-semibold[\s\S]*color:\s*inherit !important[\s\S]*font-weight:\s*600 !important/,
+  'Expected importer-bundled CSS to prevent Elementor text-editor defaults from turning source font-semibold labels gray.',
+);
+assert.match(
+  dashboardSource,
+  /@media \(max-width:\s*767px\)[\s\S]*\.whipify-elementor-visual-fidelity-mode \.whipify-pricing-table__matrix \{[\s\S]*width:\s*901px !important[\s\S]*table-layout:\s*fixed !important[\s\S]*\.whipify-elementor-visual-fidelity-mode \.whipify-pricing-table__matrix :is\(th, td\):first-child \{[\s\S]*width:\s*191px !important[\s\S]*\.whipify-elementor-visual-fidelity-mode \.whipify-pricing-table__matrix :is\(th, td\):not\(:first-child\) \{[\s\S]*width:\s*236px !important/,
+  'Expected generated Elementor CSS to preserve the source mobile pricing-table column widths instead of squeezing Service Type.',
+);
+assert.match(
+  importerOverrideCss,
+  /@media \(max-width:\s*767px\)[\s\S]*body\.whipify-elementor-visual-fidelity-mode \.whipify-pricing-table__matrix \{[\s\S]*width:\s*901px !important[\s\S]*table-layout:\s*fixed !important[\s\S]*body\.whipify-elementor-visual-fidelity-mode \.whipify-pricing-table__matrix :is\(th, td\):first-child \{[\s\S]*width:\s*191px !important[\s\S]*body\.whipify-elementor-visual-fidelity-mode \.whipify-pricing-table__matrix :is\(th, td\):not\(:first-child\) \{[\s\S]*width:\s*236px !important/,
+  'Expected importer-bundled CSS to preserve the source mobile pricing-table column widths when plugin CSS wins.',
+);
+assert.match(
+  dashboardSource,
+  /window\.setupWhipifyElementorMobileStickyCtaDedupe[\s\S]*querySelectorAll\('\[class~="md:hidden"\]\[class~="fixed"\]\[class~="bottom-0"\]'\)[\s\S]*data-whipify-duplicate-sticky-cta[\s\S]*display', 'none', 'important'[\s\S]*ready\(function\(\) \{[\s\S]*window\.setupWhipifyElementorRoutePhoneContext\(document\);[\s\S]*window\.setupWhipifyElementorMobileStickyCtaDedupe\(document\);/,
+  'Expected generated Elementor runtime to hide duplicate source/theme mobile sticky CTA bars after route phone localization.',
+);
+assert.match(
+  importerRuntimeJs,
+  /window\.setupWhipifyElementorMobileStickyCtaDedupe[\s\S]*querySelectorAll\('\[class~="md:hidden"\]\[class~="fixed"\]\[class~="bottom-0"\]'\)[\s\S]*data-whipify-duplicate-sticky-cta[\s\S]*display', 'none', 'important'[\s\S]*ready\(function\(\) \{[\s\S]*window\.setupWhipifyElementorRoutePhoneContext\(document\);[\s\S]*window\.setupWhipifyElementorMobileStickyCtaDedupe\(document\);/,
+  'Expected importer-bundled runtime to hide duplicate mobile sticky CTA bars after route phone localization.',
+);
+assert.match(
+  dashboardSource,
+  /@media \(max-width:\s*767px\)[\s\S]*\.whipify-feature-grid__title,[\s\S]*\.whipify-pricing-table__title[\s\S]*font-size:\s*1\.875rem !important[\s\S]*line-height:\s*2\.25rem !important/,
+  'Expected generated Elementor custom-widget titles to keep Tailwind text-3xl sizing on mobile instead of desktop h2 sizing.',
+);
+assert.match(
+  dashboardSource,
+  /@media \(min-width:\s*1024px\)[\s\S]*\.whipify-feature-grid__title,[\s\S]*\.whipify-pricing-table__title[\s\S]*font-size:\s*3rem !important[\s\S]*line-height:\s*1 !important/,
+  'Expected generated Elementor custom-widget titles to keep Tailwind lg:text-5xl sizing on desktop instead of tablet h2 sizing.',
+);
+assert.match(
+  importerOverrideCss,
+  /@media \(max-width:\s*767px\)[\s\S]*\.whipify-feature-grid__title,[\s\S]*\.whipify-pricing-table__title[\s\S]*font-size:\s*1\.875rem !important[\s\S]*line-height:\s*2\.25rem !important/,
+  'Expected importer-bundled CSS to keep generated custom-widget titles at source mobile typography when plugin assets override theme CSS.',
+);
+assert.match(
+  importerOverrideCss,
+  /@media \(min-width:\s*1024px\)[\s\S]*\.whipify-feature-grid__title,[\s\S]*\.whipify-pricing-table__title[\s\S]*font-size:\s*3rem !important[\s\S]*line-height:\s*1 !important/,
+  'Expected importer-bundled CSS to keep generated custom-widget titles at source desktop typography when plugin assets override theme CSS.',
+);
+assert.match(
+  dashboardSource,
   /\.whipify-elementor-visual-fidelity-mode \.tf-elementor-breadcrumbs[\s\S]*flex-direction:\s*row !important/,
   'Expected generated Elementor breadcrumbs to render as a compact horizontal row.',
 );
 assert.match(
   dashboardSource,
-  /\.whipify-elementor-visual-fidelity-mode \.tf-elementor-breadcrumbs[\s\S]*max-width:\s*1400px/,
-  'Expected generated Elementor breadcrumbs to use the same wide page container as the source page.',
+  /\.whipify-elementor-visual-fidelity-mode \.tf-elementor-breadcrumbs[\s\S]*max-width:\s*1280px/,
+  'Expected generated Elementor breadcrumbs to use the same 1280px source container as the reference page.',
 );
 assert.match(
   dashboardSource,
@@ -211,6 +1012,21 @@ assert.match(
   dashboardSource,
   /\.whipify-elementor-visual-fidelity-mode \.elementor \.e-con\[class\*="space-y-"\][\s\S]*gap:\s*0 !important/,
   'Expected all Tailwind space-y stacks, including FAQ rows, not to receive an extra Elementor flex gap.',
+);
+assert.match(
+  dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.elementor h3\.text-2xl\.font-semibold\.leading-none\.tracking-tight[\s\S]*line-height:\s*2rem !important/,
+  'Expected generated Elementor CSS to restore reference 32px line-height for text-2xl card headings instead of Elementor/Tailwind leading-none collapsing them to 24px.',
+);
+assert.match(
+  dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.elementor \.border-b > h3\.flex[\s\S]*margin-bottom:\s*1rem !important[\s\S]*\.whipify-elementor-visual-fidelity-mode \.elementor \.border-b \+ \.border-b[\s\S]*margin-top:\s*1\.5rem !important/,
+  'Expected generated Elementor CSS to restore source FAQ accordion question spacing and item gaps after Elementor resets heading margins.',
+);
+assert.match(
+  dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.elementor \[class~="space-y-1\.5"\] > h3\.font-semibold\.tracking-tight\.text-lg[\s\S]*margin-bottom:\s*1rem !important/,
+  'Expected generated Elementor CSS to restore source heading margin inside pricing-style card header stacks after Elementor resets h3 margins.',
 );
 assert.match(
   dashboardSource,
@@ -309,6 +1125,11 @@ assert.match(
 );
 assert.match(
   dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode [^{]*\.elementor-widget-text-editor[\s\S]*font-family:\s*ui-sans-serif/,
+  'Expected Elementor text-editor widgets to inherit the source system font instead of Elementor/Roboto defaults.',
+);
+assert.match(
+  dashboardSource,
   /\.whipify-elementor-visual-fidelity-mode \.elementor \.elementor-element\[class~="md:hidden"\][\s\S]*display:\s*none !important/,
   'Expected desktop Elementor output to honor md:hidden and hide duplicated mobile carousel/list rows.',
 );
@@ -331,6 +1152,16 @@ assert.match(
   dashboardSource,
   /\.whipify-elementor-visual-fidelity-mode \.elementor \.max-w-3xl \.elementor-button-content-wrapper[\s\S]*justify-content:\s*space-between !important/,
   'Expected converted FAQ Elementor button internals to keep question text left and the toggle indicator on the right.',
+);
+assert.match(
+  dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.elementor \.e-con\.max-w-3xl\.mx-auto\.space-y-4:has\(> \.bg-white\.rounded-xl\.border-2\)[\s\S]*gap:\s*0 !important/,
+  'Expected generated Elementor visual fidelity CSS to collapse FAQ card-stack gaps so city FAQ sections match the reference height.',
+);
+assert.match(
+  importerOverrideCss,
+  /body\.whipify-elementor-visual-fidelity-mode \.elementor \.e-con\.max-w-3xl\.mx-auto\.space-y-4:has\(> \.bg-white\.rounded-xl\.border-2\)[\s\S]*gap:\s*0 !important/,
+  'Expected importer-bundled override CSS to collapse FAQ card-stack gaps even when plugin CSS wins cascade order.',
 );
 assert.match(
   dashboardSource,
@@ -379,8 +1210,13 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /setupWhipifyElementorCarousels[\s\S]*var width = visible === 1 \? '100%' : \(100 \/ visible\) \+ '%'/,
-  'Expected generated Elementor carousel runtime to preserve source md:w-1/3 card widths instead of shrinking cards to fit around gaps.',
+  /setupWhipifyElementorCarousels[\s\S]*var visible = 1[\s\S]*var width = '100%'/,
+  'Expected generated Elementor carousel runtime to keep review slides one-at-a-time and full-width like the source React carousel.',
+);
+assert.match(
+  dashboardSource,
+  /setupWhipifyElementorCarousels[\s\S]*card\.style\.setProperty\('width', width, 'important'\)[\s\S]*card\.style\.setProperty\('flex', '0 0 ' \+ width, 'important'\)/,
+  'Expected generated Elementor carousel runtime to write full-width slide sizing with !important so source md:w-1/3 utility overrides cannot win later in the cascade.',
 );
 assert.match(
   dashboardSource,
@@ -404,6 +1240,11 @@ assert.match(
 );
 assert.match(
   dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.whipify-feature-grid:has\(\.whipify-feature-grid__cards\.lg\\\\:grid-cols-4\) \.whipify-feature-grid__footer[\s\S]*margin-top:\s*2\.5rem !important/,
+  'Expected four-column service Feature Grid footers to preserve source mt-10 spacing before footer CTAs.',
+);
+assert.match(
+  dashboardSource,
   /\.whipify-elementor-visual-fidelity-mode \.whipify-feature-grid:has\(\.whipify-feature-grid__cards\.lg\\\\:grid-cols-4\) \.whipify-feature-grid__inner > \.mt-12\[class\*="bg-gradient"\] a\[class\*="inline-flex"\]::before[\s\S]*content:\s*"\\\\2726"/,
   'Expected four-column service footer CTAs to preserve the source leading sparkle icon instead of narrowing the button.',
 );
@@ -424,7 +1265,7 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /\.whipify-elementor-visual-fidelity-mode \.whipify-feature-grid__title[\s\S]*font-size:\s*clamp\(2rem, 4vw, 3rem\)/,
+  /\.whipify-elementor-visual-fidelity-mode \.whipify-feature-grid__title[\s\S]*font-size:\s*2\.25rem/,
   'Expected generated custom Feature Grid widgets to receive section-title styling instead of Elementor/default text sizing.',
 );
 assert.match(
@@ -459,8 +1300,18 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /\.whipify-elementor-visual-fidelity-mode \.tf-elementor-breadcrumbs[\s\S]*margin:\s*1rem auto 0/,
-  'Expected Elementor breadcrumb rows to sit at the same vertical offset as the source/static page breadcrumb.',
+  /\.whipify-elementor-visual-fidelity-mode \.tf-elementor-breadcrumbs[\s\S]*margin:\s*0 auto/,
+  'Expected Elementor breadcrumb rows to sit at the same vertical offset as the source/static page breadcrumb without adding a second top offset.',
+);
+assert.match(
+  dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.elementor-widget-html > div > \.container\.mx-auto\.px-4\.pt-4:empty[\s\S]*display:\s*none !important/,
+  'Expected generated Elementor visual fidelity CSS to hide empty source breadcrumb placeholders that otherwise create a 16px gap before the first section.',
+);
+assert.match(
+  importerOverrideCss,
+  /\.elementor-widget-html > div > \.container\.mx-auto\.px-4\.pt-4:empty[\s\S]*display:\s*none !important/,
+  'Expected importer override CSS to hide empty source breadcrumb placeholders even when an older generated theme is active.',
 );
 assert.match(
   dashboardSource,
@@ -489,6 +1340,11 @@ assert.match(
 );
 assert.match(
   dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.elementor-widget-heading\.mb-3 \+ \.elementor-widget-text-editor\.mb-12[\s\S]*margin-top:\s*0\.75rem !important/,
+  'Expected Reviews-style mb-3 heading followed by mb-12 text to preserve the source 24px heading-to-intro gap.',
+);
+assert.match(
+  dashboardSource,
   /\.whipify-elementor-carousel-prev,[\s\S]*border:\s*2px solid hsl\(var\(--foreground/,
   'Expected generated review carousel arrows to use the stronger source-style border, not a pale Elementor default border.',
 );
@@ -499,8 +1355,8 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /\.whipify-elementor-visual-fidelity-mode \.whipify-feature-grid__inner[\s\S]*max-width:\s*1400px/,
-  'Expected generated custom widget inner shells to use the source container width instead of narrowing four-column sections.',
+  /\.whipify-elementor-visual-fidelity-mode \.whipify-feature-grid__inner[\s\S]*max-width:\s*1280px/,
+  'Expected generated custom widget inner shells to use the reference 1280px source container width instead of drifting to Elementor defaults.',
 );
 assert.match(
   dashboardSource,
@@ -554,6 +1410,21 @@ assert.match(
 );
 assert.match(
   dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.whipify-feature-grid__cards\.lg\\\\:grid-cols-3 \.whipify-feature-grid__card-title[\s\S]*margin-bottom:\s*0\.75rem !important/,
+  'Expected three-column Feature Grid card titles to keep the source mb-3 spacing.',
+);
+assert.match(
+  dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.elementor \.whipify-feature-grid:has\(\.whipify-feature-grid__cards\.lg\\\\:grid-cols-3\) \.whipify-feature-grid__cards\.lg\\\\:grid-cols-3 \.elementor-widget-whipify_feature_card article\.whipify-feature-grid__card > h3\.whipify-feature-grid__card-title[\s\S]*margin-bottom:\s*0\.75rem !important/,
+  'Expected three-column Feature Grid card title spacing to beat the broader max-w-5xl h3 specificity rule.',
+);
+assert.match(
+  dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.whipify-feature-grid__cards\.lg\\\\:grid-cols-3 \.whipify-feature-grid__card-text[\s\S]*font-size:\s*0\.875rem !important[\s\S]*line-height:\s*1\.25rem !important/,
+  'Expected three-column Feature Grid card bodies to keep source text-sm leading-relaxed metrics.',
+);
+assert.match(
+  dashboardSource,
   /\.whipify-elementor-visual-fidelity-mode \.whipify-feature-grid__body p\.mb-2[\s\S]*margin-bottom:\s*0\.5rem !important[\s\S]*\.whipify-elementor-visual-fidelity-mode \.whipify-feature-grid__body p:last-child[\s\S]*margin-bottom:\s*0 !important/,
   'Expected generated Feature Grid body HTML to preserve source paragraph margins instead of adding a 12px margin to every paragraph.',
 );
@@ -574,13 +1445,18 @@ assert.match(
 );
 assert.match(
   dashboardSource,
-  /\.whipify-elementor-visual-fidelity-mode \.whipify-feature-grid__icon svg[\s\S]*width:\s*2\.5rem !important/,
-  'Expected generated custom Feature Grid icons to size preserved SVG icons consistently.',
+  /\.whipify-elementor-visual-fidelity-mode \.whipify-feature-grid__icon svg[\s\S]*width:\s*2rem !important/,
+  'Expected generated custom Feature Grid icons to keep source 32px SVG sizing consistently.',
 );
 assert.match(
   dashboardSource,
   /\.whipify-elementor-visual-fidelity-mode \.elementor \.w-4:not\(#whipify-size-authority\)/,
   'Expected generated Elementor visual fidelity CSS to preserve small Tailwind icon width utilities.',
+);
+assert.match(
+  dashboardSource,
+  /\.whipify-elementor-visual-fidelity-mode \.elementor \.whipify-location-card__surface > \.absolute\.w-32\.h-32[\s\S]*width:\s*8rem !important[\s\S]*height:\s*8rem !important[\s\S]*max-width:\s*none !important/,
+  'Expected generated Elementor visual fidelity CSS to preserve the source 128px decorative location-card corner bubble.',
 );
 assert.match(
   dashboardSource,
@@ -611,17 +1487,17 @@ const importerFidelityJs = ELEMENTOR_IMPORTER_PLUGIN_FILES['assets/js/whipify-el
 
 assert.match(
   pluginBootstrap,
-  /Version: 1\.3\.19/,
-  'Expected the Elementor importer plugin version to bump when fallback-repair behavior changes.',
+  /Version: 1\.3\.81/,
+  'Expected the Elementor importer plugin version to bump when service-card and CTA parity behavior changes.',
 );
 assert.match(
   pluginBootstrap,
-  /define\('WEI_VERSION', '1\.3\.19'\)/,
+  /define\('WEI_VERSION', '1\.3\.81'\)/,
   'Expected WEI_VERSION to match the Elementor importer plugin header version.',
 );
 assert.match(
   importerFidelityJs,
-  /data-whipify-widget-version', '1\.3\.19'/,
+  /data-whipify-widget-version', '1\.3\.81'/,
   'Expected editor-canvas runtime markers to report the active importer version.',
 );
 
@@ -664,13 +1540,333 @@ assert.match(
 );
 assert.match(
   importerFidelityOverridesCss,
-  /\.tf-elementor-breadcrumbs[\s\S]*margin:\s*1rem auto 0/,
-  'Expected importer override CSS to restore the source breadcrumb vertical offset when an older generated theme is active.',
+  /\.whipify-feature-grid:has\(\.whipify-feature-grid__cards\.lg\\:grid-cols-4\) \.whipify-feature-grid__footer[\s\S]*margin-top:\s*2\.5rem !important/,
+  'Expected importer override CSS to restore source mt-10 spacing on four-column Feature Grid footers.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.tf-elementor-breadcrumbs[\s\S]*margin:\s*0 auto/,
+  'Expected importer override CSS to remove stale extra breadcrumb top margin when an older generated theme is active.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /body\.whipify-elementor-visual-fidelity-mode \.elementor \.entry-content\.e-con[\s\S]*flex-direction:\s*column !important[\s\S]*max-width:\s*100% !important/,
+  'Expected importer override CSS to prevent mobile page-body flex overflow when an older generated Elementor theme is active.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /body\.whipify-elementor-visual-fidelity-mode \.elementor h3\.text-2xl\.font-semibold\.leading-none\.tracking-tight[\s\S]*line-height:\s*2rem !important/,
+  'Expected importer override CSS to restore source text-2xl card heading line-height when an older generated Elementor theme is active.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /body\.whipify-elementor-visual-fidelity-mode \.elementor \.border-b > h3\.flex[\s\S]*margin-bottom:\s*1rem !important[\s\S]*body\.whipify-elementor-visual-fidelity-mode \.elementor \.border-b \+ \.border-b[\s\S]*margin-top:\s*1\.5rem !important/,
+  'Expected importer override CSS to restore source FAQ accordion row spacing when an older generated Elementor theme is active.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /body\.whipify-elementor-visual-fidelity-mode #root > nav\.sticky > \.container[\s\S]*max-width:\s*1280px !important/,
+  'Expected importer override CSS to keep active Elementor themes from widening the global header chrome to the page-body container.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /body\.whipify-elementor-visual-fidelity-mode #root > nav\.sticky[\s\S]*position:\s*relative !important[\s\S]*top:\s*auto !important/,
+  'Expected importer override CSS to restore normal-flow source header behavior when an older active theme made the header fixed.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /body\.whipify-elementor-visual-fidelity-mode #root > main\.site-main[\s\S]*margin-top:\s*0 !important/,
+  'Expected importer override CSS to remove stale fixed-header body offsets from older active generated themes.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /body\.whipify-elementor-visual-fidelity-mode #root > nav\.sticky > \.container > \.flex[\s\S]*justify-content:\s*flex-start !important/,
+  'Expected importer override CSS to restore source header flex alignment for older active generated themes.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /body\.whipify-elementor-visual-fidelity-mode #root > nav\.sticky > \.container > \.flex > a\.bg-primary[\s\S]*display:\s*flex !important[\s\S]*margin-right:\s*3rem !important[\s\S]*flex-shrink:\s*0 !important/,
+  'Expected importer override CSS to restore source header logo display, spacing, and non-shrinking width.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /body\.whipify-elementor-visual-fidelity-mode #root > nav\.sticky > \.container > \.flex > \.hidden\.md\\:flex\.items-center\.space-x-6[\s\S]*gap:\s*1\.1rem !important[\s\S]*flex-shrink:\s*0 !important/,
+  'Expected importer override CSS to restore source desktop nav spacing for older active generated themes.',
 );
 assert.match(
   importerFidelityOverridesCss,
   /\.whipify-feature-grid__body p\.text-sm[\s\S]*font-size:\s*0\.875rem !important[\s\S]*line-height:\s*1\.25rem !important/,
   'Expected importer override CSS to restore source text-sm sizing inside generated Feature Grid body HTML for older active themes.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor-widget-text-editor\[class\*="text-white"\][\s\S]*color:\s*#fff !important/,
+  'Expected importer override CSS to force Elementor Text Editor widgets with source text-white utilities to render white instead of Elementor gray.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor-widget-text-editor[\s\S]*font-family:\s*ui-sans-serif/,
+  'Expected importer override CSS to force Elementor Text Editor widgets to use the source system font instead of Elementor/Roboto defaults.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor-widget-text-editor\[class\*="text-white\/90"\][\s\S]*color:\s*rgba\(255, 255, 255, 0\.9\) !important/,
+  'Expected importer override CSS to preserve source text-white/90 opacity on Elementor Text Editor widgets.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor-widget-text-editor\[class\*="text-primary-foreground"\][\s\S]*color:\s*#fff !important/,
+  'Expected importer override CSS to preserve source text-primary-foreground copy such as the contact hero subtitle.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor-widget-text-editor\.font-medium[\s\S]*font-weight:\s*500 !important[\s\S]*\.elementor-widget-text-editor\.font-semibold[\s\S]*font-weight:\s*600 !important/,
+  'Expected importer override CSS to restore Tailwind font-weight utilities on Elementor Text Editor widgets.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor-widget-text-editor\.leading-relaxed[\s\S]*line-height:\s*1\.625 !important/,
+  'Expected importer override CSS to preserve source leading-relaxed paragraph metrics inside Elementor Text Editor widgets.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor-widget-text-editor\.leading-relaxed\[class\*="md:text-2xl"\][\s\S]*line-height:\s*2rem !important/,
+  'Expected importer override CSS to keep source hero md:text-2xl leading-relaxed copy at the reference 32px line-height.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor \.e-con\.inline-flex:not\(\.w-full\)[\s\S]*width:\s*fit-content !important[\s\S]*display:\s*inline-flex !important[\s\S]*align-self:\s*center !important/,
+  'Expected importer override CSS to keep source inline-flex chips such as the homepage hero trust badge from stretching full width.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor-widget-button\.inline-flex:not\(\.w-full\)[\s\S]*width:\s*auto !important[\s\S]*align-self:\s*center !important/,
+  'Expected importer override CSS to keep inline-flex Elementor button widgets centered at source fit-content width.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor-widget-button\.inline-flex\.w-full[\s\S]*--container-widget-width:\s*100%[\s\S]*width:\s*100% !important[\s\S]*align-self:\s*stretch !important[\s\S]*\.elementor-widget-button\.inline-flex\.w-full \.elementor-button[\s\S]*width:\s*100% !important/,
+  'Expected importer override CSS to preserve source w-full Elementor button widgets such as contact form CTAs.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.whipify-feature-grid__cards\.py-20\.bg-muted\\\/20\.lg\\:grid-cols-3[\s\S]*\.whipify-feature-grid__card-text[\s\S]*font-size:\s*1rem !important[\s\S]*line-height:\s*1\.5rem !important/,
+  'Expected importer override CSS to keep About page value-card body copy at source 16px/24px metrics.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor-widget-button\.inline-flex\.px-8 \.elementor-button[\s\S]*padding-left:\s*2rem !important[\s\S]*padding-right:\s*2rem !important/,
+  'Expected importer override CSS to keep source px-8 padding after inline-flex Elementor buttons stop stretching.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.e-con\.inline-flex\.items-center\.gap-2[\s\S]*--flex-direction:\s*row !important[\s\S]*flex-direction:\s*row !important[\s\S]*flex-wrap:\s*nowrap !important[\s\S]*\.e-con\.inline-flex\.items-center\.gap-2\.rounded-full > \.elementor-widget-text-editor[\s\S]*max-width:\s*calc\(100% - 4\.75rem\) !important/,
+  'Expected importer override CSS to preserve source inline-flex row direction for compact badges such as the homepage hero trust badge.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /@media \(min-width:\s*768px\)[\s\S]*\.e-con\.inline-flex\.items-center\.gap-2\.rounded-full > \.elementor-widget-text-editor[\s\S]*max-width:\s*none !important[\s\S]*white-space:\s*nowrap !important/,
+  'Expected importer override CSS to let desktop hero trust badges remain a single-line 42px chip instead of inheriting mobile wrapping constraints.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /@media \(max-width:\s*767px\)[\s\S]*\.whipify-location-grid\.py-16 \{[\s\S]*padding-top:\s*4rem !important[\s\S]*padding-bottom:\s*4rem !important/,
+  'Expected importer override CSS to preserve source py-16 mobile location-section padding instead of collapsing the homepage location grid upward.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.wpconvert-credit[\s\S]*display:\s*none !important/,
+  'Expected Elementor visual-fidelity CSS to remove conversion credit chrome that is not present in the source/reference site.',
+);
+assert.match(
+  importerFidelityCss,
+  /--foreground:\s*220 13% 18%;[\s\S]*--muted-foreground:\s*220 9% 46%;/,
+  'Expected Elementor visual-fidelity CSS tokens to match source foreground and muted-foreground colors used by the reference site.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /--foreground:\s*220 13% 18%;[\s\S]*--muted-foreground:\s*220 9% 46%;/,
+  'Expected importer override CSS to repair active older generated themes that still ship stale foreground color tokens.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor-widget-text-editor(?:\[class\*="text-muted-foreground"\]|\.text-muted-foreground)[\s\S]*color:\s*hsl\(var\(--muted-foreground\)\) !important/,
+  'Expected importer override CSS to restore text-muted-foreground on Elementor text-editor widgets after Elementor post CSS sets global text color.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.whipify-feature-grid__card\.text-center \.whipify-feature-grid__card-text[\s\S]*font-size:\s*0\.875rem !important[\s\S]*line-height:\s*1\.25rem !important/,
+  'Expected centered generated feature-grid card copy to preserve source text-sm/leading-relaxed metrics.',
+);
+assert.ok(
+  importerFidelityOverridesCss.lastIndexOf('.whipify-feature-grid__card.text-center .whipify-feature-grid__card-text') >
+    importerFidelityOverridesCss.lastIndexOf('.whipify-feature-grid__cards.py-20.bg-muted\\/20.lg\\:grid-cols-3 .whipify-feature-grid__card-text'),
+  'Expected centered generated feature-grid card copy override to load after the broader py-20/lg:grid-cols-3 fallback rule.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.whipify-feature-grid__cards\.py-20\.bg-muted\\\/20\.lg\\:grid-cols-3 \.whipify-feature-grid__card\.text-center \.whipify-feature-grid__card-text[\s\S]*font-size:\s*0\.875rem !important[\s\S]*line-height:\s*1\.25rem !important/,
+  'Expected centered generated feature-grid card copy override to be at least as specific as the broader py-20/lg:grid-cols-3 fallback rule.',
+);
+assert.match(
+  importerFidelityCss,
+  /@media \(min-width:\s*1024px\)[\s\S]*\.whipify-feature-grid__title[\s\S]*font-size:\s*2\.25rem !important[\s\S]*line-height:\s*2\.5rem !important/,
+  'Expected generated custom widget titles to preserve source text-3xl/md:text-4xl desktop sizing instead of inflating homepage h2s.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /@media \(min-width:\s*1024px\)[\s\S]*\.whipify-feature-grid__title[\s\S]*font-size:\s*2\.25rem !important[\s\S]*line-height:\s*2\.5rem !important/,
+  'Expected importer override CSS to repair older generated custom widget titles to source text-3xl/md:text-4xl desktop sizing.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor-widget-button\.inline-flex\.border-white \.elementor-button[\s\S]*background:\s*transparent !important[\s\S]*color:\s*inherit !important/,
+  'Expected importer override CSS to prevent Elementor default button backgrounds from filling transparent border-white buttons.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /@media \(max-width:\s*767px\)[\s\S]*\.whipify-pricing-table__button[\s\S]*width:\s*100% !important[\s\S]*min-width:\s*0 !important/,
+  'Expected importer override CSS to restore full-width mobile pricing-card CTAs for older active generated themes.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /@media \(max-width:\s*767px\)[\s\S]*\.whipify-pricing-table\.whipify-city-service-pricing-table \{[\s\S]*padding-top:\s*4rem !important[\s\S]*padding-bottom:\s*4rem !important[\s\S]*\.whipify-city-service-pricing-table \.whipify-pricing-table__description \{[\s\S]*line-height:\s*1\.5rem !important[\s\S]*\.whipify-city-service-pricing-table \.whipify-pricing-table__button \{[\s\S]*height:\s*2\.5rem !important[\s\S]*font-size:\s*0\.875rem !important/,
+  'Expected importer override CSS to match the source mobile services-card vertical rhythm instead of leaving Elementor custom cards too tall.',
+);
+assert.match(
+  importerFidelityJs,
+  /title\.style\.setProperty\('font-size', mobile \? '36px' : '48px', 'important'\)/,
+  'Expected city-service title runtime to restore the source desktop md:text-5xl size while keeping the mobile title size stable.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /@media \(min-width:\s*768px\)[\s\S]*\.whipify-pricing-table\.whipify-city-service-pricing-table \{[\s\S]*padding-top:\s*4rem !important[\s\S]*\.whipify-city-service-pricing-table \.whipify-pricing-table__intro \{[\s\S]*font-size:\s*1\.25rem !important[\s\S]*line-height:\s*1\.75rem !important[\s\S]*\.whipify-city-service-pricing-table \.whipify-pricing-table__description \{[\s\S]*line-height:\s*1\.5rem !important[\s\S]*\.whipify-city-service-pricing-table \.whipify-pricing-table__button \{[\s\S]*width:\s*100% !important[\s\S]*height:\s*2\.5rem !important[\s\S]*margin-top:\s*0 !important[\s\S]*font-size:\s*0\.875rem !important/,
+  'Expected importer override CSS to match the source desktop Edmonton services section geometry, typography, and full-width service buttons.',
+);
+assert.match(
+  importerRuntimeJs,
+  /contactUsText[\s\S]*Name\\s\\\*[\s\S]*Message\\s\\\*[\s\S]*padding-bottom', '236px'/,
+  'Expected mobile rhythm repair to apply large contact-section padding only to real contact form sections, not the /contact/ page hero.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.e-con\.flex\.flex-col\[class~="sm:flex-row"\]\.gap-4\.justify-center:has\(\.elementor-widget-button\.inline-flex\)[\s\S]*flex-direction:\s*column !important[\s\S]*align-items:\s*center !important/,
+  'Expected importer override CSS to preserve captured CTA button groups that remain stacked despite sm:flex-row source classes.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor \.e-con\.grid\.grid-cols-2[\s\S]*--e-con-grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\) !important[\s\S]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\) !important/,
+  'Expected importer override CSS to preserve source grid-cols-2 layouts in Elementor containers.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /@media \(min-width:\s*768px\)[\s\S]*\.e-con\.grid\[class\*="md:grid-cols-4"\]:not\(#whipify-grid-authority\)[\s\S]*--e-con-grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\) !important[\s\S]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\) !important/,
+  'Expected importer override CSS to preserve source md:grid-cols-4 desktop stat grids in Elementor containers.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.whipify-feature-grid__title[\s\S]*font-size:\s*2\.25rem !important[\s\S]*line-height:\s*2\.5rem !important/,
+  'Expected importer override CSS to keep generated Feature Grid headings at source text-3xl/md:text-4xl sizing by default.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.whipify-feature-grid__intro[\s\S]*margin:\s*1\.5rem auto 3rem !important/,
+  'Expected importer override CSS to preserve source Feature Grid intro spacing before card grids.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.whipify-feature-grid__footer > a\.inline-flex\.text-primary:not\(\[class\*="bg-"\]\)[\s\S]*background:\s*transparent !important[\s\S]*padding:\s*0 !important/,
+  'Expected importer override CSS to keep source text-primary Feature Grid footer links as plain links instead of filled CTA buttons.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.whipify-feature-grid__cards\.lg\\:grid-cols-4 \.whipify-feature-grid__icon[\s\S]*width:\s*3\.5rem !important[\s\S]*height:\s*3\.5rem !important/,
+  'Expected importer override CSS to keep homepage service-card icons at the source 56px size.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.whipify-feature-grid__cards\.lg\\:grid-cols-4 \.whipify-feature-grid__card-text[\s\S]*font-size:\s*0\.875rem !important[\s\S]*line-height:\s*1\.25rem !important/,
+  'Expected importer override CSS to keep homepage service-card body text at the source text-sm metrics.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor \.whipify-feature-grid:has\(\.whipify-feature-grid__cards\.lg\\:grid-cols-4\) \.whipify-feature-grid__cards\.lg\\:grid-cols-4 \.elementor-widget-whipify_feature_card article\.whipify-feature-grid__card > h3\.whipify-feature-grid__card-title[\s\S]*font-size:\s*1\.25rem !important[\s\S]*line-height:\s*1\.75rem !important[\s\S]*margin-bottom:\s*0\.75rem !important/,
+  'Expected importer override CSS to beat stale generated-theme four-column card heading rules for homepage service cards.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor \.whipify-feature-grid:has\(\.whipify-feature-grid__cards\.lg\\:grid-cols-4\) \.whipify-feature-grid__cards\.lg\\:grid-cols-4 \.elementor-widget-whipify_feature_card article\.whipify-feature-grid__card > p\.whipify-feature-grid__card-text[\s\S]*font-size:\s*0\.875rem !important[\s\S]*line-height:\s*1\.25rem !important[\s\S]*margin-bottom:\s*1rem !important/,
+  'Expected importer override CSS to beat stale generated-theme four-column card paragraph rules for homepage service cards.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.whipify-feature-grid__cards\.lg\\:grid-cols-3 \.whipify-feature-grid__card-title[\s\S]*margin-bottom:\s*0\.75rem !important/,
+  'Expected importer override CSS to restore source mb-3 spacing on three-column Feature Grid card titles.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor \.whipify-feature-grid:has\(\.whipify-feature-grid__cards\.lg\\:grid-cols-3\) \.whipify-feature-grid__cards\.lg\\:grid-cols-3 \.elementor-widget-whipify_feature_card article\.whipify-feature-grid__card > h3\.whipify-feature-grid__card-title[\s\S]*margin-bottom:\s*0\.75rem !important/,
+  'Expected importer override CSS to beat broader max-w-5xl h3 specificity for three-column Feature Grid card titles.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.whipify-feature-grid__cards\.lg\\:grid-cols-3 \.whipify-feature-grid__card-text[\s\S]*font-size:\s*0\.875rem !important[\s\S]*line-height:\s*1\.25rem !important/,
+  'Expected importer override CSS to restore source text-sm leading-relaxed metrics on three-column Feature Grid cards.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor \.e-con\[class\*="bg-gradient-to-br"\]\[class\*="from-\[hsl\(160,100%,35%\)\]"\]\[class\*="via-\[hsl\(180,100%,40%\)\]"\]\[class\*="to-\[hsl\(220,100%,50%\)\]"\][\s\S]*background:\s*linear-gradient\(to bottom right, hsl\(160, 100%, 35%\), hsl\(180, 100%, 40%\), hsl\(220, 100%, 50%\)\) !important/,
+  'Expected importer override CSS to restore arbitrary Tailwind gradient CTA backgrounds in Elementor.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor \.e-con\[class\*="bg-gradient-to-br"\]\[class\*="from-\[hsl\(160,100%,35%\)\]"\] > \.e-con\.container[\s\S]*max-width:\s*1280px !important/,
+  'Expected importer override CSS to keep homepage CTA inner container at the source 1280px width.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor \.e-con\[class\*="bg-gradient-to-br"\]\[class\*="from-\[hsl\(160,100%,35%\)\]"\] \.elementor-widget-text-editor\.max-w-2xl[\s\S]*max-width:\s*42rem !important/,
+  'Expected importer override CSS to preserve max-w-2xl CTA paragraph wrapping instead of stretching full width.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor \.e-con\[class\*="bg-gradient-to-br"\]\[class\*="from-\[hsl\(160,100%,35%\)\]"\] \.e-con\[class\*="sm:flex-row"\][\s\S]*flex-direction:\s*column !important/,
+  'Expected importer override CSS to match the reference CTA stacked button and assurance rows.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor \.e-con\[class\*="bg-gradient-to-br"\]\[class\*="from-\[hsl\(160,100%,35%\)\]"\] \.elementor-element\.e-con\[class~="sm:flex-row"\]:not\(#whipify-flex-authority\)[\s\S]*--flex-direction:\s*column !important[\s\S]*flex-direction:\s*column !important/,
+  'Expected CTA stacked-row override to beat generated theme :not(#whipify-flex-authority) flex specificity.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor \.e-con\[class\*="bg-gradient-to-br"\]\[class\*="from-\[hsl\(160,100%,35%\)\]"\] \.elementor-widget-button\.py-6[\s\S]*padding:\s*0 !important[\s\S]*\.elementor-button[\s\S]*padding:\s*1\.5rem 2\.5rem !important/,
+  'Expected importer override CSS to move CTA button padding from the Elementor widget wrapper onto the inner button anchor.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor \.e-con\[class\*="bg-gradient-to-br"\]\[class\*="from-\[hsl\(160,100%,35%\)\]"\] \.elementor-widget-button\.bg-white \.elementor-button[\s\S]*background:\s*#fff !important[\s\S]*color:\s*inherit !important/,
+  'Expected CTA white button anchors to stay white instead of inheriting Elementor default button green.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor-widget-heading\.mb-12:has\(\+ \.e-con\.grid\.max-w-4xl\)[\s\S]*margin-bottom:\s*1\.5rem !important/,
+  'Expected importer override CSS to match source homepage Location heading-to-grid spacing instead of applying the raw mb-12 utility gap.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor-widget-heading\.mb-3 \+ \.elementor-widget-text-editor\.mb-12[\s\S]*margin-top:\s*0\.75rem !important/,
+  'Expected importer override CSS to restore the source Reviews heading-to-intro spacing.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.whipify-location-card h3\.text-3xl\[class\*="md:text-4xl"\][\s\S]*font-size:\s*1\.875rem !important[\s\S]*line-height:\s*2\.25rem !important[\s\S]*margin-bottom:\s*1rem !important/,
+  'Expected importer override CSS to keep generated location-card titles aligned with the source homepage metrics.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.elementor \.whipify-location-card__surface > \.absolute\.w-32\.h-32[\s\S]*width:\s*8rem !important[\s\S]*height:\s*8rem !important[\s\S]*max-width:\s*none !important/,
+  'Expected importer override CSS to restore source location-card corner bubble width after broad absolute positioning overrides.',
 );
 assert.match(
   importerFidelityOverridesCss,
@@ -684,6 +1880,26 @@ assert.match(
 );
 assert.match(importerFidelityCss, /\.whipify-elementor-visual-fidelity-mode \.whipify-elementor-carousel-prev/);
 assert.match(importerFidelityJs, /setupWhipifyElementorFaqs/);
+assert.match(
+  pluginBootstrap,
+  /read_faq_data_for_editor_repair[\s\S]*inject_faq_answer_widgets_into_import_data/,
+  'Expected importer to inject only FAQ answer Text Editor widgets into Elementor import data before document save.',
+);
+assert.match(
+  pluginBootstrap,
+  /'_css_classes' => 'whipify-faq-answer'/,
+  'Expected injected FAQ answer widgets to carry the scoped whipify-faq-answer class.',
+);
+assert.match(
+  pluginBootstrap,
+  /print_editor_faq_answer_visibility_css[\s\S]*isset\(\$_GET\['elementor-preview'\]\)[\s\S]*whipify-faq-answer/,
+  'Expected FAQ answer visibility CSS to be scoped to Elementor editor preview requests only.',
+);
+assert.match(
+  pluginBootstrap,
+  /register_activation_hook\(__FILE__, array\('Whipify_Elementor_Importer', 'repair_faq_answer_widgets_on_activation'\)\)/,
+  'Expected importer activation to repair FAQ answer widgets without changing other Elementor sections.',
+);
 assert.match(importerFidelityJs, /setupWhipifyElementorCarousels/);
 assert.match(
   importerFidelityJs,
@@ -732,8 +1948,13 @@ assert.match(
 );
 assert.match(
   importerFidelityJs,
-  /setupWhipifyElementorCarousels[\s\S]*var width = visible === 1 \? '100%' : \(100 \/ visible\) \+ '%'/,
-  'Expected importer carousel fallback runtime to preserve source one-third review card widths.',
+  /setupWhipifyElementorCarousels[\s\S]*var visible = 1[\s\S]*var width = '100%'/,
+  'Expected importer carousel fallback runtime to keep review slides one-at-a-time and full-width like the source React carousel.',
+);
+assert.match(
+  importerFidelityJs,
+  /setupWhipifyElementorCarousels[\s\S]*card\.style\.setProperty\('width', width, 'important'\)[\s\S]*card\.style\.setProperty\('flex', '0 0 ' \+ width, 'important'\)/,
+  'Expected importer carousel fallback runtime to write full-width slide sizing with !important so source md:w-1/3 utility overrides cannot win later in the cascade.',
 );
 assert.match(
   importerFidelityJs,
@@ -762,8 +1983,18 @@ assert.doesNotMatch(
 );
 assert.match(
   importerFidelityOverridesCss,
-  /\[class~="md:w-1\/3"\][\s\S]*width:\s*33\.333333% !important[\s\S]*flex-basis:\s*33\.333333% !important/,
-  'Expected importer override CSS to beat older generated theme CSS that shrank md:w-1/3 review cards around gaps.',
+  /@media \(min-width:\s*768px\) \{[\s\S]*\[class~="md:w-1\/3"\][\s\S]*width:\s*33\.333333% !important[\s\S]*flex-basis:\s*33\.333333% !important/,
+  'Expected importer override CSS to beat older generated theme CSS for md:w-1/3 review cards only at the source md breakpoint, not on mobile.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.whipify-elementor-visual-fidelity-mode \.elementor \.e-con\.flex\.gap-6\.transition-transform[\s\S]*flex-wrap:\s*nowrap !important/,
+  'Expected importer override CSS to preserve non-wrapping source carousel tracks when an older generated theme is active.',
+);
+assert.match(
+  importerFidelityOverridesCss,
+  /\.whipify-elementor-visual-fidelity-mode \.elementor \[class~="space-y-1\.5"\] > h3\.font-semibold\.tracking-tight\.text-lg[\s\S]*margin-bottom:\s*1rem !important/,
+  'Expected importer override CSS to restore pricing-style card header spacing when an older generated theme is active.',
 );
 assert.match(pluginBootstrap, /wp_enqueue_style\([\s\S]*'whipify-elementor-importer-visual-fidelity'/);
 assert.match(pluginBootstrap, /wp_enqueue_script\([\s\S]*'whipify-elementor-importer-visual-fidelity'/);
@@ -853,6 +2084,11 @@ assert.match(
   /Whipify_Elementor_Feature_Card_Widget_V139/,
   'Expected generated Elementor runtime to register standalone Feature Card widgets for per-card editing.',
 );
+assert.match(
+  pluginBootstrap,
+  /Whipify_Elementor_Location_Card_Widget_V139/,
+  'Expected generated Elementor runtime to register standalone Location Card widgets for homepage location cards.',
+);
 assert.match(pluginBootstrap, /Whipify_Elementor_Pricing_Table_Widget/);
 assert.match(pluginBootstrap, /Whipify_Elementor_Testimonial_Grid_Widget/);
 assert.match(pluginBootstrap, /Whipify_Elementor_Cta_Section_Widget/);
@@ -867,6 +2103,11 @@ assert.match(
   pluginBootstrap,
   /get_name\(\)[\s\S]*whipify_feature_card/,
   'Expected standalone Feature Card widgets to have their own Elementor widget type.',
+);
+assert.match(
+  pluginBootstrap,
+  /get_name\(\)[\s\S]*whipify_location_card/,
+  'Expected homepage location cards to have their own Elementor widget type instead of flattened Button widgets.',
 );
 assert.match(pluginBootstrap, /get_name\(\)[\s\S]*whipify_pricing_table/);
 assert.match(pluginBootstrap, /get_name\(\)[\s\S]*whipify_testimonial_grid/);
@@ -926,8 +2167,13 @@ assert.match(
 );
 assert.match(
   pluginBootstrap,
-  /save_elementor_document[\s\S]*upgrade_feature_grid_widgets_to_card_widgets/,
-  'Expected live imports from older manifests to pass through the standalone Feature Card migration before saving Elementor data.',
+  /location_card_settings_from_legacy_button[\s\S]*group block[\s\S]*upgrade_location_card_button_widgets[\s\S]*whipify_location_card/,
+  'Expected importer to migrate legacy homepage location Button widgets into standalone Location Card widgets on import.',
+);
+assert.match(
+  pluginBootstrap,
+  /save_elementor_document[\s\S]*upgrade_feature_grid_widgets_to_card_widgets[\s\S]*upgrade_location_card_button_widgets/,
+  'Expected live imports from older manifests to pass through Feature Card and Location Card migrations before saving Elementor data.',
 );
 assert.match(
   pluginBootstrap,
@@ -950,6 +2196,16 @@ assert.match(pluginBootstrap, /pricing_columns/);
 assert.match(pluginBootstrap, /pricing_rows/);
 assert.match(pluginBootstrap, /whipify-pricing-table__matrix/);
 assert.match(pluginBootstrap, /card_body_html/);
+assert.match(
+  pluginBootstrap,
+  /card_icon_class_name/,
+  'Expected Feature Card widgets to preserve source icon frame classes for visual parity.',
+);
+assert.match(
+  pluginBootstrap,
+  /whipify-feature-grid__icon' \. esc_attr\(\$icon_classes\)/,
+  'Expected Feature Card render output to include preserved icon frame classes.',
+);
 assert.match(pluginBootstrap, /whipify-feature-grid__body/);
 assert.match(
   pluginBootstrap,
@@ -1010,6 +2266,11 @@ assert.match(
   pluginBootstrap,
   /whipify-pricing-table__footer[\s\S]*whipify_elementor_kses_post_with_svg\(\$settings\['section_footer_html'\]\)/,
   'Expected Pricing Table matrix footer rendering to preserve safe SVG check icons.',
+);
+assert.match(
+  pluginBootstrap,
+  /whipify-pricing-table__title[\s\S]*whipify_elementor_kses_post_with_svg\(\$settings\['section_title'\]\)/,
+  'Expected Pricing Table section titles to preserve safe inline source markup such as colored city-name spans.',
 );
 assert.doesNotMatch(
   pluginBootstrap,
@@ -1413,7 +2674,7 @@ const customFeatureGridHtml = `
       <p class="text-lg text-muted-foreground text-center max-w-3xl mx-auto mb-12">Three reasons clients keep coming back.</p>
       <div class="grid md:grid-cols-3 gap-8">
         <article class="rounded-xl shadow-lg p-6">
-          <div class="w-16 h-16 rounded-2xl flex items-center justify-center mb-4">
+          <div class="w-16 h-16 bg-rose-600 rounded-2xl flex items-center justify-center mb-4">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle></svg>
           </div>
           <h3 class="text-xl font-bold mb-3">Top-Rated Local Pros</h3>
@@ -1474,6 +2735,11 @@ assert.match(
   /Experienced cleaners with <a href="\/license">City licensing<\/a> and proven reviews\./,
   'Expected standalone Feature Card rich card bodies to preserve inline paragraph links instead of stripping them as CTA links.',
 );
+assert.match(
+  featureCardWidgets[0].settings.card_icon_class_name || '',
+  /\bbg-rose-600\b/,
+  'Expected standalone Feature Card widgets to preserve source icon frame classes so icon color/shape matches the React page.',
+);
 assert.doesNotMatch(
   featureCardWidgets[0].settings.card_body_html,
   /with\s+and proven reviews/,
@@ -1483,6 +2749,84 @@ assert.equal(featureCardWidgets[0].settings.card_link_text, 'Learn More');
 assert.equal(featureCardWidgets[0].settings.card_url.url, '/local-pros');
 assert.match(featureGridCardsContainer.settings.css_classes, /grid md:grid-cols-3 gap-8/);
 assert.equal(customFeatureGridResult.stats.customWidgets, 3);
+
+const homepageLocationCardsHtml = `
+  <section class="py-16 bg-white">
+    <div class="container mx-auto px-4">
+      <h2 class="text-3xl md:text-4xl font-bold text-center mb-12 text-foreground">Choose Your Location</h2>
+      <div class="grid md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+        <a class="group block" href="/edmonton">
+          <div class="bg-gradient-to-br from-[hsl(160,100%,35%)] to-[hsl(160,100%,25%)] rounded-2xl p-8 text-white hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 relative overflow-hidden">
+            <div class="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
+            <div class="relative z-10">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="text-3xl md:text-4xl font-bold">Edmonton</h3>
+                <div class="flex items-center gap-1 bg-white/20 px-3 py-1 rounded-full"><span class="font-bold text-lg">4.9</span></div>
+              </div>
+              <div class="flex items-center gap-2 text-white/80 mb-6"><span class="text-sm font-medium">AB</span></div>
+              <div class="flex items-center gap-2 mb-6"><span class="text-xl font-bold">780-913-6565</span></div>
+              <div class="space-y-2 mb-6">
+                <div class="flex items-center gap-2 text-white/90"><span>300+ Reviews</span></div>
+                <div class="flex items-center gap-2 text-white/90"><span>8+ Years Experience</span></div>
+              </div>
+              <button class="w-full bg-white text-[hsl(160,100%,30%)] font-semibold text-lg h-12">View Services</button>
+            </div>
+          </div>
+        </a>
+        <a class="group block" href="/calgary">
+          <div class="bg-gradient-to-br from-[hsl(260,100%,55%)] to-[hsl(240,100%,45%)] rounded-2xl p-8 text-white hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 relative overflow-hidden">
+            <div class="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16"></div>
+            <div class="relative z-10">
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="text-3xl md:text-4xl font-bold">Calgary</h3>
+                <div class="flex items-center gap-1 bg-white/20 px-3 py-1 rounded-full"><span class="font-bold text-lg">5.0</span></div>
+              </div>
+              <div class="flex items-center gap-2 text-white/80 mb-6"><span class="text-sm font-medium">AB</span></div>
+              <div class="flex items-center gap-2 mb-6"><span class="text-xl font-bold">(403) 768-1341</span></div>
+              <div class="space-y-2 mb-6">
+                <div class="flex items-center gap-2 text-white/90"><span>200+ Reviews</span></div>
+                <div class="flex items-center gap-2 text-white/90"><span>2+ Years Experience</span></div>
+              </div>
+              <button class="w-full bg-white text-[hsl(260,100%,45%)] font-semibold text-lg h-12">View Services</button>
+            </div>
+          </div>
+        </a>
+      </div>
+    </div>
+  </section>
+`;
+
+const homepageLocationCardsResult = convertHtmlToElementorDocument(homepageLocationCardsHtml, {
+  title: 'Homepage Locations',
+  routePath: '/',
+  slug: 'front-page',
+  visualFidelityMode: 'native-balanced',
+});
+const homepageLocationElements = flattenElementorElements(homepageLocationCardsResult.document.content);
+const locationCardWidgets = homepageLocationElements.filter((element) => (
+  element.elType === 'widget' && element.widgetType === 'whipify_location_card'
+));
+const flattenedLocationButtons = homepageLocationElements.filter((element) => (
+  element.elType === 'widget'
+  && element.widgetType === 'button'
+  && /Edmonton|Calgary/.test(element.settings.text || '')
+));
+const locationCardsContainer = homepageLocationElements.find((element) => (
+  element.elType === 'container' && /whipify-location-grid__cards/.test(element.settings.css_classes || '')
+));
+
+assert.equal(locationCardWidgets.length, 2, 'Expected rich homepage location anchors to emit standalone Location Card widgets.');
+assert.equal(flattenedLocationButtons.length, 0, 'Expected homepage location cards not to flatten entire cards into Elementor Button labels.');
+assert.match(locationCardsContainer?.settings?.css_classes || '', /grid md:grid-cols-2 gap-8 max-w-4xl mx-auto/);
+assert.equal(locationCardWidgets[0].settings.city_name, 'Edmonton');
+assert.equal(locationCardWidgets[0].settings.phone_text, '780-913-6565');
+assert.equal(locationCardWidgets[0].settings.reviews_text, '300+ Reviews');
+assert.equal(locationCardWidgets[0].settings.experience_text, '8+ Years Experience');
+assert.equal(locationCardWidgets[0].settings.card_url.url, '/edmonton');
+assert.equal(locationCardWidgets[1].settings.city_name, 'Calgary');
+assert.equal(locationCardWidgets[1].settings.rating_text, '5.0');
+assert.equal(locationCardWidgets[1].settings.phone_text, '(403) 768-1341');
+assert.equal(locationCardWidgets[1].settings.card_url.url, '/calgary');
 
 const customPricingHtml = `
   <section class="pricing py-20 bg-slate-50">
@@ -1555,6 +2899,128 @@ assert.equal(pricingWidget.settings.plans[1].cta_url.url, '/book-standard');
 assert.equal(pricingWidget.settings.plans[1].is_highlighted, 'yes');
 assert.match(pricingWidget.settings.source_class_name, /grid md:grid-cols-3 gap-8/);
 assert.equal(customPricingResult.stats.customWidgets, 1);
+
+const customServicePricingHtml = `
+  <section class="py-16 bg-background">
+    <div class="container mx-auto px-4">
+      <h2>Edmonton cleaning services for every home</h2>
+      <p>Choose the right service for your home.</p>
+      <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+        <article class="rounded-xl border-t-4 border-primary p-6 shadow-lg">
+          <h3>Regular House Cleaning</h3>
+          <p>Weekly and bi-weekly plans.</p>
+          <ul><li>Kitchen and bathrooms</li></ul>
+          <div>$155+</div>
+          <a href="/contact">Book This Service</a>
+        </article>
+        <article class="rounded-xl border-t-4 border-accent p-6 shadow-lg">
+          <h3>Deep Cleaning Service</h3>
+          <p>Detailed top-to-bottom cleaning.</p>
+          <ul><li>Baseboards and detailed dusting</li></ul>
+          <div>$242+</div>
+          <a href="/contact">Book This Service</a>
+        </article>
+        <article class="rounded-xl border-t-4 border-primary p-6 shadow-lg">
+          <h3>Move In/Out Cleaning</h3>
+          <p>Turnover cleaning for moves.</p>
+          <ul><li>Inside cupboards and appliances</li></ul>
+          <div>$284+</div>
+          <a href="/contact">Book This Service</a>
+        </article>
+        <article class="rounded-xl border-t-4 border-accent p-6 shadow-lg">
+          <h3>Post-Construction Cleaning</h3>
+          <p>Dust removal after renovation.</p>
+          <ul><li>Construction dust removal</li></ul>
+          <div>$300+</div>
+          <a href="/contact">Book This Service</a>
+        </article>
+        <article class="rounded-xl border-t-4 border-primary p-6 shadow-lg">
+          <h3>Wall Washing & Cleaning</h3>
+          <p>Remove scuffs and buildup from walls.</p>
+          <ul><li>Spot wall washing</li></ul>
+          <div>Custom Pricing</div>
+          <a href="/contact">Book This Service</a>
+        </article>
+        <article class="rounded-xl border-t-4 border-accent p-6 shadow-lg">
+          <h3>Airbnb Cleaning Service</h3>
+          <p>Fast turnovers for short-term rentals.</p>
+          <ul><li>Guest-ready reset</li></ul>
+          <div>Custom Pricing</div>
+          <a href="/contact">Book This Service</a>
+        </article>
+      </div>
+    </div>
+  </section>
+`;
+
+const customServicePricingResult = convertHtmlToElementorDocument(customServicePricingHtml, {
+  title: 'Edmonton Services',
+  routePath: '/edmonton-services/',
+  slug: 'edmonton-services',
+  visualFidelityMode: 'native-balanced',
+});
+const customServicePricingWidget = flattenElementorElements(customServicePricingResult.document.content)
+  .find((element) => element.elType === 'widget' && element.widgetType === 'whipify_pricing_table');
+
+assert.ok(customServicePricingWidget, 'Expected mixed fixed-price/custom-price service cards to emit the Pricing Table custom widget.');
+assert.equal(customServicePricingWidget.settings.plans.length, 6, 'Expected Custom Pricing service cards not to be dropped from Elementor data.');
+assert.deepEqual(
+  customServicePricingWidget.settings.plans.map((plan) => plan.plan_name),
+  [
+    'Regular House Cleaning',
+    'Deep Cleaning Service',
+    'Move In/Out Cleaning',
+    'Post-Construction Cleaning',
+    'Wall Washing & Cleaning',
+    'Airbnb Cleaning Service',
+  ],
+);
+assert.equal(customServicePricingWidget.settings.plans[4].plan_price, 'Custom Pricing');
+assert.equal(customServicePricingWidget.settings.plans[5].plan_price, 'Custom Pricing');
+assert.equal(customServicePricingWidget.settings.plans[0].plan_price_position, 'after_features');
+assert.equal(customServicePricingWidget.settings.plans[4].plan_price_position, 'after_features');
+assert.match(customServicePricingWidget.settings.plans[0].plan_class_name, /border-primary/);
+assert.match(customServicePricingWidget.settings.plans[1].plan_class_name, /border-accent/);
+
+const richServicePricingTitleHtml = customServicePricingHtml.replace(
+  '<h2>Edmonton cleaning services for every home</h2>',
+  '<h2>Our Cleaning Services in <span class="text-accent">Edmonton</span></h2>',
+);
+const richServicePricingTitleResult = convertHtmlToElementorDocument(richServicePricingTitleHtml, {
+  title: 'Rich Service Heading',
+  routePath: '/rich-service-heading/',
+  slug: 'rich-service-heading',
+  visualFidelityMode: 'native-balanced',
+});
+const richServicePricingTitleWidget = flattenElementorElements(richServicePricingTitleResult.document.content)
+  .find((element) => element.elType === 'widget' && element.widgetType === 'whipify_pricing_table');
+
+assert.match(
+  richServicePricingTitleWidget?.settings?.section_title || '',
+  /<span class="text-accent">Edmonton<\/span>/,
+  'Expected Pricing Table section headings to preserve inline source spans so city/accent styling survives conversion.',
+);
+
+assert.match(
+  importerPluginSource,
+  /Whipify_Elementor_Pricing_Table_Widget[\s\S]*plan_price_position/,
+  'Expected generated Pricing Table widgets to preserve whether source service-card prices came before or after feature lists.',
+);
+assert.match(
+  importerFidelityCss,
+  /whipify-pricing-table__features[\s\S]*::before[\s\S]*content:\s*["']\\2713["']/,
+  'Expected generated Pricing Table CSS to restore source check icons for service-card feature lists.',
+);
+assert.match(
+  importerFidelityCss,
+  /whipify-pricing-table__plan\.border-primary[\s\S]*whipify-pricing-table__button[\s\S]*background:\s*hsl\(var\(--primary/,
+  'Expected primary service cards to keep primary-colored CTA buttons in Elementor output.',
+);
+assert.match(
+  importerFidelityCss,
+  /whipify-pricing-table__plan\.border-accent[\s\S]*whipify-pricing-table__button[\s\S]*background:\s*hsl\(var\(--accent/,
+  'Expected accent service cards to keep accent-colored CTA buttons in Elementor output.',
+);
 
 const customTestimonialsHtml = `
   <section class="testimonials py-20 bg-white">
@@ -1905,6 +3371,48 @@ assert.equal(leadFormWidget.settings.fields[3].field_type, 'textarea');
 assert.match(leadFormWidget.settings.fields[3].field_placeholder, /parking, appliances/);
 assert.match(leadFormWidget.settings.source_class_name, /contact-form/);
 assert.equal(customLeadFormResult.stats.customWidgets, 1);
+
+const looseContactControlsHtml = `
+  <section class="py-16">
+    <div class="container mx-auto max-w-md">
+      <label class="block text-sm font-medium" for="city">City *</label>
+      <select class="w-full rounded-md border px-3 py-2" id="city" name="city" required>
+        <option value="" disabled selected>Select your city</option>
+        <option value="edmonton">Edmonton</option>
+        <option value="calgary">Calgary</option>
+      </select>
+      <textarea class="w-full rounded-md border px-3 py-2" name="message" placeholder="How can we help?"></textarea>
+      <input class="w-full rounded-md border px-3 py-2" type="email" name="email" placeholder="you@example.com">
+    </div>
+  </section>
+`;
+
+const looseContactControlsResult = convertHtmlToElementorDocument(looseContactControlsHtml, {
+  title: 'Loose Contact Controls',
+  routePath: '/loose-contact-controls/',
+  slug: 'loose-contact-controls',
+  visualFidelityMode: 'native-balanced',
+});
+const looseControlHtmlWidgets = flattenElementorElements(looseContactControlsResult.document.content)
+  .filter((element) => element.elType === 'widget' && element.widgetType === 'html')
+  .map((element) => element.settings.html || '');
+
+assert.ok(
+  looseControlHtmlWidgets.some((html) => /^<select\b/i.test(html) && /<option value="edmonton">Edmonton<\/option>/i.test(html)),
+  'Expected loose source select controls to stay whole instead of splitting child option tags into orphan widgets.',
+);
+assert.ok(
+  looseControlHtmlWidgets.some((html) => /^<textarea\b/i.test(html)),
+  'Expected loose source textarea controls to be preserved as editable form-control HTML widgets.',
+);
+assert.ok(
+  looseControlHtmlWidgets.some((html) => /^<input\b/i.test(html)),
+  'Expected loose source input controls to be preserved as form-control HTML widgets.',
+);
+assert.ok(
+  !looseControlHtmlWidgets.some((html) => /^<option\b/i.test(html)),
+  'Expected source option tags to remain inside their select instead of rendering as standalone Elementor HTML widgets.',
+);
 
 const customHeroHtml = `
   <section class="hero relative overflow-hidden bg-slate-950 py-24 text-white">

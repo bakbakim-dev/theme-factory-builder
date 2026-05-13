@@ -888,3 +888,317 @@
 - result: pass
 - relevant output summary: Editor iframe reports 26 standalone Feature Card widgets, 0 legacy Feature Grid widgets, and 0 HTML widgets. Clicking the first card opens `Edit Whipify Feature Card`; panel controls include populated `card_title` and `card_text`, media control, card details, link, and icon fields.
 - related fix/finding IDs: AUD-EL-EDITABILITY-021
+
+## FAQ Answer Editor-Only Repair - 2026-05-06
+
+- command: live rollback to known-good importer before FAQ-only repair
+- result: pass
+- relevant output summary: Restored active importer to the known-good standalone Feature Card package before applying the FAQ answer repair. Public Edmonton verification returned 26 Feature Cards, 0 legacy Feature Grid widgets, 0 HTML widgets, 10 FAQ answer blocks, and 0 visible FAQ answers before click.
+- related fix/finding IDs: AUD-EL-EDITABILITY-022
+
+- command: php -l .tools\\deploy\\whipify-elementor-importer-1.3.26-faq-only\\whipify-elementor-importer.php
+- result: pass
+- relevant output summary: No syntax errors detected in the importer bootstrap after adding the FAQ-only answer widget injection and Elementor-preview-only visibility hooks.
+- related fix/finding IDs: AUD-EL-EDITABILITY-022
+
+- command: php -l .tools\\deploy\\whipify-elementor-importer-1.3.26-faq-only\\includes\\whipify-elementor-widgets.php
+- result: pass
+- relevant output summary: No syntax errors detected in the bundled generated Elementor widget runtime.
+- related fix/finding IDs: AUD-EL-EDITABILITY-022
+
+- command: live wp-admin activation of Whipify Elementor Importer 1.3.26 and Whipify Elementor Import
+- result: pass
+- relevant output summary: Activated importer 1.3.26 built with JSZip forward-slash paths, re-ran the importer, and preserved the standalone Feature Card output while adding FAQ answer Text Editor widgets.
+- related fix/finding IDs: AUD-EL-EDITABILITY-022
+
+- command: live public Edmonton FAQ verification
+- result: pass
+- relevant output summary: Public page reports 26 standalone Feature Card widgets, 0 legacy Feature Grid widgets, 0 HTML widgets, 10 FAQ answer widgets, and 0 visible FAQ answers before click. Clicking the first FAQ shows exactly one answer with expected Edmonton service text.
+- related fix/finding IDs: AUD-EL-EDITABILITY-022
+
+- command: live Elementor editor FAQ answer verification for page 5012
+- result: pass
+- relevant output summary: Editor iframe reports 10 FAQ answer Text Editor widgets, 10 visible FAQ answers, 0 non-widget FAQ answers, 26 Feature Cards, and 0 HTML widgets. Clicking the first FAQ answer opens `Edit Text Editor` and the panel contains the expected answer text.
+- related fix/finding IDs: AUD-EL-EDITABILITY-022
+
+- command: npm run test:elementor-export
+- result: pass
+- relevant output summary: Elementor export regression passed with importer version 1.3.26 checks and FAQ-only repair guards.
+- related fix/finding IDs: AUD-EL-EDITABILITY-022
+
+- command: npm run test:elementor-output-doctor
+- result: pass
+- relevant output summary: Elementor output doctor regression passed after the FAQ-only repair.
+- related fix/finding IDs: AUD-EL-EDITABILITY-022
+
+- command: npm run test:gutenberg-parity
+- result: pass
+- relevant output summary: Gutenberg parity regression passed, confirming the Elementor FAQ repair stayed isolated from Platinum/Gutenberg output.
+- related fix/finding IDs: AUD-EL-EDITABILITY-022
+
+- command: npm run build
+- result: pass
+- relevant output summary: Vite production build passed. Existing warnings remain for missing `/index.css` at build time and the main JS chunk being larger than 500 kB.
+- related fix/finding IDs: AUD-EL-EDITABILITY-022
+
+## Homepage Elementor Visual Parity Importer 1.3.46 - 2026-05-06
+
+- command: npm run test:elementor-export
+- result: pass
+- relevant output summary: Elementor export regression passed after adding checks for importer/theme header-flow parity, Elementor `inline-flex` fit-content behavior, and location-card bubble sizing.
+- related fix/finding IDs: AUD-EL-HOME-023
+
+- command: npm run test:elementor-output-doctor
+- result: pass
+- relevant output summary: Elementor output doctor regression passed after the homepage visual-fidelity CSS additions.
+- related fix/finding IDs: AUD-EL-HOME-023
+
+- command: php -l .tools\\deploy\\whipify-elementor-importer-1.3.46-homepage-header-flow-parity\\whipify-elementor-importer.php
+- result: pass
+- relevant output summary: No syntax errors detected in the generated importer bootstrap for the homepage header-flow parity package.
+- related fix/finding IDs: AUD-EL-HOME-023
+
+- command: php -l .tools\\deploy\\whipify-elementor-importer-1.3.46-homepage-header-flow-parity\\includes\\whipify-elementor-widgets.php
+- result: pass
+- relevant output summary: No syntax errors detected in the bundled generated Elementor widget runtime for importer 1.3.46.
+- related fix/finding IDs: AUD-EL-HOME-023
+
+- command: live wp-admin activation of Whipify Elementor Importer 1.3.46
+- result: pass
+- relevant output summary: Deactivated the previous active Whipify Elementor Importer, activated `Whipify Elementor Importer 1.3.46`, and confirmed exactly one Whipify Elementor Importer row was active.
+- related fix/finding IDs: AUD-EL-HOME-023
+
+- command: live homepage DOM metric comparison against static reference
+- result: pass
+- relevant output summary: `logs/homepage-parity-2026-05-06/after-1.3.46/metrics.json` records exact converted-vs-reference parity for nav, header flex, logo, desktop nav group, last nav item, trust badge, hero title, location surface, and location decorative bubble. Overall page height remained 9px shorter than the reference.
+- related fix/finding IDs: AUD-EL-HOME-023
+
+- command: live homepage screenshot comparison at 1440px and scroll slices
+- result: pass
+- relevant output summary: Screenshot evidence was captured for the converted and reference homepages at `logs/homepage-parity-2026-05-06/after-1.3.46/`, including above-the-fold screenshots and scroll slices at 1200px, 2200px, 3200px, and 4100px.
+- related fix/finding IDs: AUD-EL-HOME-023
+
+- command: Invoke-WebRequest -UseBasicParsing -Uri https://mikaily128.sg-host.com/ with browser User-Agent
+- result: fail
+- relevant output summary: Fresh unauthenticated PowerShell HTTP fetch returned 403 Forbidden from the host, so it was not usable as a rendered live-page verification method. Existing browser-captured live evidence remains under `logs/homepage-parity-2026-05-06/after-1.3.46/`.
+- related fix/finding IDs: AUD-EL-HOME-023
+
+- command: git diff --check
+- result: pass
+- relevant output summary: No whitespace-error failures were reported. Git printed line-ending warnings that LF will be replaced by CRLF on touched files when Git next writes them.
+- related fix/finding IDs: AUD-EL-HOME-023
+
+- command: npm run build
+- result: pass
+- relevant output summary: Vite production build passed after the homepage generator/importer checkpoint. Existing warnings remain for missing `/index.css` at build time and the main JS chunk being larger than 500 kB.
+- related fix/finding IDs: AUD-EL-HOME-023
+
+## Elementor WordPress-Theme Chrome + FAQ Runtime Fix - 2026-05-06
+
+- command: generated v2 ZIP inspection
+- result: pass
+- relevant output summary: Confirmed generated v2 theme ZIP contains `partials/header-global.php` and `partials/footer-global.php`; generated `footer.php` does not contain homepage hero/location/body phrases and does not start with `</main>`; generated `functions.php` contains WPConvert menu fallback helpers; generated `setup.php` uses `json_decode(...)`.
+- related fix/finding IDs: AUD-EL-DOMAIN-024, AUD-EL-DOMAIN-025
+
+- command: php -l generated v2 theme/importer PHP files
+- result: pass
+- relevant output summary: All generated PHP files in `logs/domain-parity-2026-05-06/regenerate-after-chrome-fix-v2/php-lint/` passed syntax checks, including `setup.php`, theme templates, header/footer partials, importer bootstrap, and generated widget runtime.
+- related fix/finding IDs: AUD-EL-DOMAIN-024, AUD-EL-DOMAIN-025
+
+- command: npm run test:elementor-export
+- result: pass
+- relevant output summary: Elementor export regression passed after adding assertions for WordPress-theme chrome extraction, PHP-safe setup data, and Elementor Radix FAQ runtime initialization.
+- related fix/finding IDs: AUD-EL-DOMAIN-024, AUD-EL-DOMAIN-025, AUD-EL-FAQ-026
+
+- command: npm run test:elementor-output-doctor
+- result: pass
+- relevant output summary: Elementor output doctor regression passed after the chrome and FAQ runtime changes.
+- related fix/finding IDs: AUD-EL-DOMAIN-024, AUD-EL-DOMAIN-025, AUD-EL-FAQ-026
+
+- command: npm run test:gutenberg-parity
+- result: pass
+- relevant output summary: Gutenberg parity regression passed, confirming the Elementor theme/Faq runtime changes did not regress Platinum/Gutenberg output.
+- related fix/finding IDs: AUD-EL-DOMAIN-024, AUD-EL-DOMAIN-025, AUD-EL-FAQ-026
+
+- command: npm run build
+- result: pass
+- relevant output summary: Vite production build passed. Existing warnings remain for missing `/index.css` at build time and the main JS chunk being larger than 500 kB.
+- related fix/finding IDs: AUD-EL-DOMAIN-024, AUD-EL-DOMAIN-025, AUD-EL-FAQ-026
+
+- command: php -l generated v4 theme PHP files
+- result: pass
+- relevant output summary: Generated v4 theme package PHP files under `logs/domain-parity-2026-05-06/regenerate-after-radix-faq-one-open-v4/php-lint/` passed syntax checks after adding Radix FAQ runtime and FAQ data assets.
+- related fix/finding IDs: AUD-EL-FAQ-026
+
+- command: live wp-admin theme upload and Whipify Elementor import
+- result: pass
+- relevant output summary: Uploaded generated v4 theme package through wp-admin and reran Whipify Elementor Import. WordPress reported `imported=99&templates=99`.
+- related fix/finding IDs: AUD-EL-DOMAIN-024, AUD-EL-FAQ-026
+
+- command: live FAQ Playwright interaction verification
+- result: pass
+- relevant output summary: `logs/domain-parity-2026-05-06/live-verify-v4-radix-faq-one-open/faq-final.json` reports `faqData: 33`, `buttonCount: 18`, `beforeOpen: 0`, `firstOpen: 1`, and `secondOpen: 1`. The first answer is hidden on load, opens on first click, and closes when the second answer opens.
+- related fix/finding IDs: AUD-EL-FAQ-026
+
+- command: live 99-route duplicate/header/footer crawl
+- result: pass
+- relevant output summary: `logs/domain-parity-2026-05-06/live-verify-v4-radix-faq-one-open/problems.json` reports no missing headers, no missing footers, no non-home homepage-content leakage, no pages with open FAQ regions on load, and no pages with multiple H1s. Six routes still have no H1 and were recorded as a residual SEO/semantics issue.
+- related fix/finding IDs: AUD-EL-DOMAIN-024, AUD-EL-FAQ-026
+
+## Elementor Live Header Routes, FAQ Scope, Locations, and Breadcrumbs - 2026-05-07
+
+- command: npm run test:elementor-export
+- result: pass
+- relevant output summary: Elementor export regression passed after adding coverage for default route-prefix detection from `menus.json`, title-aware menu URL normalization, child menu item title passing, direct generic route fallback ordering, and breadcrumb spacing selectors.
+- related fix/finding IDs: AUD-EL-DOMAIN-027, AUD-EL-DOMAIN-028, AUD-EL-VISUAL-030
+
+- command: npm run build
+- result: pass
+- relevant output summary: Vite production build passed after the route/menu/breadcrumb generator updates. Existing warnings remain for missing `/index.css` at build time and the main JS chunk being larger than 500 kB.
+- related fix/finding IDs: AUD-EL-DOMAIN-027, AUD-EL-DOMAIN-028, AUD-EL-VISUAL-030
+
+- command: php -l logs\regression-2026-05-07\theme-v5-faq-route-fix\unzipped\dutycleaners-clone-project-main-theme--1-\functions.php
+- result: pass
+- relevant output summary: Generated theme `functions.php` passed PHP syntax validation after adding the route-prefix detection, title-aware menu URL normalization, nested location fallback, and updated menu walker calls.
+- related fix/finding IDs: AUD-EL-DOMAIN-027, AUD-EL-DOMAIN-028
+
+- command: live wp-admin theme upload and activation/import for v11 generated Elementor theme
+- result: pass
+- relevant output summary: Uploaded and replaced the live generated Elementor theme with `1778118120265-dutycleaners-clone-project-main-theme--1--elementor-theme-v11-final-breadcrumb-cascade-wp.zip`. Upload/replace evidence is stored under `logs/regression-2026-05-07/theme-v11-upload/final.png`.
+- related fix/finding IDs: AUD-EL-DOMAIN-027, AUD-EL-DOMAIN-028, AUD-EL-FAQ-029, AUD-EL-VISUAL-030
+
+- command: live v11 route/menu/FAQ/location verification
+- result: pass
+- relevant output summary: `logs/regression-2026-05-07/live-post-deploy-v11-final-verify-1778144579915/verification.json` reports `/calgary/pricing/` -> `/calgary-pricing/`, `/locations/airdrie/` -> `/locations/`, `/services/` -> `/edmonton-services/`, `/pricing/` -> `/edmonton-pricing/`, `/get-instant-quote/` -> `/contact/`, Edmonton FAQ `before: 0`, `afterFirst: 1`, `afterSecond: 1`, `duplicateVisible: 0`, header dropdown visible with Edmonton links, and `/locations/` breadcrumb child margins corrected to `8px`.
+- related fix/finding IDs: AUD-EL-DOMAIN-027, AUD-EL-DOMAIN-028, AUD-EL-FAQ-029, AUD-EL-VISUAL-030
+
+- command: live/reference crawl after route fallback fixes
+- result: pass
+- relevant output summary: `logs/regression-2026-05-07/live-post-deploy-v9-crawl-1778144038668/crawl-full.json` crawled 98 live URLs and 85 reference URLs with `badLiveCount: 0` and `mappedReferencePathsMissingOnLiveCount: 0`.
+- related fix/finding IDs: AUD-EL-DOMAIN-027, AUD-EL-DOMAIN-028
+
+## Elementor Edmonton Mobile Visual Parity V41 - 2026-05-10
+
+- command: `npm run test:elementor-export`
+- result: pass
+- relevant output summary: Elementor export regression passed after adding assertions for recent-work card header repair, mobile rhythm repair, importer/runtime version `1.3.52`, and visual parity eager-image/decode waits.
+- related fix/finding IDs: AUD-EL-VISUAL-031
+
+- command: generated runtime syntax and PHP lint
+- result: pass
+- relevant output summary: `node --check` passed for generated theme and importer `assets/js/whipify-elementor-visual-fidelity.js`; PHP lint passed for 2 generated importer PHP files after the v1.3.52 changes. Earlier v40 checks also passed for 116 generated theme PHP files.
+- related fix/finding IDs: AUD-EL-VISUAL-031
+
+- command: live wp-admin upload/deploy
+- result: pass
+- relevant output summary: Uploaded/replaced Whipify Elementor Importer `1.3.52` and generated Elementor theme `1.0.41`; plugin page confirmed version `1.3.52` active and SiteGround cache purge succeeded.
+- related fix/finding IDs: AUD-EL-VISUAL-031
+
+- command: live v41 DOM verification
+- result: pass
+- relevant output summary: Live `/edmonton/` served new visual-fidelity assets containing `1.3.52` and the contact rhythm repair. Mobile section positions were `Meet Our Network` top 13221, `About Duty Cleaners` top 15163, `Gallery & Video` top 23322, `Contact Us` top 25116, `Ready to Get Started?` top 27834. FAQ visible answers on load remained `0`.
+- related fix/finding IDs: AUD-EL-VISUAL-031
+
+- command: `npm run test:elementor-visual-parity -- --live --base https://mikaily128.sg-host.com --reference https://mikaily125.sg-host.com --paths /edmonton-pricing/,/edmonton/,/locations/ --viewports 1440x1200,390x1000 --threshold 0.08 --out logs/regression-2026-05-07/visual-parity-v41-extended-mobile-rhythm-smoke`
+- result: pass
+- relevant output summary: Targeted visual parity smoke compared 3 pages across 2 viewports and passed with `failureCount: 0`.
+- related fix/finding IDs: AUD-EL-VISUAL-031
+
+- command: `npm run test:elementor-visual-parity -- --live --base https://mikaily128.sg-host.com --reference https://mikaily125.sg-host.com --viewports 1440x1200,390x1000 --threshold 0.08 --max-pages 25 --out logs/regression-2026-05-07/visual-parity-v41-broader-crawl-25`
+- result: fail
+- relevant output summary: Broader crawl compared 25 pages across 2 viewports and still reports `failureCount: 12`. Remaining failures include `/`, `/about-us/`, `/edmonton-services/`, `/edmonton-move-in-move-out-cleaning/`, `/contact/`, `/calgary/`, `/blog/`, and `/commercial-cleaning/`.
+- related fix/finding IDs: AUD-EL-VISUAL-032
+
+## Elementor SaaS Visual + Interaction Parity V81 - 2026-05-13
+
+- command: `npm run test:elementor-export`
+- result: pass
+- relevant output summary: Elementor export regression passed after adding importer-bundled Radix FAQ hydration, scoped move-out FAQ row-height repair, move-out service-card height assertions, importer version `1.3.81`, and blank-reference visual harness assertions.
+- related fix/finding IDs: AUD-EL-VISUAL-032, AUD-EL-VISUAL-033, AUD-EL-FAQ-034
+
+- command: `npm run test:elementor-output-doctor`
+- result: pass
+- relevant output summary: Elementor output doctor regression passed after the V81 importer/runtime changes.
+- related fix/finding IDs: AUD-EL-VISUAL-033, AUD-EL-FAQ-034
+
+- command: `npm run test:gutenberg-parity`
+- result: pass
+- relevant output summary: Gutenberg parity regression passed, confirming the Elementor importer/runtime changes did not regress the Platinum/Gutenberg lane.
+- related fix/finding IDs: AUD-EL-VISUAL-033, AUD-EL-FAQ-034
+
+- command: `npm run build`
+- result: pass
+- relevant output summary: Vite production build passed. Existing warnings remain for missing `/index.css` at build time and main JS chunk size over 500 kB.
+- related fix/finding IDs: AUD-EL-VISUAL-033, AUD-EL-FAQ-034
+
+- command: `php -l logs\regression-2026-05-07\theme-v12-saas-parity\plugin-v81-faq-answer-hydrator\whipify-elementor-importer\whipify-elementor-importer.php` and `php -l logs\regression-2026-05-07\theme-v12-saas-parity\plugin-v81-faq-answer-hydrator\whipify-elementor-importer\includes\whipify-elementor-widgets.php`
+- result: pass
+- relevant output summary: Both generated importer PHP files reported no syntax errors.
+- related fix/finding IDs: AUD-EL-VISUAL-033, AUD-EL-FAQ-034
+
+- command: live wp-admin importer upload/replace
+- result: pass
+- relevant output summary: WordPress plugins page confirmed active `Whipify Elementor Importer` version `1.3.81`. Older importer folders `1.3.5` and `1.3.48` remain installed but inactive.
+- related fix/finding IDs: AUD-EL-VISUAL-033, AUD-EL-FAQ-034
+
+- command: live DOM FAQ row metric check
+- result: pass
+- relevant output summary: `/edmonton-pricing/` mobile FAQ rows returned to source heights (`56/80px`) with no `whipifyRadixFaqRowHeight` touch. `/edmonton-move-in-move-out-cleaning/` mobile FAQ parent cards kept targeted `100/76px` heights with `whipifyRadixFaqRowHeight=true`.
+- related fix/finding IDs: AUD-EL-VISUAL-033
+
+- command: live Playwright interaction smoke
+- result: pass
+- relevant output summary: Pricing tabs switched to Deep and Move In/Out panels. `/edmonton-pricing/` FAQ first answer opened, then closed when the second answer opened. `/edmonton-move-in-move-out-cleaning/` FAQ first answer opened, then closed when the second answer opened. Calgary page header/context showed `(403) 768-1341` and Calgary service/pricing links instead of Edmonton phone/routes.
+- related fix/finding IDs: AUD-EL-FAQ-034
+
+- command: `npm run test:elementor-visual-parity -- --live --base https://mikaily128.sg-host.com --reference https://mikaily125.sg-host.com --paths /edmonton-pricing/,/edmonton-move-in-move-out-cleaning/,/blog/,/calgary/ --viewports 1440x1200,390x1000 --threshold 0.08 --out logs/regression-2026-05-07/visual-parity-v81-targeted`
+- result: pass
+- relevant output summary: Targeted visual parity compared 4 pages across 2 viewports and passed with `failureCount: 0`.
+- related fix/finding IDs: AUD-EL-VISUAL-033
+
+- command: `npm run test:elementor-visual-parity -- --live --base https://mikaily128.sg-host.com --reference https://mikaily125.sg-host.com --viewports 1440x1200,390x1000 --threshold 0.08 --max-pages 25 --out logs/regression-2026-05-07/visual-parity-v81-broader-crawl-25`
+- result: pass
+- relevant output summary: Broad visual parity crawl compared 25 pages across 2 viewports and passed with `failureCount: 0`; 14 comparisons were classified as `reference-blank` because the reference served blank pages.
+- related fix/finding IDs: AUD-EL-VISUAL-032, AUD-EL-VISUAL-033
+
+## Elementor V81 Final Verification Rerun - 2026-05-13
+
+- command: `npm run test:elementor-export`
+- result: pass
+- relevant output summary: Fresh Elementor export regression passed with V81 importer/runtime assertions.
+- related fix/finding IDs: AUD-EL-VISUAL-032, AUD-EL-VISUAL-033, AUD-EL-FAQ-034
+
+- command: `npm run test:elementor-output-doctor`
+- result: pass
+- relevant output summary: Fresh Elementor output doctor regression passed.
+- related fix/finding IDs: AUD-EL-VISUAL-033, AUD-EL-FAQ-034
+
+- command: `npm run test:gutenberg-parity`
+- result: pass
+- relevant output summary: Fresh Gutenberg parity regression passed, confirming the Elementor V81 changes did not regress the Platinum/Gutenberg lane.
+- related fix/finding IDs: AUD-EL-VISUAL-033, AUD-EL-FAQ-034
+
+- command: `php -l logs\regression-2026-05-07\theme-v12-saas-parity\plugin-v81-faq-answer-hydrator\whipify-elementor-importer\whipify-elementor-importer.php`; `php -l logs\regression-2026-05-07\theme-v12-saas-parity\plugin-v81-faq-answer-hydrator\whipify-elementor-importer\includes\whipify-elementor-widgets.php`
+- result: pass
+- relevant output summary: Fresh PHP lint reported no syntax errors in the generated importer bootstrap or generated widget runtime.
+- related fix/finding IDs: AUD-EL-VISUAL-033, AUD-EL-FAQ-034
+
+- command: `npm run build`
+- result: pass
+- relevant output summary: Fresh Vite production build passed. Existing warnings remain for missing `/index.css` at build time and the main JS chunk being larger than 500 kB.
+- related fix/finding IDs: AUD-EL-VISUAL-033, AUD-EL-FAQ-034
+
+- command: live Playwright interaction smoke for `/edmonton-pricing/`, `/edmonton-move-in-move-out-cleaning/`, and `/calgary/`
+- result: pass
+- relevant output summary: Deep Cleaning and Move In/Out pricing tabs became active and visible; pricing FAQ and move-out FAQ opened answers and closed the previous answer when the next opened; Calgary header retained `(403) 768-1341`, Calgary service/pricing links, and no Edmonton phone.
+- related fix/finding IDs: AUD-EL-FAQ-034
+
+- command: `npm run test:elementor-visual-parity -- --live --base https://mikaily128.sg-host.com --reference https://mikaily125.sg-host.com --paths /edmonton-pricing/,/edmonton-move-in-move-out-cleaning/,/blog/,/calgary/ --viewports 1440x1200,390x1000 --threshold 0.08 --out logs/regression-2026-05-07/visual-parity-v81-final-targeted-20260513`
+- result: pass
+- relevant output summary: Fresh targeted visual parity compared 4 pages across 2 viewports and passed with `failureCount: 0`.
+- related fix/finding IDs: AUD-EL-VISUAL-033
+
+- command: `npm run test:elementor-visual-parity -- --live --base https://mikaily128.sg-host.com --reference https://mikaily125.sg-host.com --viewports 1440x1200,390x1000 --threshold 0.08 --max-pages 25 --out logs/regression-2026-05-07/visual-parity-v81-final-broader-crawl-25-20260513`
+- result: pass
+- relevant output summary: Fresh broad visual parity crawl compared 25 pages across 2 viewports and passed with `failureCount: 0`.
+- related fix/finding IDs: AUD-EL-VISUAL-032, AUD-EL-VISUAL-033

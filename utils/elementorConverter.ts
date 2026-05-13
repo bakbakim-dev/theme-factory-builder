@@ -468,7 +468,7 @@ const buildFigureWidget = (ctx: ElementorBuildContext, html: string): ElementorE
 
 const buildHtmlWidget = (ctx: ElementorBuildContext, html: string, hint: string, cleanClasses = true): ElementorElement | null => {
   const cleaned = normalizeRichText(cleanClasses ? cleanPreservedHtmlClasses(html) : html);
-  if (!stripTags(cleaned) && !/<(img|picture|svg|video|iframe|canvas|form|input|button|a)\b/i.test(cleaned)) return null;
+  if (!stripTags(cleaned) && !/<(img|picture|svg|video|iframe|canvas|form|input|select|textarea|button|a)\b/i.test(cleaned)) return null;
   return createWidget(ctx, 'html', { html: cleaned }, hint, true);
 };
 
@@ -746,6 +746,7 @@ interface FeatureGridCard {
   card_url: ElementorLinkSetting;
   card_class_name: string;
   card_icon_html: string;
+  card_icon_class_name: string;
   card_image: {
     url: string;
     alt: string;
@@ -762,11 +763,26 @@ interface FeatureGridSectionData {
   sourceClassName: string;
 }
 
+interface LocationCard {
+  city_name: string;
+  rating_text: string;
+  region_text: string;
+  phone_text: string;
+  reviews_text: string;
+  experience_text: string;
+  button_text: string;
+  card_url: ElementorLinkSetting;
+  variant: string;
+  source_class_name: string;
+  card_class_name: string;
+}
+
 interface PricingPlan {
   plan_name: string;
   plan_description: string;
   plan_price: string;
   plan_interval: string;
+  plan_price_position: 'before_features' | 'after_features';
   plan_features: string;
   cta_text: string;
   cta_url: ElementorLinkSetting;
@@ -870,9 +886,52 @@ const firstElementText = (root: Element, selector: string, exclude?: Element): s
   return match ? stripTags(match.innerHTML) : '';
 };
 
+const firstElementHeadingTitle = (root: Element, selector: string, exclude?: Element): string => {
+  const match = Array.from(root.querySelectorAll(selector))
+    .find((element) => !exclude || !exclude.contains(element));
+  return match ? normalizeHeadingTitle(match.innerHTML) : '';
+};
+
 const firstElementHtml = (root: Element, selector: string): string => {
   const match = root.querySelector(selector);
   return match ? match.outerHTML : '';
+};
+
+const iconFrameClassSignal = (className: string): boolean => (
+  /\b(?:inline-)?flex\b/.test(className)
+  || /\bitems-center\b/.test(className)
+  || /\bjustify-center\b/.test(className)
+  || /\bbg-[\w/:-]+\b/.test(className)
+  || /\brounded(?:-[\w/:-]+)?\b/.test(className)
+  || /\bw-(?:\d+|\[[^\]]+\])\b/.test(className)
+  || /\bh-(?:\d+|\[[^\]]+\])\b/.test(className)
+);
+
+const firstIconFrameClassFromElement = (root: Element): string => {
+  const icon = root.querySelector('svg');
+  let current = icon?.parentElement || null;
+
+  while (current && current !== root) {
+    const className = normalizeClassName(getElementAttribute(current, 'class'));
+    if (className && iconFrameClassSignal(className)) return className;
+    current = current.parentElement;
+  }
+
+  return '';
+};
+
+const firstIconFrameClassFromHtml = (html: string): string => {
+  const svgMatch = html.match(/<svg\b/i);
+  if (!svgMatch || typeof svgMatch.index !== 'number') return '';
+
+  const beforeSvg = html.slice(0, svgMatch.index);
+  const divMatches = Array.from(beforeSvg.matchAll(/<div\b([^>]*)>/gi));
+  for (let index = divMatches.length - 1; index >= 0; index -= 1) {
+    const className = normalizeClassName(getAttributeFromString(divMatches[index]?.[1] || '', 'class'));
+    if (className && iconFrameClassSignal(className)) return className;
+  }
+
+  return '';
 };
 
 const firstElementAttribute = (root: Element, selector: string, attribute: string): string => {
@@ -933,13 +992,21 @@ const sectionBodyHtmlBeforeChild = (html: string, sectionTitle: string, sectionI
 const sectionFooterHtmlAfterChild = (html: string): string => normalizeSectionSlotHtml(html);
 
 const PRICE_PATTERN = /(?:[$€£]\s*\d[\d,.]*|\d[\d,.]*\s*(?:\/\s*)?(?:mo|month|clean|visit|hour|hr|week|year))/i;
+const CUSTOM_PRICE_PATTERN = /\bcustom\s+pricing\b/i;
 const INTERVAL_PATTERN = /^(?:\/\s*|per\s+)?(?:mo|month|clean|visit|hour|hr|week|year|day|service)s?$/i;
+
+const hasPricingSignal = (text: string): boolean => PRICE_PATTERN.test(text) || CUSTOM_PRICE_PATTERN.test(text);
+
+const normalizePriceText = (text: string): string => (
+  CUSTOM_PRICE_PATTERN.test(text) ? 'Custom Pricing' : text
+);
 
 const findPriceTextFromElement = (root: Element): string => {
   const candidates = Array.from(root.querySelectorAll('div,span,strong,b,p'))
     .map((element) => stripTags(element.innerHTML))
     .filter(Boolean);
-  return candidates.find((text) => PRICE_PATTERN.test(text)) || '';
+  const priceText = candidates.find(hasPricingSignal) || '';
+  return priceText ? normalizePriceText(priceText) : '';
 };
 
 const findIntervalTextFromElement = (root: Element, priceText: string): string => {
@@ -948,6 +1015,13 @@ const findIntervalTextFromElement = (root: Element, priceText: string): string =
     .filter(Boolean)
     .filter((text) => text !== priceText);
   return candidates.find((text) => INTERVAL_PATTERN.test(text)) || '';
+};
+
+const findPlanPricePositionFromHtml = (html: string, priceText: string): 'before_features' | 'after_features' => {
+  const listIndex = html.search(/<(?:ul|ol|li)\b/i);
+  if (listIndex < 0 || !priceText) return 'before_features';
+  const priceIndex = html.indexOf(priceText);
+  return priceIndex > listIndex ? 'after_features' : 'before_features';
 };
 
 const elementListText = (root: Element, selector: string): string => Array.from(root.querySelectorAll(selector))
@@ -986,7 +1060,7 @@ const pricingCellTextFromElement = (cell: Element): string => {
 
 const buildPricingMatrixWidgetFromDom = (ctx: ElementorBuildContext, element: Element): ElementorElement | null => {
   const table = element.querySelector('table');
-  if (!table || !PRICE_PATTERN.test(stripTags(table.innerHTML))) return null;
+  if (!table || !hasPricingSignal(stripTags(table.innerHTML))) return null;
 
   const headerCells = Array.from(table.querySelectorAll('thead th, thead td'));
   if (headerCells.length < 2) return null;
@@ -1009,7 +1083,7 @@ const buildPricingMatrixWidgetFromDom = (ctx: ElementorBuildContext, element: El
 
   if (columns.length < 2 || pricingRows.length < 2) return null;
 
-  const sectionTitle = firstElementText(element, 'h1,h2', table);
+  const sectionTitle = firstElementHeadingTitle(element, 'h1,h2', table);
   const sectionIntro = firstElementText(element, 'p', table);
   const tableOuterHtml = table.outerHTML;
   const tableIndex = element.innerHTML.indexOf(tableOuterHtml);
@@ -1054,6 +1128,7 @@ const buildPricingTableWidgetFromDom = (ctx: ElementorBuildContext, element: Ele
         plan_description: firstElementText(plan, 'p'),
         plan_price: price,
         plan_interval: findIntervalTextFromElement(plan, price),
+        plan_price_position: findPlanPricePositionFromHtml(plan.innerHTML, price),
         plan_features: elementListText(plan, 'li'),
         cta_text: link ? stripTags(link.innerHTML) : firstElementText(plan, 'button'),
         cta_url: { url: link ? getElementAttribute(link, 'href') : '' },
@@ -1065,7 +1140,7 @@ const buildPricingTableWidgetFromDom = (ctx: ElementorBuildContext, element: Ele
 
   if (plans.length < 2) return null;
 
-  const sectionTitle = firstElementText(element, 'h1,h2', grid);
+  const sectionTitle = firstElementHeadingTitle(element, 'h1,h2', grid);
   const sectionIntro = firstElementText(element, 'p', grid);
   const gridOuterHtml = grid.outerHTML;
   const gridIndex = element.innerHTML.indexOf(gridOuterHtml);
@@ -1634,6 +1709,7 @@ const buildFeatureGridWidgetFromDom = (ctx: ElementorBuildContext, element: Elem
         card_url: { url: link ? getElementAttribute(link, 'href') : '' },
         card_class_name: getElementAttribute(card, 'class'),
         card_icon_html: firstElementHtml(card, 'svg'),
+        card_icon_class_name: firstIconFrameClassFromElement(card),
         card_image: {
           url: image ? getElementAttribute(image, 'src') : '',
           alt: image ? getElementAttribute(image, 'alt') : '',
@@ -1673,6 +1749,11 @@ const firstTagTextFromHtml = (html: string, tagNames: string): string => {
   return match ? stripTags(match[2] || '') : '';
 };
 
+const firstTagHeadingTitleFromHtml = (html: string, tagNames: string): string => {
+  const match = html.match(new RegExp(`<(${tagNames})\\b[^>]*>([\\s\\S]*?)<\\/\\1>`, 'i'));
+  return match ? normalizeHeadingTitle(match[2] || '') : '';
+};
+
 const firstTagAttributeFromHtml = (html: string, tagName: string, attribute: string): string => {
   const match = html.match(new RegExp(`<${tagName}\\b([^>]*)>`, 'i'));
   return match ? getAttributeFromString(match[1] || '', attribute) : '';
@@ -1681,6 +1762,200 @@ const firstTagAttributeFromHtml = (html: string, tagName: string, attribute: str
 const allTagTextFromHtml = (html: string, tagName: string): string[] => Array.from(
   html.matchAll(new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)<\\/${tagName}>`, 'gi')),
 ).map((match) => stripTags(match[1] || '')).filter(Boolean);
+
+const locationCardDataFromText = (
+  text: string,
+  cityName: string,
+): Pick<LocationCard, 'rating_text' | 'region_text' | 'phone_text' | 'reviews_text' | 'experience_text' | 'variant'> => {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  const rating = normalized.match(/\b\d(?:\.\d)?\b/)?.[0] || '';
+  const phone = normalized.match(/\(?\d{3}\)?[\s-]?\d{3}-\d{4}/)?.[0] || '';
+  const reviews = normalized.match(/\d+\+\s*Reviews/i)?.[0] || '';
+  const experience = normalized.match(/\d+\+\s*Years\s*Experience/i)?.[0] || '';
+  const region = normalized.match(/\b[A-Z]{2}\b/)?.[0] || '';
+  const city = cityName.toLowerCase();
+
+  return {
+    rating_text: rating,
+    region_text: region,
+    phone_text: phone,
+    reviews_text: reviews,
+    experience_text: experience,
+    variant: city.includes('calgary') ? 'calgary' : city.includes('edmonton') ? 'edmonton' : 'default',
+  };
+};
+
+const buildLocationCardWidget = (
+  ctx: ElementorBuildContext,
+  card: LocationCard,
+): ElementorElement => createCustomWidget(ctx, 'whipify_location_card', card, `location-card:${card.city_name}`);
+
+const collectDirectAnchorMatchesFromHtml = (html: string): StringMatch[] => {
+  const anchors: StringMatch[] = [];
+  const anchorPattern = /<a\b([^>]*)>/gi;
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = anchorPattern.exec(html)) !== null) {
+    if (match.index < cursor) continue;
+    const end = findMatchingTagEnd(html, match.index, 'a');
+    if (end < 0) continue;
+
+    const outerHtml = html.slice(match.index, end);
+    const openTagEnd = outerHtml.indexOf('>');
+    anchors.push({
+      index: match.index,
+      tagName: 'a',
+      attributes: match[1] || '',
+      innerHtml: openTagEnd >= 0 ? outerHtml.slice(openTagEnd + 1, outerHtml.length - '</a>'.length) : '',
+      outerHtml,
+    });
+    cursor = end;
+    anchorPattern.lastIndex = end;
+  }
+
+  return anchors;
+};
+
+const locationCardFromHtmlMatch = (match: StringMatch): LocationCard | null => {
+  const cityName = firstTagTextFromHtml(match.innerHtml, 'h2|h3|h4');
+  const buttonText = firstTagTextFromHtml(match.innerHtml, 'button') || 'View Services';
+  const text = stripTags(match.innerHtml);
+  const details = locationCardDataFromText(text, cityName);
+  const href = getAttributeFromString(match.attributes || '', 'href');
+  const cardClassName = firstTagAttributeFromHtml(match.innerHtml, 'div', 'class');
+
+  if (!cityName || !href || !details.phone_text || !details.reviews_text || !details.experience_text) {
+    return null;
+  }
+
+  return {
+    city_name: cityName,
+    ...details,
+    button_text: buttonText,
+    card_url: { url: href },
+    source_class_name: normalizeClassName(getAttributeFromString(match.attributes || '', 'class')),
+    card_class_name: normalizeClassName(cardClassName),
+  };
+};
+
+const buildLocationGridSection = (
+  ctx: ElementorBuildContext,
+  data: {
+    sectionTitle: string;
+    cards: LocationCard[];
+    sourceClassName: string;
+  },
+): ElementorElement | null => {
+  if (data.cards.length < 2) return null;
+
+  const sectionChildren: ElementorElement[] = [];
+  const titleWidget = data.sectionTitle
+    ? buildHeadingWidget(ctx, 'h2', data.sectionTitle, {
+      _css_classes: 'whipify-location-grid__title text-3xl md:text-4xl font-bold text-center mb-12 text-foreground',
+      align: 'center',
+    })
+    : null;
+
+  if (titleWidget) sectionChildren.push(titleWidget);
+
+  sectionChildren.push(createContainer(ctx, 'location-grid:cards', data.cards.map((card) => buildLocationCardWidget(ctx, card)), {
+    css_classes: dedupeClassName(['whipify-location-grid__cards', data.sourceClassName].filter(Boolean).join(' ')),
+  }));
+
+  return createContainer(ctx, 'location-grid:section', [
+    createContainer(ctx, 'location-grid:inner', sectionChildren, {
+      css_classes: 'whipify-location-grid__inner container mx-auto px-4',
+    }),
+  ], {
+    html_tag: 'section',
+    css_classes: 'whipify-location-grid py-16 bg-white',
+  });
+};
+
+const buildLocationGridWidgetFromHtml = (ctx: ElementorBuildContext, html: string): ElementorElement | null => {
+  if (!/\bgrid\b/i.test(html) || !/\bgap-\d+\b/i.test(html) || !/<a\b/i.test(html)) return null;
+
+  const gridPattern = /<div\b([^>]*)>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = gridPattern.exec(html)) !== null) {
+    const gridClassName = normalizeClassName(getAttributeFromString(match[1] || '', 'class'));
+    if (!/\bgrid\b/.test(gridClassName) || !/\bgap-\d+\b/.test(gridClassName)) continue;
+
+    const end = findMatchingTagEnd(html, match.index, 'div');
+    if (end < 0) continue;
+
+    const outerHtml = html.slice(match.index, end);
+    const openTagEnd = outerHtml.indexOf('>');
+    const innerHtml = openTagEnd >= 0 ? outerHtml.slice(openTagEnd + 1, outerHtml.length - '</div>'.length) : '';
+    const cards = collectDirectAnchorMatchesFromHtml(innerHtml)
+      .map(locationCardFromHtmlMatch)
+      .filter((card): card is LocationCard => Boolean(card));
+
+    if (cards.length < 2) continue;
+
+    return buildLocationGridSection(ctx, {
+      sectionTitle: firstTagTextFromHtml(html.slice(0, match.index), 'h1|h2'),
+      cards,
+      sourceClassName: gridClassName,
+    });
+  }
+
+  return null;
+};
+
+const locationCardFromElement = (anchor: Element): LocationCard | null => {
+  const cityName = firstElementText(anchor, 'h2,h3,h4');
+  const text = stripTags(anchor.innerHTML);
+  const details = locationCardDataFromText(text, cityName);
+  const href = getElementAttribute(anchor, 'href');
+  const cardClassName = firstElementAttribute(anchor, 'div', 'class');
+  const buttonText = firstElementText(anchor, 'button') || 'View Services';
+
+  if (!cityName || !href || !details.phone_text || !details.reviews_text || !details.experience_text) {
+    return null;
+  }
+
+  return {
+    city_name: cityName,
+    ...details,
+    button_text: buttonText,
+    card_url: { url: href },
+    source_class_name: getElementAttribute(anchor, 'class'),
+    card_class_name: cardClassName,
+  };
+};
+
+const findLocationGridElement = (element: Element): Element | null => {
+  const candidates = Array.from(element.querySelectorAll('div'));
+  return candidates.find((candidate) => {
+    const className = getElementAttribute(candidate, 'class');
+    if (!/\bgrid\b/.test(className) || !/\bgap-\d+\b/.test(className)) return false;
+    const cards = Array.from(candidate.children)
+      .filter((child) => child.tagName.toLowerCase() === 'a')
+      .map(locationCardFromElement)
+      .filter(Boolean);
+    return cards.length >= 2;
+  }) || null;
+};
+
+const buildLocationGridWidgetFromDom = (ctx: ElementorBuildContext, element: Element): ElementorElement | null => {
+  const grid = findLocationGridElement(element);
+  if (!grid) return null;
+
+  const cards = Array.from(grid.children)
+    .filter((child) => child.tagName.toLowerCase() === 'a')
+    .map(locationCardFromElement)
+    .filter((card): card is LocationCard => Boolean(card));
+
+  if (cards.length < 2) return null;
+
+  return buildLocationGridSection(ctx, {
+    sectionTitle: firstElementText(element, 'h1,h2', grid),
+    cards,
+    sourceClassName: getElementAttribute(grid, 'class'),
+  });
+};
 
 const isHtmlIndexInsideAnyTag = (html: string, index: number, tags: string[]): boolean => {
   const before = html.slice(0, index).toLowerCase();
@@ -1827,7 +2102,8 @@ const findPriceTextFromHtml = (html: string): string => {
   const candidates = Array.from(html.matchAll(/<(div|span|strong|b|p)\b[^>]*>([\s\S]*?)<\/\1>/gi))
     .map((match) => stripTags(match[2] || ''))
     .filter(Boolean);
-  return candidates.find((text) => PRICE_PATTERN.test(text)) || '';
+  const priceText = candidates.find(hasPricingSignal) || '';
+  return priceText ? normalizePriceText(priceText) : '';
 };
 
 const findIntervalTextFromHtml = (html: string, priceText: string): string => {
@@ -1848,7 +2124,7 @@ const pricingCellTextFromHtml = (cellHtml: string): string => stripTags(cellHtml
 
 const buildPricingMatrixWidgetFromHtml = (ctx: ElementorBuildContext, html: string): ElementorElement | null => {
   const tableMatch = html.match(/<table\b[^>]*>([\s\S]*?)<\/table>/i);
-  if (!tableMatch || !PRICE_PATTERN.test(stripTags(tableMatch[1] || ''))) return null;
+  if (!tableMatch || !hasPricingSignal(stripTags(tableMatch[1] || ''))) return null;
 
   const tableHtml = tableMatch[1] || '';
   const rowMatches = Array.from(tableHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi));
@@ -1877,7 +2153,7 @@ const buildPricingMatrixWidgetFromHtml = (ctx: ElementorBuildContext, html: stri
   const sectionIntroHtml = html.slice(0, tableIndex);
   const sectionFooterHtml = sectionFooterHtmlAfterChild(html.slice(tableIndex + tableMatch[0].length));
   return createCustomWidget(ctx, 'whipify_pricing_table', {
-    section_title: firstTagTextFromHtml(sectionIntroHtml, 'h1|h2'),
+    section_title: firstTagHeadingTitleFromHtml(sectionIntroHtml, 'h1|h2'),
     section_intro: firstTagTextFromHtml(sectionIntroHtml, 'p'),
     section_footer_html: sectionFooterHtml,
     pricing_columns: columns.join('\n'),
@@ -1891,7 +2167,7 @@ const buildPricingTableWidgetFromHtml = (ctx: ElementorBuildContext, html: strin
   const matrix = buildPricingMatrixWidgetFromHtml(ctx, html);
   if (matrix) return matrix;
 
-  if (!PRICE_PATTERN.test(html) || !/\b(grid|pricing)\b/i.test(html)) return null;
+  if (!hasPricingSignal(html) || !/\b(grid|pricing)\b/i.test(html)) return null;
 
   const planMatches = Array.from(html.matchAll(/<article\b([^>]*)>([\s\S]*?)<\/article>/gi));
   if (planMatches.length < 2) return null;
@@ -1906,6 +2182,7 @@ const buildPricingTableWidgetFromHtml = (ctx: ElementorBuildContext, html: strin
       plan_description: firstTagTextFromHtml(planHtml, 'p'),
       plan_price: price,
       plan_interval: findIntervalTextFromHtml(planHtml, price),
+      plan_price_position: findPlanPricePositionFromHtml(planHtml, price),
       plan_features: allTagTextFromHtml(planHtml, 'li').join('\n'),
       cta_text: linkMatch ? stripTags(linkMatch[2] || '') : firstTagTextFromHtml(planHtml, 'button'),
       cta_url: { url: linkMatch ? getAttributeFromString(linkMatch[1] || '', 'href') : '' },
@@ -1928,7 +2205,7 @@ const buildPricingTableWidgetFromHtml = (ctx: ElementorBuildContext, html: strin
   ].filter(Boolean).join(' '));
 
   return createCustomWidget(ctx, 'whipify_pricing_table', {
-    section_title: firstTagTextFromHtml(sectionIntroHtml, 'h1|h2'),
+    section_title: firstTagHeadingTitleFromHtml(sectionIntroHtml, 'h1|h2'),
     section_intro: firstTagTextFromHtml(sectionIntroHtml, 'p'),
     section_footer_html: sectionFooterHtml,
     plans,
@@ -2335,6 +2612,7 @@ const buildFeatureGridWidgetFromHtml = (ctx: ElementorBuildContext, html: string
       card_url: { url: linkMatch ? getAttributeFromString(linkMatch[1] || '', 'href') : '' },
       card_class_name: normalizeClassName(getAttributeFromString(match.attributes || '', 'class')),
       card_icon_html: svgMatch ? svgMatch[0] : '',
+      card_icon_class_name: firstIconFrameClassFromHtml(cardHtml),
       card_image: {
         url: imageMatch ? getAttributeFromString(imageMatch[1] || '', 'src') : '',
         alt: imageMatch ? getAttributeFromString(imageMatch[1] || '', 'alt') : '',
@@ -2780,12 +3058,15 @@ const convertDomElement = (ctx: ElementorBuildContext, element: Element): Elemen
     const logoCloud = buildLogoCloudWidgetFromDom(ctx, element);
     if (logoCloud) return [logoCloud];
 
+    const locationGrid = buildLocationGridWidgetFromDom(ctx, element);
+    if (locationGrid) return [locationGrid];
+
     const featureGrid = buildFeatureGridWidgetFromDom(ctx, element);
     if (featureGrid) return [featureGrid];
 
   }
 
-  if (tagName === 'div') {
+  if (tagName === 'div' && stripTags(element.outerHTML) === '') {
     const trustLogoRow = buildTrustLogoRowWidgetFromHtml(ctx, element.outerHTML);
     if (trustLogoRow) return [trustLogoRow];
 
@@ -2839,6 +3120,14 @@ const convertDomElement = (ctx: ElementorBuildContext, element: Element): Elemen
     }
 
     const widget = buildIconListWidget(ctx, element.innerHTML, element.textContent || tagName);
+    return widget ? [widget] : [];
+  }
+
+  if (tagName === 'input' || tagName === 'select' || tagName === 'textarea') {
+    const widget = buildHtmlWidget(ctx, element.outerHTML, 'form-control:source-html', false);
+    if (widget) {
+      ctx.warnings.push(`Preserved source <${tagName}> form control as an Elementor HTML widget to avoid splitting native control markup.`);
+    }
     return widget ? [widget] : [];
   }
 
@@ -2964,8 +3253,8 @@ const findTopLevelSectionRanges = (html: string): StringMatch[] => {
 const collectStringMatches = (html: string): StringMatch[] => {
   const matches: StringMatch[] = [];
   const pairedRanges: Array<{ start: number; end: number }> = [];
-  const paired = /<(h[1-6]|p|span|a|button|details|ul|ol|figure|iframe|video|svg)\b([^>]*)>([\s\S]*?)<\/\1>/gi;
-  const voidElement = /<(img|hr)\b([^>]*)\/?>/gi;
+  const paired = /<(h[1-6]|p|span|a|button|details|ul|ol|figure|iframe|video|svg|select|textarea)\b([^>]*)>([\s\S]*?)<\/\1>/gi;
+  const voidElement = /<(img|hr|input)\b([^>]*)\/?>/gi;
 
   let match: RegExpExecArray | null;
   while ((match = paired.exec(html)) !== null) {
@@ -3023,6 +3312,9 @@ const convertStringMatch = (ctx: ElementorBuildContext, match: StringMatch): Ele
     }
 
     return buildIconListWidget(ctx, match.innerHtml, match.innerHtml);
+  }
+  if (match.tagName === 'input' || match.tagName === 'select' || match.tagName === 'textarea') {
+    return buildHtmlWidget(ctx, match.outerHtml, 'form-control:source-html', false);
   }
   if (match.tagName === 'a') {
     return buildButtonWidget(ctx, match.innerHtml, getAttributeFromString(match.attributes, 'href'), match.innerHtml, attributeSettings(match.attributes));
@@ -3222,6 +3514,11 @@ const convertHtmlSegmentWithoutDomParser = (ctx: ElementorBuildContext, html: st
   const logoCloud = buildLogoCloudWidgetFromHtml(ctx, html);
   if (logoCloud) {
     return [logoCloud];
+  }
+
+  const locationGrid = buildLocationGridWidgetFromHtml(ctx, html);
+  if (locationGrid) {
+    return [locationGrid];
   }
 
   const featureGrid = buildFeatureGridWidgetFromHtml(ctx, html);

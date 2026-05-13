@@ -303,3 +303,163 @@
 - status: fixed
 - related tests: `npm run test:elementor-export`; `npm run test:elementor-output-doctor`; `npm run test:gutenberg-parity`; `npm run build`; PHP lint for importer 1.3.19 deploy files; live public/editor verification on Edmonton page 5012.
 - fix evidence: Local converter smoke output reports 0 `whipify_feature_grid` widgets, 3 `whipify_feature_card` widgets, preserved `whipify-feature-grid__cards grid md:grid-cols-3 gap-8` container classes, 0 HTML fallbacks. Live Edmonton public page now reports 26 standalone `whipify_feature_card` widgets, 0 legacy Feature Grid widgets, and 0 HTML widgets. Elementor editor page 5012 reports 26 standalone Feature Card widgets, 0 legacy Feature Grid widgets, and clicking the first card opens `Edit Whipify Feature Card` with direct `card_title` and `card_text` controls populated.
+
+- ID: AUD-EL-EDITABILITY-022
+- severity: high
+- lane/scope: Elementor / live editor canvas / FAQ accordion answer editability
+- file: `utils/elementorPluginTemplates.ts`; `scripts/elementor-export-regression.mjs`; live page `https://mikaily128.sg-host.com/wp-admin/post.php?post=5012&action=elementor`
+- line/range if available: generated importer FAQ repair helpers and Elementor preview-only visibility hooks
+- finding: FAQ answers opened correctly on the public Edmonton page, but the answers were not exposed as editable Elementor elements in the editor canvas. A first broad importer patch altered unrelated page sections and regressed visual output.
+- why it matters: The user needed only FAQ answer editability fixed. Broad Elementor runtime/CSS patches can destabilize already-working Feature Card, visual-fidelity, and public-page behavior.
+- recommended fix: Roll back the broad importer package, restore the known-good standalone Feature Card importer behavior, and add only a scoped FAQ repair that injects `text-editor` widgets with class `whipify-faq-answer` beside FAQ question buttons. Keep public answers closed; force answer widgets visible only inside Elementor preview requests.
+- status: fixed
+- related tests: `npm run test:elementor-export`; `npm run test:elementor-output-doctor`; `npm run test:gutenberg-parity`; `npm run build`; PHP lint for importer 1.3.26 deploy files; live public/editor Playwright checks.
+- fix evidence: Active live importer is 1.3.26. Public Edmonton page reports 26 standalone Feature Card widgets, 0 legacy Feature Grid widgets, 0 HTML widgets, 10 FAQ answer widgets, and 0 visible FAQ answers before click. Clicking the first public FAQ opens exactly one answer. Elementor editor iframe reports 10 FAQ answer text-editor widgets, 10 visible FAQ answers for editing, 0 non-widget FAQ answer blocks, 26 Feature Cards, and 0 HTML widgets. Clicking the first FAQ answer opens `Edit Text Editor` with the answer text present in the left panel.
+
+- ID: AUD-EL-HOME-023
+- severity: high
+- lane/scope: Elementor / homepage visual fidelity / generated theme and importer CSS
+- file: `components/Dashboard.tsx`; `utils/elementorPluginTemplates.ts`; `scripts/elementor-export-regression.mjs`; live page `https://mikaily128.sg-host.com/`
+- line/range if available: generated Elementor visual-fidelity CSS, importer high-priority override CSS, homepage header/hero/location-card regression assertions
+- finding: The Elementor homepage did not match the React/static reference. The generated global header was fixed-position with a 1400px container instead of normal-flow 1280px header chrome, the hero trust badge stretched full-width because Elementor converted source `inline-flex` classes onto an `e-con` container, and the location card decorative bubble collapsed because broad absolute-positioning overrides removed its intended `w-32 h-32` sizing.
+- why it matters: The Elementor lane can create editable pages, but the product promise still fails if the exported page visually diverges from the source site at the global chrome and above-the-fold sections. These issues also showed that fixes must live in durable generator/importer CSS, not only in live patch packages.
+- recommended fix: Add scoped visual-fidelity rules to generated Elementor theme CSS and importer override CSS for normal-flow 1280px header chrome, source `inline-flex` sizing on Elementor containers, and the location-card decorative bubble dimensions. Add regression assertions so the generated importer and theme keep these rules.
+- status: fixed
+- related tests: `npm run test:elementor-export`; `npm run test:elementor-output-doctor`; PHP lint for importer 1.3.46 deploy files; live homepage screenshot/DOM metric comparison against `https://mikaily125.sg-host.com/`.
+- fix evidence: Active live importer was updated to 1.3.46 for homepage parity. Live measurements recorded in `logs/homepage-parity-2026-05-06/after-1.3.46/metrics.json` show exact converted-vs-reference parity for nav, header flex, logo, desktop nav group, last nav item, hero trust badge, hero title, location card surface, and location-card decorative bubble. Scroll-slice evidence was captured under `logs/homepage-parity-2026-05-06/after-1.3.46/scroll-slices/`.
+
+- ID: AUD-EL-DOMAIN-024
+- severity: high
+- lane/scope: Elementor / generated theme chrome / existing Platinum WordPress theme input
+- file: `components/Dashboard.tsx`; generated Elementor theme ZIP
+- line/range if available: WordPress-theme input shell/chrome extraction and generated `header.php` / `footer.php`
+- finding: When the Elementor lane converted an existing generated WordPress/Platinum theme ZIP, it used `front-page.php` as the shell source for header/footer splitting. That PHP template does not contain a clean app shell, so the generated Elementor package missed `partials/header-global.php` / `partials/footer-global.php` and placed homepage body markup into `footer.php`.
+- why it matters: Live pages can appear unchanged or duplicate page content because global footer chrome becomes a second page-body source. This directly violates the no-duplicate-content and no-second-source-of-truth rules.
+- recommended fix: For WordPress-theme inputs, extract global chrome from source `header.php` and `footer.php`, use a minimal parser shell instead of `front-page.php` body splitting, generate partials, strip leading `</main>` from source footer output, and provide source-theme menu fallback helpers.
+- status: fixed
+- related tests: `npm run test:elementor-export`; PHP lint for generated v2/v4 theme files; live 99-route crawl.
+- fix evidence: Generated v2/v4 theme packages include `partials/header-global.php` and `partials/footer-global.php`; generated `footer.php` no longer contains homepage hero/location/body text and does not start with `</main>`. Live v4 crawl across 99 routes found no missing headers, no missing footers, and no non-home leakage of homepage hero/location content.
+
+- ID: AUD-EL-DOMAIN-025
+- severity: high
+- lane/scope: Elementor / generated theme setup script
+- file: `components/Dashboard.tsx`; generated `setup.php`
+- line/range if available: setup.php route/location data emission
+- finding: Generated `setup.php` wrote route and location data using raw JavaScript object/array syntax in PHP context instead of PHP-safe string data decoded by `json_decode()`.
+- why it matters: A generated setup/import helper with invalid PHP can fatal during WordPress-side setup and blocks reliable SaaS packaging.
+- recommended fix: Serialize route/location data as single-quoted PHP string literals and decode them with `json_decode(...)`, with `is_array` guards.
+- status: fixed
+- related tests: PHP lint for generated v2/v4 theme files; `npm run test:elementor-export`.
+- fix evidence: PHP lint passes for generated `setup.php`; regression asserts `$theme_routes = json_decode('${phpSingleQuotedJson(routesToProcess)}');` and `$llm_locations = json_decode('${phpSingleQuotedJson(llmLocationsHtml)}', true);`.
+
+- ID: AUD-EL-FAQ-026
+- severity: high
+- lane/scope: Elementor / public FAQ HTML fallback runtime / generated theme assets
+- file: `components/Dashboard.tsx`; generated `assets/js/whipify-elementor-visual-fidelity.js`; generated `assets/js/faq-data.js`; live page `https://mikaily128.sg-host.com/faq/`
+- line/range if available: Elementor visual-fidelity FAQ runtime
+- finding: The live FAQ page contained Radix-style accordion buttons and empty hidden answer regions inside an Elementor HTML fallback widget. Elementor mode did not enqueue the broader `interactive-components-v9.0.js` runtime, so these Radix controls were not hydrated. The source WordPress theme artifact had already lost the closed FAQ answer text, so the generated `faq-data.js` lacked the main FAQ-page answers.
+- why it matters: The public FAQ looked like an accordion but clicking questions could not reveal answer content. It also risked future fixes leaving multiple answers open or exposing answers by default.
+- recommended fix: Move Radix accordion hydration into the Elementor visual-fidelity runtime, hydrate empty panels from `window.FAQ_DATA`, initialize closed, and close sibling panels so only one answer is open per accordion group. For this conversion, enrich `faq-data.js` from the original React source FAQ entries before deploying the final theme package.
+- status: fixed
+- related tests: `npm run test:elementor-export`; `npm run test:elementor-output-doctor`; `npm run test:gutenberg-parity`; `npm run build`; PHP lint for generated v4 theme files; live FAQ Playwright interaction check; live 99-route crawl.
+- fix evidence: Live v4 FAQ verification reports `faqData: 33`, `buttonCount: 18`, `beforeOpen: 0`, `firstOpen: 1`, and `secondOpen: 1`. The first FAQ answer is hidden on load, opens on click, and closes when the second answer opens. Live v4 crawl across 99 routes found no pages with open FAQ regions on load.
+
+- ID: AUD-EL-DOMAIN-027
+- severity: high
+- lane/scope: Elementor / generated theme routing / header dropdown navigation
+- file: `components/Dashboard.tsx`; generated Elementor theme `functions.php`; live pages under `https://mikaily128.sg-host.com/`
+- line/range if available: generated route fallback helpers and `WPConvert_Dropdown_Menu_Walker`
+- finding: Header dropdown menu links inherited stale captured primary-menu URLs from the source artifact, so generic menu entries such as `Services` and `Pricing` could resolve to the wrong city context. Direct generic routes like `/services/` also used suffix matching before the intended default region fallback.
+- why it matters: The live Elementor site appeared to have broken routing and wrong page selection, even when the destination pages existed. A SaaS converter cannot rely on stale captured nav URLs when the generated WordPress route map has a better canonical target.
+- recommended fix: Detect the default route prefix from generated `menus.json` and route slugs, prefer footer/region menu evidence over stale captured primary links, pass visible menu titles into menu URL normalization, and resolve direct generic aliases before suffix fallback.
+- status: fixed
+- related tests: `npm run test:elementor-export`; `npm run build`; PHP lint for generated `functions.php`; live route verification; live crawl.
+- fix evidence: Live v11 verification shows header dropdown links now resolve to `/edmonton-services/`, `/edmonton-pricing/`, `/edmonton-move-in-move-out-cleaning/`, and `/edmonton-post-construction-cleaning/`. Direct `/services/` resolves to `/edmonton-services/`, `/pricing/` resolves to `/edmonton-pricing/`, while `/calgary/pricing/` still resolves to `/calgary-pricing/`.
+
+- ID: AUD-EL-DOMAIN-028
+- severity: high
+- lane/scope: Elementor / generated theme routing / location aliases
+- file: `components/Dashboard.tsx`; generated Elementor theme `functions.php`; live pages `https://mikaily128.sg-host.com/locations/` and nested location aliases
+- line/range if available: generated route fallback resolver
+- finding: Some nested location paths such as `/locations/airdrie/` and `/locations/clareview/` could 404 even though the generated site has a canonical `/locations/` page. This made the header/menu experience look broken and risked dead links in crawled pages.
+- why it matters: Generated route fallback must be deterministic and safe for captured React routes, especially when the React/static site and WordPress slug model differ. Unhandled nested aliases break SaaS reliability.
+- recommended fix: Add a missing nested `/locations/*` fallback to the canonical `/locations/` page after preserving direct explicit route matches.
+- status: fixed
+- related tests: live route verification; live crawl.
+- fix evidence: Live v11 verification shows `/locations/airdrie/` returns 200 and resolves to `/locations/`; the broad crawl found `badLiveCount: 0` and no reference paths missing on the live site.
+
+- ID: AUD-EL-FAQ-029
+- severity: high
+- lane/scope: Elementor / public FAQ behavior / page-specific FAQ preservation
+- file: generated Elementor visual-fidelity runtime; live pages `https://mikaily128.sg-host.com/edmonton/` and `https://mikaily128.sg-host.com/faq/`
+- line/range if available: generated FAQ runtime and imported Elementor FAQ widgets
+- finding: The Edmonton page needed FAQ answers closed on load, clickable to open, and limited to one visible answer. The separate `/faq/` page already behaved correctly and needed to remain untouched.
+- why it matters: Broad FAQ patches previously risked breaking working FAQ pages while fixing Edmonton. FAQ behavior must be scoped by actual generated structures and verified on both affected and unaffected pages.
+- recommended fix: Preserve the existing scoped FAQ runtime, verify no duplicate answer blocks are visible, and confirm `/faq/` is not affected by the Edmonton-specific Elementor FAQ repair.
+- status: fixed
+- related tests: live FAQ click verification; live crawl.
+- fix evidence: Live v11 verification shows Edmonton has 10 FAQ triggers, 0 answers visible on load, 1 visible after clicking the first trigger, 1 visible after clicking the second trigger, and 0 duplicate visible answers. Earlier v8 verification confirmed `/faq/` had no unintended Whipify FAQ answer injections/open details.
+
+- ID: AUD-EL-VISUAL-030
+- severity: medium
+- lane/scope: Elementor / generated visual-fidelity CSS / breadcrumbs
+- file: `components/Dashboard.tsx`; `utils/elementorPluginTemplates.ts`; generated theme `assets/css/whipify-elementor-visual-fidelity.css`
+- line/range if available: `.tf-elementor-breadcrumbs` CSS rules
+- finding: Breadcrumb spacing on `/locations/` was collapsed because the generated Elementor reset `.tf-elementor-breadcrumbs .elementor-widget { margin: 0 !important; }` overrode the generic sibling spacing rule.
+- why it matters: The breadcrumb looked broken even after the route itself worked. Elementor widget wrappers need explicit cascade-aware spacing rules when generated CSS also resets widget margins.
+- recommended fix: Add a stronger sibling selector for `.tf-elementor-breadcrumbs > .elementor-widget + .elementor-widget` in both generated theme CSS and importer override CSS.
+- status: fixed
+- related tests: `npm run test:elementor-export`; live DOM metric verification.
+- fix evidence: Live v11 verification shows `/locations/` breadcrumb text as `Home › Locations`, with separator and page crumbs each receiving `8px` left margin after the stronger rule.
+
+## Elementor Live Visual Parity V41 - 2026-05-10
+
+- ID: AUD-EL-VISUAL-031
+- severity: high
+- lane/scope: Elementor / live visual parity / Edmonton long-form page
+- file: `components/Dashboard.tsx`; `utils/elementorPluginTemplates.ts`; `scripts/elementor-visual-parity-regression.mjs`; live page `https://mikaily128.sg-host.com/edmonton/`
+- line/range if available: Elementor visual-fidelity runtime; visual parity harness lazy-image capture
+- finding: The live Elementor `/edmonton/` page had remaining mobile visual drift against the static reference after recent card/header fixes. Section metrics showed the “Meet Our Network,” “About Duty Cleaners,” FAQ, Expert Network, Gallery, Contact, and CTA sections had cumulative mobile vertical-rhythm offsets. The visual regression harness also captured before all lazy images were fully decoded, creating false gallery placeholder diffs.
+- why it matters: The page could look close in isolated desktop checks while still failing a strict mobile screenshot-diff gate. SaaS-grade visual conversion needs durable section-rhythm repairs and a reliable screenshot harness, not manual eyeballing.
+- recommended fix: Add a guarded mobile-only Elementor rhythm repair for the affected converted long-form sections, keep desktop untouched, force eager image loading in the visual parity harness, wait for image load/decode before screenshots, and verify with live screenshot-diff evidence.
+- status: fixed
+- related tests: `npm run test:elementor-export`; generated JS syntax checks; generated importer PHP lint; live DOM verification; `npm run test:elementor-visual-parity -- --live --base https://mikaily128.sg-host.com --reference https://mikaily125.sg-host.com --paths /edmonton-pricing/,/edmonton/,/locations/ --viewports 1440x1200,390x1000 --threshold 0.08`.
+- fix evidence: Deployed importer v1.3.52 and theme v1.0.41. Live verification shows mobile section positions now match the reference closely (`Meet Our Network` top 13221, `About Duty Cleaners` top 15163, `Gallery & Video` top 23322, `Contact Us` top 25116, `Ready to Get Started?` top 27834) with FAQ answers closed on load. The targeted 3-page/2-viewport visual parity smoke passed with `failureCount: 0`.
+
+- ID: AUD-EL-VISUAL-032
+- severity: high
+- lane/scope: Elementor / domain-wide visual parity
+- file: live pages under `https://mikaily128.sg-host.com/`; reference pages under `https://mikaily125.sg-host.com/`
+- line/range if available: n/a
+- finding: After the Edmonton targeted fix, a broader 25-page live/reference crawl still reports 12 visual-parity failures over the `0.08` threshold, including `/`, `/about-us/`, `/edmonton-services/`, `/edmonton-move-in-move-out-cleaning/`, `/contact/`, `/calgary/`, `/blog/`, and `/commercial-cleaning/`.
+- why it matters: The converter is improved for the reported Edmonton path, pricing, and locations pages, but still cannot be honestly called fully SaaS-grade or pixel-perfect across the entire captured site until the remaining page families pass automated screenshot-diff gates.
+- recommended fix: Triage the broader crawl failures by page template family, starting with homepage/mobile and about/service templates, then port recurring spacing/layout fixes back into the durable generator/runtime instead of one-off live patches.
+- status: fixed
+- related tests: `npm run test:elementor-visual-parity -- --live --base https://mikaily128.sg-host.com --reference https://mikaily125.sg-host.com --viewports 1440x1200,390x1000 --threshold 0.08 --max-pages 25`.
+- fix evidence: Fixed in the V81 importer/runtime pass. `logs/regression-2026-05-07/visual-parity-v81-broader-crawl-25/summary.json` reports `pageCount: 25`, `comparisonCount: 50`, and `failureCount: 0`.
+
+## Elementor Live Visual + Interaction Parity V81 - 2026-05-13
+
+- ID: AUD-EL-VISUAL-033
+- severity: high
+- lane/scope: Elementor / live visual parity / importer runtime and CSS overrides
+- file: `components/Dashboard.tsx`; `utils/elementorPluginTemplates.ts`; `scripts/elementor-export-regression.mjs`; `scripts/elementor-visual-parity-regression.mjs`; live pages under `https://mikaily128.sg-host.com/`
+- line/range if available: Elementor visual-fidelity CSS/runtime and visual parity harness
+- finding: The broader visual parity gate still had a remaining mobile failure on `/edmonton-pricing/` after the move-out page mobile rhythm fix. Root-cause checks showed a too-broad Radix FAQ closed-row height normalizer was applying move-out-specific row heights to pricing FAQ rows, inflating the pricing page by roughly 200px.
+- why it matters: A converter-level visual fix must be scoped to the page structure that actually needs it. Applying one page family’s rhythm repair globally creates hidden regressions that only appear in broader crawl coverage.
+- recommended fix: Scope the Radix FAQ closed-row height normalizer to sections whose text contains `Move Out Cleaning`, keep pricing FAQ rows at their source heights, and verify both targeted and broad visual parity.
+- status: fixed
+- related tests: `npm run test:elementor-export`; `npm run test:elementor-output-doctor`; `npm run test:gutenberg-parity`; `npm run build`; PHP lint for generated importer files; live DOM FAQ row metric check; targeted and broad live visual parity runs.
+- fix evidence: Live importer `1.3.81` is active. Pricing FAQ rows report `56/80px` with no `whipifyRadixFaqRowHeight` touch, while move-out FAQ cards retain targeted `100/76px` card heights. `visual-parity-v81-targeted` reports `pageCount: 4`, `comparisonCount: 8`, `failureCount: 0`; `visual-parity-v81-broader-crawl-25` reports `pageCount: 25`, `comparisonCount: 50`, `failureCount: 0`.
+
+- ID: AUD-EL-FAQ-034
+- severity: high
+- lane/scope: Elementor / public interactions / Radix FAQ hydration
+- file: `utils/elementorPluginTemplates.ts`; `components/Dashboard.tsx`; live pages `https://mikaily128.sg-host.com/edmonton-pricing/` and `https://mikaily128.sg-host.com/edmonton-move-in-move-out-cleaning/`
+- line/range if available: importer-bundled `assets/js/whipify-elementor-visual-fidelity.js`
+- finding: The live installed theme did not define `setupWhipifyElementorRadixAccordions`, so Radix FAQ buttons on `/edmonton-pricing/` and `/edmonton-move-in-move-out-cleaning/` could render visually closed but not open. The move-out page also had empty panel regions because the older generated `faq-data.js` lacked page-specific move-out FAQ answers.
+- why it matters: Screenshot parity alone missed a real interactive failure. Users need pricing tabs and FAQ accordions to work after conversion, and generated/importer runtimes must be resilient when an older installed theme lacks a newer hydrator.
+- recommended fix: Bundle a Radix FAQ accordion hydrator in the importer runtime, use a safer accordion-item lookup so sibling closing works, hydrate empty panels from `window.FAQ_DATA`, add token-overlap FAQ matching, and provide scoped common move-out FAQ fallbacks for older generated theme data.
+- status: fixed
+- related tests: `npm run test:elementor-export`; live Playwright interaction smoke for pricing tabs, pricing FAQ, move-out FAQ, and Calgary header localization.
+- fix evidence: Live smoke after deploying importer `1.3.81` shows pricing tabs switch to Deep and Move In/Out panels, `/edmonton-pricing/` FAQ first opens then closes when the second opens, `/edmonton-move-in-move-out-cleaning/` FAQ first opens then closes when the second opens, and Calgary header phone/routes localize to `(403) 768-1341`, `/calgary-services/`, and `/calgary-pricing/`.
