@@ -367,3 +367,23 @@
   - Added production readiness summary endpoint and dashboard display.
   - Added Dockerfile, production env example, and deployment notes.
 - Risk: V3 still uses local/test providers. Real SaaS launch still requires managed database, object storage, Stripe integration, remote workers, hosted WordPress provisioning, production secrets, and deployment hardening.
+
+## Admin Console V1 - 2026-05-14
+
+- Changed files: `components/AdminBackendPanel.tsx`, `scripts/admin-console-v1-regression.mjs`, `package.json`, `docs/superpowers/specs/2026-05-14-admin-console-v1-design.md`, `docs/superpowers/plans/2026-05-14-admin-console-v1.md`, `codex-work/*`
+- Reason: Replace the narrow backend status panel with an operator-grade admin console.
+- Issue IDs fixed: AUD-ADMIN-CONSOLE-004
+- Changes:
+  - Added tabbed Admin Console V1 navigation.
+  - Added overview dashboard and production readiness display.
+  - Added project list search/filter/status and project detail panel.
+  - Added jobs/queue page with worker run-next action.
+  - Added artifact list with signed URL action.
+  - Added conversion report viewer.
+  - Added sandbox preview manager.
+  - Added billing/subscription page.
+  - Added audit log viewer.
+  - Added settings/provider health, worker health, rate-limit, incident, and notifications panels.
+  - Added team/role, support/impersonation policy, and API-key/secret policy pages.
+  - Added `npm run test:admin-console-v1`.
+- Risk: Provider-dependent controls remain intentionally marked as pending until real provider integrations are connected.

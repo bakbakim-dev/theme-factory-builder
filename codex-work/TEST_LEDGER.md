@@ -1407,3 +1407,50 @@
 - result: pass
 - relevant output summary: Dashboard logged into an auth-required V3 backend and displayed the `Production Infrastructure` readiness strip with migration and billing fields.
 - related fix/finding IDs: AUD-PROD-INFRA-003
+
+## Admin Console V1 - 2026-05-14
+
+- command: `npm run test:admin-console-v1`
+- result: pass
+- relevant output summary: Regression starts an auth-enabled V3 backend, seeds project/job/billing/sandbox data, logs into the dashboard, verifies all Admin Console pages, exercises project search/detail, creates a signed artifact URL, verifies report viewer, audit logs, provider/worker/rate-limit/incident/notification panels, support impersonation policy, and API key page.
+- related fix/finding IDs: AUD-ADMIN-CONSOLE-004
+
+- command: `npm run build`
+- result: pass
+- relevant output summary: Vite production build passed. Existing warnings remain for missing `/index.css` at build time and large bundle size.
+- related fix/finding IDs: AUD-ADMIN-CONSOLE-004
+
+- command: `npm run test:production-infrastructure-v3`
+- result: pass
+- relevant output summary: Production Infrastructure V3 regression passed after Admin Console V1 UI changes.
+- related fix/finding IDs: AUD-ADMIN-CONSOLE-004
+
+- command: `npm run test:production-backend-v2`
+- result: pass
+- relevant output summary: Production Backend V2 regression passed after Admin Console V1 UI changes.
+- related fix/finding IDs: AUD-ADMIN-CONSOLE-004
+
+- command: `npm run test:admin-backend`
+- result: pass
+- relevant output summary: Admin Backend V1 regression passed after Admin Console V1 UI changes.
+- related fix/finding IDs: AUD-ADMIN-CONSOLE-004
+
+- command: `npm run test:saas-core`
+- result: pass
+- relevant output summary: SaaS core regression passed after Admin Console V1 UI changes.
+- related fix/finding IDs: AUD-ADMIN-CONSOLE-004
+
+- command: `npm run test:gutenberg-parity`
+- result: pass
+- relevant output summary: Gutenberg parity regression passed after Admin Console V1 UI changes.
+- related fix/finding IDs: AUD-ADMIN-CONSOLE-004
+
+- command: `npm run test:elementor-export`
+- result: pass
+- relevant output summary: Elementor export regression passed after Admin Console V1 UI changes.
+- related fix/finding IDs: AUD-ADMIN-CONSOLE-004
+
+- command: `npm run test:elementor-output-doctor`
+- result: pass
+- relevant output summary: Elementor output doctor regression passed after Admin Console V1 UI changes.
+- related fix/finding IDs: AUD-ADMIN-CONSOLE-004

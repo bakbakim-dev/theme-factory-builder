@@ -584,3 +584,33 @@ Status values: `reviewed`, `partially reviewed`, `needs second pass`, `fixed`, `
 - review status: fixed
 - notes: Documents local auth-enabled run, Docker run, and provider boundaries.
 - related tests: documentation review.
+
+## Admin Console V1 - 2026-05-14
+
+- path: components/AdminBackendPanel.tsx
+- category: source
+- lane/scope: SaaS / admin UI
+- review status: fixed
+- notes: Expanded the backend status panel into a tabbed admin console with overview, projects, jobs, artifacts, reports, sandboxes, billing, audit logs, settings/provider health, team, support, and API key pages.
+- related tests: `npm run test:admin-console-v1`; `npm run build`.
+
+- path: scripts/admin-console-v1-regression.mjs
+- category: test
+- lane/scope: SaaS / admin UI / regression
+- review status: fixed
+- notes: Seeds an auth-enabled V3 backend and verifies console login, every page, project search/detail, signed URL action, report viewer, audit logs, settings/provider health, support policy, and API key page.
+- related tests: `npm run test:admin-console-v1`.
+
+- path: docs/superpowers/specs/2026-05-14-admin-console-v1-design.md
+- category: doc
+- lane/scope: SaaS / admin UI / design
+- review status: fixed
+- notes: Documents Admin Console V1 scope, provider honesty, data flow, and verification.
+- related tests: documentation review.
+
+- path: docs/superpowers/plans/2026-05-14-admin-console-v1.md
+- category: doc
+- lane/scope: SaaS / admin UI / plan
+- review status: fixed
+- notes: Tracks the Admin Console V1 implementation checklist.
+- related tests: documentation review.

@@ -543,3 +543,17 @@
 - status: fixed
 - related tests: `npm run test:production-infrastructure-v3`; V3 startup smoke; dashboard production-readiness smoke; full backend/converter regression set.
 - fix evidence: V3 regression verifies idempotent migrations, subscription state, rate limiting, queue completion, signed artifact URL authorization, sandbox preview records, audit events, readiness endpoint, billing/audit/sandbox/signed URL HTTP endpoints, and rate-limit `429`.
+
+## Admin Console V1 - 2026-05-14
+
+- ID: AUD-ADMIN-CONSOLE-004
+- severity: high
+- lane/scope: SaaS / admin UI / operator console
+- file: `components/AdminBackendPanel.tsx`; `scripts/admin-console-v1-regression.mjs`; `docs/superpowers/specs/2026-05-14-admin-console-v1-design.md`; `docs/superpowers/plans/2026-05-14-admin-console-v1.md`
+- line/range if available: n/a
+- finding: The backend had auth, tenant isolation, provider seams, and readiness APIs, but the dashboard only exposed a narrow backend health/status panel. Operators could not manage or inspect projects, jobs, artifacts, reports, sandboxes, billing, audit logs, provider readiness, team roles, support policy, API keys, incidents, rate limits, or notifications from a coherent admin UI.
+- why it matters: A SaaS backend without an operator console is difficult to run, debug, support, or safely hand to users. Missing UI also hides provider-pending work behind code instead of making it visible.
+- recommended fix: Build Admin Console V1 as a multi-page dashboard backed by the V3 API, with live data/actions where supported and explicit provider-pending panels for external integrations.
+- status: fixed
+- related tests: `npm run test:admin-console-v1`; `npm run build`; full backend/converter regression set.
+- fix evidence: Admin Console V1 regression seeds backend data, logs in, verifies all console pages, exercises project search/detail, signed artifact URL creation, report viewer, audit logs, settings/provider health, worker/rate-limit/incident/notification panels, support impersonation policy, and API key page.

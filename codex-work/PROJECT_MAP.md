@@ -42,6 +42,7 @@ SaaS Core V1 adds a local-first product foundation around the converter:
 - Admin Backend V1 for local API operations, JSON database persistence, filesystem artifact storage, admin stats, and dashboard backend status checks.
 - Production Backend V2 for tenant/workspace records, password-backed admin users, signed bearer tokens, protected admin endpoints, tenant-scoped project/job APIs, and tenant-scoped artifact reads.
 - Production Infrastructure V3 for migrations, audit logs, subscription state, rate limiting, queue records, signed artifact URL contracts, sandbox preview records, readiness reporting, and deployment artifacts.
+- Admin Console V1 for operator-facing pages across overview, projects, jobs, artifacts, reports, sandboxes, billing, audit logs, settings/provider health, team, support, and API keys.
 
 This is not full hosted SaaS yet. Production Infrastructure V3 adds tested provider seams, but real external vendors still need to be wired in for Stripe, managed database hosting, cloud object storage, remote workers, and hosted WordPress provisioning.
 
