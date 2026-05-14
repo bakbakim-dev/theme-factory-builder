@@ -387,3 +387,17 @@
   - Added team/role, support/impersonation policy, and API-key/secret policy pages.
   - Added `npm run test:admin-console-v1`.
 - Risk: Provider-dependent controls remain intentionally marked as pending until real provider integrations are connected.
+
+## Client Portal V1 - 2026-05-14
+
+- Changed files: `components/ClientPortal.tsx`, `App.tsx`, `scripts/client-portal-v1-regression.mjs`, `scripts/admin-console-v1-regression.mjs`, `package.json`, `docs/superpowers/specs/2026-05-14-client-portal-v1-design.md`, `docs/superpowers/plans/2026-05-14-client-portal-v1.md`, `codex-work/*`
+- Reason: Add a customer-facing SaaS frontend distinct from the internal admin/operator console.
+- Issue IDs fixed: AUD-CLIENT-PORTAL-005
+- Changes:
+  - Added `Theme Convert` client portal with customer-friendly positioning for AI builders, static ZIPs, React builds, and public URL crawls.
+  - Added output-mode cards for Platinum WordPress, Native Elementor, and Static SEO export.
+  - Added conversion workflow, project workspace, report snapshot, downloads, sandbox preview, and secure handoff sections.
+  - Moved Admin Console V1, SaaS Core panel, and legacy converter dashboard behind an explicit operator-tools toggle.
+  - Added `npm run test:client-portal-v1`.
+  - Updated Admin Console V1 regression to open operator tools before checking the admin console.
+- Risk: Client Portal V1 is a frontend shell over local/test provider seams. Real customer account flows, hosted previews, billing checkout, uploads, and production provider integrations still need to be connected.

@@ -97,7 +97,8 @@ try {
   await page.goto(`http://127.0.0.1:${vitePort}/`, { waitUntil: 'networkidle' });
   await page.evaluate(() => localStorage.removeItem('whipify-admin-backend-token'));
   await page.reload({ waitUntil: 'networkidle' });
-  await page.getByText('Admin Console V1').waitFor({ timeout: 15000 });
+  await page.getByRole('navigation').getByRole('button', { name: 'Open operator tools' }).click();
+  await page.getByText('Admin Console V1', { exact: true }).waitFor({ timeout: 15000 });
   await page.getByRole('button', { name: 'Check Backend' }).click();
   await page.getByText('Admin backend requires login.').waitFor({ timeout: 15000 });
   await page.getByPlaceholder('Admin email').fill('admin@example.com');

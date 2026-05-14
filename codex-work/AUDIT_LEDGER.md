@@ -557,3 +557,17 @@
 - status: fixed
 - related tests: `npm run test:admin-console-v1`; `npm run build`; full backend/converter regression set.
 - fix evidence: Admin Console V1 regression seeds backend data, logs in, verifies all console pages, exercises project search/detail, signed artifact URL creation, report viewer, audit logs, settings/provider health, worker/rate-limit/incident/notification panels, support impersonation policy, and API key page.
+
+## Client Portal V1 - 2026-05-14
+
+- ID: AUD-CLIENT-PORTAL-005
+- severity: high
+- lane/scope: SaaS / client UI / product positioning
+- file: `App.tsx`; `components/ClientPortal.tsx`; `scripts/client-portal-v1-regression.mjs`
+- line/range if available: n/a
+- finding: The app opened directly into admin/backend/converter tooling. That is useful for internal development, but it does not present a customer-facing SaaS experience for users coming from AI builders, static sites, public URLs, or React builds.
+- why it matters: A SaaS needs a client portal that explains value, intake, output choices, QA, previews, downloads, and projects in customer language. Exposing operator tools first makes the product feel like an internal utility rather than a service.
+- recommended fix: Add a dedicated customer portal as the first app surface, keep Admin Console V1 as a separate operator surface, and add regression coverage that verifies the new portal and operator-tool handoff.
+- status: fixed
+- related tests: `npm run test:client-portal-v1`; `npm run test:admin-console-v1`; `npm run build`; backend/SaaS regressions.
+- fix evidence: Client Portal V1 regression verifies customer-facing portal copy, intake options, output modes, workflow steps, project workspace, QA signals, and opening Admin Console V1 through operator tools.

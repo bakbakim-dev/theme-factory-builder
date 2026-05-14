@@ -614,3 +614,47 @@ Status values: `reviewed`, `partially reviewed`, `needs second pass`, `fixed`, `
 - review status: fixed
 - notes: Tracks the Admin Console V1 implementation checklist.
 - related tests: documentation review.
+
+## Client Portal V1 - 2026-05-14
+
+- path: components/ClientPortal.tsx
+- category: source
+- lane/scope: SaaS / client UI
+- review status: fixed
+- notes: Adds the customer-first `Theme Convert` portal with intake options, output modes, workflow, project workspace, report snapshot, downloads, sandbox previews, and operator-tools handoff.
+- related tests: `npm run test:client-portal-v1`; `npm run build`.
+
+- path: App.tsx
+- category: source
+- lane/scope: SaaS / app shell
+- review status: fixed
+- notes: Mounts Client Portal V1 first and moves Admin Console V1, SaaS Core, and the legacy converter dashboard behind the operator-tools toggle.
+- related tests: `npm run test:client-portal-v1`; `npm run test:admin-console-v1`; `npm run build`.
+
+- path: scripts/client-portal-v1-regression.mjs
+- category: test
+- lane/scope: SaaS / client UI / regression
+- review status: fixed
+- notes: Starts Vite, verifies customer portal sections and copy, verifies workflow test IDs, and confirms operator tools still open Admin Console V1.
+- related tests: `npm run test:client-portal-v1`.
+
+- path: scripts/admin-console-v1-regression.mjs
+- category: test
+- lane/scope: SaaS / admin UI / regression
+- review status: fixed
+- notes: Updated to open operator tools before validating Admin Console V1 after the client portal became the first app surface.
+- related tests: `npm run test:admin-console-v1`.
+
+- path: docs/superpowers/specs/2026-05-14-client-portal-v1-design.md
+- category: doc
+- lane/scope: SaaS / client UI / design
+- review status: fixed
+- notes: Documents Client Portal V1 scope, architecture, non-goals, and verification.
+- related tests: documentation review.
+
+- path: docs/superpowers/plans/2026-05-14-client-portal-v1.md
+- category: doc
+- lane/scope: SaaS / client UI / plan
+- review status: fixed
+- notes: Tracks Client Portal V1 implementation steps and verification commands.
+- related tests: documentation review.

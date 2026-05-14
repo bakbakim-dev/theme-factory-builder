@@ -1454,3 +1454,60 @@
 - result: pass
 - relevant output summary: Elementor output doctor regression passed after Admin Console V1 UI changes.
 - related fix/finding IDs: AUD-ADMIN-CONSOLE-004
+
+## Client Portal V1 - 2026-05-14
+
+- command: `npm run test:client-portal-v1`
+- result: fail, then pass
+- relevant output summary: Initial red run failed because `client-portal-v1` did not exist. After implementation, regression passed and verified the portal, customer copy, intake options, output modes, workflow steps, project/report/download surfaces, and operator-tools handoff.
+- related fix/finding IDs: AUD-CLIENT-PORTAL-005
+
+- command: `npm run build`
+- result: pass
+- relevant output summary: Vite production build passed. Existing warnings remain for missing `/index.css` at build time and large bundle size.
+- related fix/finding IDs: AUD-CLIENT-PORTAL-005
+
+- command: `npm run test:admin-console-v1`
+- result: fail, then pass
+- relevant output summary: Initial post-portal run failed because the admin console is intentionally hidden until operator tools are opened. Regression was updated to open operator tools, then passed all Admin Console V1 checks.
+- related fix/finding IDs: AUD-CLIENT-PORTAL-005; AUD-ADMIN-CONSOLE-004
+
+- command: `npm run test:saas-core`
+- result: pass
+- relevant output summary: SaaS core regression passed after Client Portal V1 app-shell changes.
+- related fix/finding IDs: AUD-CLIENT-PORTAL-005
+
+- command: `npm run test:production-infrastructure-v3`
+- result: pass
+- relevant output summary: Production Infrastructure V3 regression passed after Client Portal V1 app-shell changes.
+- related fix/finding IDs: AUD-CLIENT-PORTAL-005
+
+- command: `npm run test:production-backend-v2`
+- result: pass
+- relevant output summary: Production Backend V2 regression passed after Client Portal V1 app-shell changes.
+- related fix/finding IDs: AUD-CLIENT-PORTAL-005
+
+- command: `npm run test:admin-backend`
+- result: pass
+- relevant output summary: Admin Backend V1 regression passed after Client Portal V1 app-shell changes.
+- related fix/finding IDs: AUD-CLIENT-PORTAL-005
+
+- command: in-app browser smoke at `http://127.0.0.1:5187/`
+- result: pass
+- relevant output summary: Browser opened the new customer portal and verified the hero heading `Turn AI-built sites into editable WordPress.` was visible. Screenshot showed Theme Convert navigation, customer-first hero, and project workspace above the fold.
+- related fix/finding IDs: AUD-CLIENT-PORTAL-005
+
+- command: `npm run test:gutenberg-parity`
+- result: pass
+- relevant output summary: Gutenberg parity regression passed after Client Portal V1 app-shell changes.
+- related fix/finding IDs: AUD-CLIENT-PORTAL-005
+
+- command: `npm run test:elementor-export`
+- result: pass
+- relevant output summary: Elementor export regression passed after Client Portal V1 app-shell changes.
+- related fix/finding IDs: AUD-CLIENT-PORTAL-005
+
+- command: `npm run test:elementor-output-doctor`
+- result: pass
+- relevant output summary: Elementor output doctor regression passed after Client Portal V1 app-shell changes.
+- related fix/finding IDs: AUD-CLIENT-PORTAL-005
