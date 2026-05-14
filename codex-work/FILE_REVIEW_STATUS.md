@@ -361,3 +361,89 @@ Status values: `reviewed`, `partially reviewed`, `needs second pass`, `fixed`, `
 - review status: fixed
 - notes: Replaced in-component sample completion with the reusable local pipeline runner and added multi-file upload intake flow.
 - related tests: local Playwright upload smoke; `npm run build`.
+
+## Admin Backend V1 - 2026-05-14
+
+- path: server/admin-backend/types.ts
+- category: source
+- lane/scope: SaaS / admin backend / contracts
+- review status: fixed
+- notes: Added local admin database, create-project input, and admin stats contracts.
+- related tests: `npm run test:admin-backend`.
+
+- path: server/admin-backend/jsonDatabase.ts
+- category: source
+- lane/scope: SaaS / admin backend / persistence
+- review status: fixed
+- notes: Added JSON-backed project/job persistence with directory creation and snapshot loading.
+- related tests: `npm run test:admin-backend`.
+
+- path: server/admin-backend/filesystemArtifactStore.ts
+- category: source
+- lane/scope: SaaS / admin backend / artifact storage
+- review status: fixed
+- notes: Added filesystem-backed artifact storage for local job artifacts and manifests.
+- related tests: `npm run test:admin-backend`.
+
+- path: server/admin-backend/adminService.ts
+- category: source
+- lane/scope: SaaS / admin backend / orchestration
+- review status: fixed
+- notes: Added backend service methods for creating projects from files, running local conversion jobs, listing records, and computing stats.
+- related tests: `npm run test:admin-backend`.
+
+- path: server/admin-backend/httpServer.ts
+- category: source
+- lane/scope: SaaS / admin backend / HTTP API
+- review status: fixed
+- notes: Added dependency-light local JSON API for health, stats, projects, jobs, project creation, and job execution.
+- related tests: `npm run test:admin-backend`; backend health smoke.
+
+- path: scripts/start-admin-backend.mjs
+- category: script
+- lane/scope: SaaS / admin backend / tooling
+- review status: fixed
+- notes: Added startup wrapper that compiles backend TypeScript modules into `.tools/admin-backend-runtime` and starts the local API.
+- related tests: backend health smoke.
+
+- path: scripts/admin-backend-regression.mjs
+- category: test
+- lane/scope: SaaS / admin backend / regression
+- review status: fixed
+- notes: Added regression coverage for JSON persistence, filesystem artifacts, service job execution, stats, and HTTP endpoints.
+- related tests: `npm run test:admin-backend`.
+
+- path: components/AdminBackendPanel.tsx
+- category: source
+- lane/scope: SaaS / dashboard / admin backend
+- review status: fixed
+- notes: Added dashboard panel for checking local backend health and displaying operator stats.
+- related tests: local Playwright smoke; `npm run build`.
+
+- path: App.tsx
+- category: source
+- lane/scope: dashboard
+- review status: fixed
+- notes: Mounted `AdminBackendPanel` above the SaaS Core panel while preserving the existing converter surface.
+- related tests: local Playwright smoke; `npm run build`.
+
+- path: package.json
+- category: config
+- lane/scope: tooling
+- review status: fixed
+- notes: Added `test:admin-backend` and `admin:backend` scripts.
+- related tests: `npm run test:admin-backend`; backend health smoke.
+
+- path: utils/saas-core/types.ts
+- category: source
+- lane/scope: SaaS / shared contracts
+- review status: fixed
+- notes: Exported `SaasSiteFileInput` so browser intake and backend intake share the same file-input contract.
+- related tests: `npm run test:saas-core`; `npm run test:admin-backend`.
+
+- path: utils/saas-core/intake.ts
+- category: source
+- lane/scope: SaaS / intake normalization
+- review status: fixed
+- notes: Reused the shared `SaasSiteFileInput` contract without changing intake behavior.
+- related tests: `npm run test:saas-core`; `npm run test:admin-backend`.

@@ -36,6 +36,8 @@
     "test:static-interactions": "node scripts/static-interactions-runtime.mjs",
     "test:static-smoke": "node scripts/static-output-smoke.mjs",
     "test:saas-core": "node scripts/saas-core-regression.mjs",
+    "test:admin-backend": "node scripts/admin-backend-regression.mjs",
+    "admin:backend": "node scripts/start-admin-backend.mjs",
     "test:static-dashboard-smoke": "node scripts/static-dashboard-smoke.mjs"
   },
   "dependencies": {

@@ -39,8 +39,9 @@ SaaS Core V1 adds a local-first product foundation around the converter:
 - Browser-storage-compatible project persistence.
 - Dashboard panel mounted above the existing converter.
 - V2 local pipeline slice for uploaded/static site files, artifact storage, and reusable local job execution.
+- Admin Backend V1 for local API operations, JSON database persistence, filesystem artifact storage, admin stats, and dashboard backend status checks.
 
-This is not full hosted SaaS yet. It intentionally excludes auth, billing, remote queues, object storage, and hosted WordPress sandbox provisioning.
+This is not full hosted SaaS yet. It intentionally excludes auth, billing, remote queues, cloud object storage, and hosted WordPress sandbox provisioning.
 
 ## Latest Elementor Evidence
 

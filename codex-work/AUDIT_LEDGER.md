@@ -501,3 +501,17 @@
 - status: fixed
 - related tests: `npm run test:saas-core`; local Playwright upload smoke; `npm run test:gutenberg-parity`; `npm run test:elementor-export`; `npm run test:elementor-output-doctor`; `npm run build`.
 - fix evidence: SaaS regression now covers uploaded-file intake, artifact storage, local job runner completion, four generated artifacts, and artifact report checks. Browser smoke verified both sample and uploaded-file flows.
+
+## Admin Backend V1 - 2026-05-14
+
+- ID: AUD-ADMIN-BACKEND-001
+- severity: high
+- lane/scope: SaaS / admin backend / persistence / artifacts
+- file: `server/admin-backend/*`; `scripts/admin-backend-regression.mjs`; `components/AdminBackendPanel.tsx`
+- line/range if available: n/a
+- finding: The SaaS pipeline had browser/local orchestration but no admin backend API, durable server-side project/job persistence, filesystem artifact storage, or operator stats endpoint.
+- why it matters: A SaaS cannot rely only on browser localStorage. Admin operators need a backend surface for projects, jobs, reports, artifacts, and failure visibility before auth/billing/cloud worker work can be meaningful.
+- recommended fix: Add Admin Backend V1 with local JSON database persistence, filesystem artifacts, backend service orchestration, HTTP API endpoints, startup script, regression coverage, and a dashboard backend status panel.
+- status: fixed
+- related tests: `npm run test:admin-backend`; `npm run test:saas-core`; `npm run test:gutenberg-parity`; `npm run test:elementor-export`; `npm run test:elementor-output-doctor`; `npm run build`; local backend/frontend Playwright smoke.
+- fix evidence: Backend regression creates projects from files, runs jobs, persists JSON database records, stores artifacts, verifies health/projects/jobs/stats API endpoints, creates a project/job over HTTP, and confirms generated artifacts. Browser smoke verified the dashboard admin panel connects to `127.0.0.1:8787`.

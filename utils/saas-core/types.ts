@@ -29,6 +29,12 @@ export interface SaasIntakeSource {
   assets: SaasAssetInput[];
 }
 
+export interface SaasSiteFileInput {
+  path: string;
+  content?: string;
+  bytes?: Uint8Array;
+}
+
 export interface SaasLaneSuitability {
   status: SaasReadinessStatus;
   reasons: string[];

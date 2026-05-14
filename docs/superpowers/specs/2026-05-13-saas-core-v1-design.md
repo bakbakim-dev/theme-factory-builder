@@ -77,3 +77,16 @@ The first V2 slice connects the SaaS model to an executable local pipeline:
 - The dashboard can run both the sample pipeline and uploaded-file pipeline.
 
 This still does not provision hosted WordPress sandboxes or call cloud workers. It creates the local seam those systems can plug into.
+
+## Admin Backend V1 Extension
+
+The first backend slice moves the SaaS workflow beyond browser-only state:
+
+- `server/admin-backend/jsonDatabase.ts` persists projects and jobs to local JSON files.
+- `server/admin-backend/filesystemArtifactStore.ts` persists job artifacts and artifact manifests to the filesystem.
+- `server/admin-backend/adminService.ts` creates projects from uploaded/static files, runs the local SaaS conversion job, and exposes admin stats.
+- `server/admin-backend/httpServer.ts` exposes a local JSON API for health, stats, projects, jobs, project creation, and job execution.
+- `scripts/start-admin-backend.mjs` compiles the TypeScript backend modules and starts the local API.
+- `components/AdminBackendPanel.tsx` lets the dashboard check backend health and see operator stats.
+
+This is intentionally local/dev-only. It has no production authentication, authorization, rate limiting, tenant isolation, billing, cloud object storage, or remote worker queue yet, so it must not be exposed publicly as a hosted SaaS backend.

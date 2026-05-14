@@ -1266,3 +1266,45 @@
 - result: pass
 - relevant output summary: Vite production build passed. Existing warnings remain for missing `/index.css` at build time and large bundle size.
 - related fix/finding IDs: AUD-SAAS-CORE-003
+
+## Admin Backend V1 - 2026-05-14
+
+- command: `npm run test:admin-backend`
+- result: pass
+- relevant output summary: Regression verifies JSON database persistence, filesystem artifact storage, admin service project creation, local job execution, stats generation, HTTP health/projects/jobs/stats endpoints, HTTP project creation, and HTTP job creation.
+- related fix/finding IDs: AUD-ADMIN-BACKEND-001
+
+- command: `npm run admin:backend` followed by `GET http://127.0.0.1:8787/api/admin/health`
+- result: pass
+- relevant output summary: Startup wrapper compiled backend TypeScript and health endpoint returned `{"ok":true,"service":"whipify-admin-backend"}`.
+- related fix/finding IDs: AUD-ADMIN-BACKEND-001
+
+- command: local Playwright smoke against Vite app plus local admin backend
+- result: pass
+- relevant output summary: Dashboard rendered `Admin Backend V1`, clicked `Check Backend`, and displayed connected backend status with Projects, Jobs, and Artifacts stat cards.
+- related fix/finding IDs: AUD-ADMIN-BACKEND-001
+
+- command: `npm run test:saas-core`
+- result: pass
+- relevant output summary: SaaS core regression passed after adding Admin Backend V1.
+- related fix/finding IDs: AUD-ADMIN-BACKEND-001
+
+- command: `npm run test:gutenberg-parity`
+- result: pass
+- relevant output summary: Gutenberg parity regression passed after adding Admin Backend V1.
+- related fix/finding IDs: AUD-ADMIN-BACKEND-001
+
+- command: `npm run test:elementor-export`
+- result: pass
+- relevant output summary: Elementor export regression passed after adding Admin Backend V1.
+- related fix/finding IDs: AUD-ADMIN-BACKEND-001
+
+- command: `npm run test:elementor-output-doctor`
+- result: pass
+- relevant output summary: Elementor output doctor regression passed after adding Admin Backend V1.
+- related fix/finding IDs: AUD-ADMIN-BACKEND-001
+
+- command: `npm run build`
+- result: pass
+- relevant output summary: Vite production build passed. Existing warnings remain for missing `/index.css` at build time and large bundle size.
+- related fix/finding IDs: AUD-ADMIN-BACKEND-001

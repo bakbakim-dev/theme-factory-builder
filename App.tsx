@@ -1,4 +1,5 @@
 import React from 'react';
+import AdminBackendPanel from './components/AdminBackendPanel';
 import Dashboard from './components/Dashboard';
 import SaasCorePanel from './components/SaasCorePanel';
 import { ConversionRecord } from './types';
@@ -27,6 +28,7 @@ export default function App() {
         </nav>
         
         <main className="w-full">
+          <AdminBackendPanel />
           <SaasCorePanel />
           <div className="flex justify-center w-full">
             <Dashboard onConversionComplete={handleConversionComplete} />

@@ -1,10 +1,4 @@
-import type { SaasAssetInput, SaasIntakeKind, SaasIntakeSource, SaasRouteInput } from './types.js';
-
-export interface SaasSiteFileInput {
-  path: string;
-  content?: string;
-  bytes?: Uint8Array;
-}
+import type { SaasAssetInput, SaasIntakeKind, SaasIntakeSource, SaasRouteInput, SaasSiteFileInput } from './types.js';
 
 export interface CreateSaasIntakeFromSiteFilesInput {
   id: string;

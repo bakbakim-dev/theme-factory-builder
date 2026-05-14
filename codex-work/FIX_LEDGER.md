@@ -318,3 +318,18 @@
   - Extended `completeConversionJob` to accept multiple artifacts while preserving the existing single-artifact call shape.
   - Updated the SaaS dashboard panel to run the real local pipeline for both sample and uploaded-file intakes.
 - Risk: The generated lane artifacts are local pipeline artifacts/manifests, not hosted WordPress sandbox installs. Real converter lane execution and sandbox preview remain the next larger track.
+
+## Admin Backend V1 - 2026-05-14
+
+- Changed files: `server/admin-backend/types.ts`, `server/admin-backend/jsonDatabase.ts`, `server/admin-backend/filesystemArtifactStore.ts`, `server/admin-backend/adminService.ts`, `server/admin-backend/httpServer.ts`, `scripts/start-admin-backend.mjs`, `scripts/admin-backend-regression.mjs`, `components/AdminBackendPanel.tsx`, `App.tsx`, `package.json`, `utils/saas-core/types.ts`, `utils/saas-core/intake.ts`, `codex-work/*`
+- Reason: Add an admin/backend layer so SaaS projects, jobs, reports, and artifacts are not only browser-local.
+- Issue IDs fixed: AUD-ADMIN-BACKEND-001
+- Changes:
+  - Added JSON-backed admin database for projects and jobs.
+  - Added filesystem-backed artifact storage.
+  - Added backend service methods for project creation, job execution, project/job listing, and admin stats.
+  - Added dependency-light Node HTTP API with health, stats, projects, jobs, create project, and run job endpoints.
+  - Added `npm run admin:backend` startup wrapper that compiles the backend TypeScript and starts the API.
+  - Added `npm run test:admin-backend`.
+  - Added dashboard `AdminBackendPanel` that checks the local backend and displays operator stats.
+- Risk: Admin Backend V1 is local/dev-only and has no auth. It should not be exposed publicly until authentication, authorization, rate limits, and tenant isolation are implemented.
