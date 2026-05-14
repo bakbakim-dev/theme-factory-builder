@@ -658,3 +658,33 @@ Status values: `reviewed`, `partially reviewed`, `needs second pass`, `fixed`, `
 - review status: fixed
 - notes: Tracks Client Portal V1 implementation steps and verification commands.
 - related tests: documentation review.
+
+## Production Backend Blueprint - 2026-05-14
+
+- path: utils/backendBlueprint.ts
+- category: source
+- lane/scope: SaaS / shared backend architecture
+- review status: fixed
+- notes: Shared recommended stack, SQL schema contract, and readiness evaluator for the hybrid backend recommendation.
+- related tests: `npm run test:production-backend-blueprint`; `npm run build`.
+
+- path: server/admin-backend/providerBlueprint.ts
+- category: source
+- lane/scope: SaaS / backend architecture
+- review status: fixed
+- notes: Re-exports the backend blueprint for server-side consumers and future backend wiring.
+- related tests: `npm run test:production-backend-blueprint`.
+
+- path: components/AdminBackendPanel.tsx
+- category: source
+- lane/scope: SaaS / admin UI
+- review status: fixed
+- notes: Added a `Backend Blueprint` operator page showing the recommended hybrid backend, provider readiness, schema contract, and UI inspiration cues.
+- related tests: `npm run test:production-backend-blueprint`; `npm run test:admin-console-v1`; `npm run build`.
+
+- path: scripts/production-backend-blueprint-regression.mjs
+- category: test
+- lane/scope: SaaS / backend architecture / regression
+- review status: fixed
+- notes: Verifies the recommended backend stack, SQL contract, readiness counts, and the new admin-console blueprint page.
+- related tests: `npm run test:production-backend-blueprint`.

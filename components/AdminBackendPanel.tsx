@@ -19,6 +19,11 @@ import {
   ShieldAlert,
   Users,
 } from 'lucide-react';
+import {
+  WHIPIFY_PRODUCTION_BACKEND_SQL,
+  WHIPIFY_RECOMMENDED_BACKEND_STACK,
+  createBackendProviderReadiness,
+} from '../utils/backendBlueprint';
 
 interface AdminStats {
   projectCount: number;
@@ -52,6 +57,7 @@ type AdminConsolePage =
   | 'Sandboxes'
   | 'Billing'
   | 'Audit Logs'
+  | 'Backend Blueprint'
   | 'Settings'
   | 'Team'
   | 'Support'
@@ -77,6 +83,7 @@ const pages: AdminConsolePage[] = [
   'Sandboxes',
   'Billing',
   'Audit Logs',
+  'Backend Blueprint',
   'Settings',
   'Team',
   'Support',
@@ -109,6 +116,7 @@ const uniqueArtifactsFromJobs = (jobs: any[]): any[] => {
 };
 
 const AdminBackendPanel: React.FC = () => {
+  const env = (import.meta as any).env || {};
   const [state, setState] = useState<AdminBackendState>({
     connected: false,
     message: 'Backend not checked yet.',
@@ -577,6 +585,76 @@ const AdminBackendPanel: React.FC = () => {
                 </div>
               ))}
               {state.auditEvents.length === 0 && <EmptyState label="No audit events yet." />}
+            </div>
+          </div>
+        );
+
+      case 'Backend Blueprint':
+        return (
+          <div data-testid={pageId(activePage)} className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
+            <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-2xl font-black text-white">Perfect backend blueprint</h3>
+                  <p className="mt-2 text-sm text-slate-400">The recommended hybrid stack for Whipify: Postgres source of truth, durable jobs, object storage, billing, auth, and sandbox previews.</p>
+                </div>
+                <ExternalLink className="h-5 w-5 text-cyan-300" />
+              </div>
+              <div className="mt-5 grid gap-3 md:grid-cols-2">
+                {Object.entries(WHIPIFY_RECOMMENDED_BACKEND_STACK).map(([key, entry]) => (
+                  <div key={key} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                    <div className="text-xs uppercase tracking-[0.18em] text-cyan-200 font-black">{key.replace(/([A-Z])/g, ' $1').trim()}</div>
+                    <h4 className="mt-2 text-lg font-black text-white">{entry.provider}</h4>
+                    <p className="mt-2 text-sm text-slate-400">{entry.role}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-5 rounded-2xl border border-emerald-400/20 bg-emerald-400/10 p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-emerald-200 font-black">Recommended build shape</div>
+                <p className="mt-2 text-sm text-emerald-100">Client portal on top, admin console behind operator tools, API server in the middle, Postgres as the source of truth, R2 for artifacts, Trigger.dev for jobs, Stripe for billing, and Temporal as the future upgrade for durable multi-step workflows.</p>
+              </div>
+              <div className="mt-5 grid gap-3 md:grid-cols-2">
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                  <div className="text-xs uppercase tracking-[0.18em] text-cyan-200 font-black">UI inspiration</div>
+                  <p className="mt-2 text-sm text-slate-300">Vercel-style project pages with deployments, logs, domains, and settings.</p>
+                </div>
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                  <div className="text-xs uppercase tracking-[0.18em] text-cyan-200 font-black">UI inspiration</div>
+                  <p className="mt-2 text-sm text-slate-300">Trigger.dev-style run logs with retries, status, and durable worker progress.</p>
+                </div>
+              </div>
+            </div>
+            <div className="space-y-5">
+              <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-5">
+                <h3 className="text-2xl font-black text-white">Provider readiness</h3>
+                <div className="mt-4 grid gap-3">
+                  {createBackendProviderReadiness({
+                    WHIPIFY_DATABASE_URL: env.WHIPIFY_DATABASE_URL,
+                    WHIPIFY_AUTH_SECRET: env.WHIPIFY_AUTH_SECRET,
+                    WHIPIFY_R2_BUCKET: env.WHIPIFY_R2_BUCKET,
+                    WHIPIFY_TRIGGER_PROJECT_ID: env.WHIPIFY_TRIGGER_PROJECT_ID,
+                    WHIPIFY_STRIPE_SECRET_KEY: env.WHIPIFY_STRIPE_SECRET_KEY,
+                    WHIPIFY_TEMPORAL_NAMESPACE: env.WHIPIFY_TEMPORAL_NAMESPACE,
+                    WHIPIFY_SANDBOX_PROVIDER: env.WHIPIFY_SANDBOX_PROVIDER,
+                  }).providers.map((provider) => (
+                    <div key={provider.id} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-black text-white">{provider.provider}</p>
+                          <p className="mt-1 text-xs text-slate-400">{provider.role}</p>
+                        </div>
+                        <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${statusTone(provider.status)}`}>{provider.status}</span>
+                      </div>
+                      <p className="mt-3 text-sm text-slate-300">{provider.notes}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-5">
+                <h3 className="text-2xl font-black text-white">SQL schema contract</h3>
+                <p className="mt-2 text-sm text-slate-400">This is the shape the production backend should converge on once managed Postgres is wired in.</p>
+                <pre className="mt-4 max-h-[26rem] overflow-auto rounded-2xl border border-slate-800 bg-slate-950 p-4 text-[11px] leading-5 text-slate-300">{WHIPIFY_PRODUCTION_BACKEND_SQL}</pre>
+              </div>
             </div>
           </div>
         );

@@ -401,3 +401,16 @@
   - Added `npm run test:client-portal-v1`.
   - Updated Admin Console V1 regression to open operator tools before checking the admin console.
 - Risk: Client Portal V1 is a frontend shell over local/test provider seams. Real customer account flows, hosted previews, billing checkout, uploads, and production provider integrations still need to be connected.
+
+## Production Backend Blueprint - 2026-05-14
+
+- Changed files: `utils/backendBlueprint.ts`, `server/admin-backend/providerBlueprint.ts`, `components/AdminBackendPanel.tsx`, `scripts/production-backend-blueprint-regression.mjs`, `package.json`, `codex-work/*`
+- Reason: Make the recommended hybrid backend explicit in code and in the operator UI instead of only in discussion.
+- Issue IDs fixed: AUD-PROD-BACKEND-BLUEPRINT-006
+- Changes:
+  - Added a shared backend blueprint module with the recommended provider stack.
+  - Added a production backend SQL schema contract for tenants, users, projects, jobs, artifacts, audit events, subscriptions, queue items, and sandbox previews.
+  - Added provider readiness evaluation that distinguishes ready, missing, and pending integrations.
+  - Added a dedicated Admin Console `Backend Blueprint` page showing the recommended stack, provider readiness, schema contract, and UI inspiration cues.
+  - Added `npm run test:production-backend-blueprint`.
+- Risk: This is still a provider blueprint, not a live integration. Real Neon, Better Auth, R2, Trigger.dev, Stripe, and sandbox wiring still need actual credentials and deployment adapters.

@@ -571,3 +571,17 @@
 - status: fixed
 - related tests: `npm run test:client-portal-v1`; `npm run test:admin-console-v1`; `npm run build`; backend/SaaS regressions.
 - fix evidence: Client Portal V1 regression verifies customer-facing portal copy, intake options, output modes, workflow steps, project workspace, QA signals, and opening Admin Console V1 through operator tools.
+
+## Production Backend Blueprint - 2026-05-14
+
+- ID: AUD-PROD-BACKEND-BLUEPRINT-006
+- severity: medium
+- lane/scope: SaaS / backend architecture / operator UI
+- file: `utils/backendBlueprint.ts`; `server/admin-backend/providerBlueprint.ts`; `components/AdminBackendPanel.tsx`; `scripts/production-backend-blueprint-regression.mjs`
+- line/range if available: n/a
+- finding: The project already had provider seams in code, but the recommended hybrid backend stack, schema contract, and provider readiness state were not surfaced as a coherent operator-facing blueprint. That left the “best backend” decision implicit instead of visible and testable.
+- why it matters: A SaaS backend needs a clear architecture contract so future vendor integrations, migrations, and operator decisions remain aligned with the product model rather than drifting into one-off implementations.
+- recommended fix: Add a shared backend blueprint module, expose the recommended stack and schema contract in the admin console, and add regression coverage that verifies the stack and UI wording.
+- status: fixed
+- related tests: `npm run test:production-backend-blueprint`; `npm run test:admin-console-v1`; `npm run build`; SaaS/backend regressions.
+- fix evidence: The blueprint regression now verifies Neon Postgres, Better Auth, Cloudflare R2, Trigger.dev, Stripe Billing, Temporal Cloud, SQL schema contract strings, provider readiness counts, and the operator UI page with Vercel-style and Trigger.dev-style product cues.
