@@ -1355,3 +1355,55 @@
 - result: pass
 - relevant output summary: Dashboard detected auth-required backend, displayed login fields, accepted configured admin credentials, stored a bearer token, and displayed authenticated backend stats. A first smoke exposed CORS preflight rejection for the `authorization` header; `scripts/production-backend-v2-regression.mjs` now covers that and the fixed smoke passed.
 - related fix/finding IDs: AUD-PROD-BACKEND-002
+
+## Production Infrastructure V3 - 2026-05-14
+
+- command: `npm run test:production-infrastructure-v3`
+- result: pass
+- relevant output summary: Regression verifies idempotent migrations, subscription state, active subscription requirement, rate limit denial, queue enqueue/run-next completion, signed artifact URL authorization, sandbox preview records, audit events, readiness reporting, protected readiness/billing/audit/sandbox/signed URL HTTP endpoints, and HTTP `429` rate limiting.
+- related fix/finding IDs: AUD-PROD-INFRA-003
+
+- command: `npm run test:production-backend-v2`
+- result: pass
+- relevant output summary: Production Backend V2 auth/tenant regression still passes after adding V3 infrastructure.
+- related fix/finding IDs: AUD-PROD-INFRA-003
+
+- command: `npm run test:admin-backend`
+- result: pass
+- relevant output summary: Admin Backend V1 open local mode still passes after adding V3 infrastructure.
+- related fix/finding IDs: AUD-PROD-INFRA-003
+
+- command: `npm run test:saas-core`
+- result: pass
+- relevant output summary: SaaS core regression passed after V3 infrastructure changes.
+- related fix/finding IDs: AUD-PROD-INFRA-003
+
+- command: `npm run test:gutenberg-parity`
+- result: pass
+- relevant output summary: Gutenberg parity regression passed after V3 infrastructure changes.
+- related fix/finding IDs: AUD-PROD-INFRA-003
+
+- command: `npm run test:elementor-export`
+- result: pass
+- relevant output summary: Elementor export regression passed after V3 infrastructure changes.
+- related fix/finding IDs: AUD-PROD-INFRA-003
+
+- command: `npm run test:elementor-output-doctor`
+- result: pass
+- relevant output summary: Elementor output doctor regression passed after V3 infrastructure changes.
+- related fix/finding IDs: AUD-PROD-INFRA-003
+
+- command: `npm run build`
+- result: pass
+- relevant output summary: Vite production build passed. Existing warnings remain for missing `/index.css` at build time and large bundle size.
+- related fix/finding IDs: AUD-PROD-INFRA-003
+
+- command: V3 startup smoke with `WHIPIFY_ADMIN_ENABLE_PRODUCTION_INFRA=1`
+- result: pass
+- relevant output summary: Authenticated backend booted with production infrastructure enabled, login succeeded for tenant `infra-smoke-tenant`, and readiness reported `migrations=3/3` with billing status `missing`.
+- related fix/finding IDs: AUD-PROD-INFRA-003
+
+- command: dashboard production-readiness Playwright smoke
+- result: pass
+- relevant output summary: Dashboard logged into an auth-required V3 backend and displayed the `Production Infrastructure` readiness strip with migration and billing fields.
+- related fix/finding IDs: AUD-PROD-INFRA-003

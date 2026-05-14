@@ -519,3 +519,68 @@ Status values: `reviewed`, `partially reviewed`, `needs second pass`, `fixed`, `
 - review status: fixed
 - notes: Tracks the V2 implementation checklist and verification steps.
 - related tests: documentation review.
+
+## Production Infrastructure V3 - 2026-05-14
+
+- path: server/admin-backend/productionInfra.ts
+- category: source
+- lane/scope: SaaS / production infrastructure
+- review status: fixed
+- notes: Added migrations, audit, billing, rate limiting, queue, signed artifact URLs, sandbox previews, and readiness services.
+- related tests: `npm run test:production-infrastructure-v3`.
+
+- path: server/admin-backend/types.ts
+- category: source
+- lane/scope: SaaS / production infrastructure / contracts
+- review status: fixed
+- notes: Added migration, audit, subscription, queue, and sandbox preview records.
+- related tests: `npm run test:production-infrastructure-v3`.
+
+- path: server/admin-backend/jsonDatabase.ts
+- category: source
+- lane/scope: SaaS / production infrastructure / persistence
+- review status: fixed
+- notes: Added snapshot version 3 and persistence methods for V3 records.
+- related tests: `npm run test:production-infrastructure-v3`.
+
+- path: server/admin-backend/httpServer.ts
+- category: source
+- lane/scope: SaaS / production infrastructure / protected API
+- review status: fixed
+- notes: Added readiness, audit, billing, queue, worker run-next, signed artifact URL, and sandbox preview endpoints plus rate limiting.
+- related tests: `npm run test:production-infrastructure-v3`.
+
+- path: scripts/start-admin-backend.mjs
+- category: script
+- lane/scope: SaaS / production infrastructure / startup
+- review status: fixed
+- notes: Wires V3 services and applies migrations when auth/production infrastructure is enabled.
+- related tests: V3 startup smoke.
+
+- path: components/AdminBackendPanel.tsx
+- category: source
+- lane/scope: SaaS / dashboard / production readiness
+- review status: fixed
+- notes: Displays migration, billing, queue, preview, and audit readiness when exposed by the backend.
+- related tests: dashboard production-readiness smoke; `npm run build`.
+
+- path: .env.production.example
+- category: config
+- lane/scope: SaaS / deployment
+- review status: fixed
+- notes: Documents required auth and V3 production infrastructure environment variables.
+- related tests: documentation review.
+
+- path: Dockerfile.admin-backend
+- category: config
+- lane/scope: SaaS / deployment
+- review status: fixed
+- notes: Adds Docker build/run entrypoint for the admin backend.
+- related tests: documentation review; startup smoke covers runtime command.
+
+- path: docs/deployment/production-backend-v3.md
+- category: doc
+- lane/scope: SaaS / deployment
+- review status: fixed
+- notes: Documents local auth-enabled run, Docker run, and provider boundaries.
+- related tests: documentation review.

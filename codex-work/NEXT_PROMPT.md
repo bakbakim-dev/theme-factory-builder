@@ -1,15 +1,15 @@
 DONE
 
-Completed Production Backend V2 for the Whipify / Theme Factory AI SaaS productization track.
+Completed Production Infrastructure V3 for the Whipify / Theme Factory AI SaaS productization track.
 
 Current verified state:
-- Admin Backend V1 remains compatible in open local mode.
-- Production Backend V2 adds tenant/workspace records, admin users, PBKDF2-SHA256 password hashing, signed bearer tokens, protected HTTP mode, tenant-scoped project/job APIs, and tenant-scoped artifact reads.
-- `scripts/start-admin-backend.mjs` can bootstrap an auth-enabled local backend from environment variables.
-- `components/AdminBackendPanel.tsx` can detect auth-required mode, login, store a bearer token locally, and fetch authorized stats.
-- Runtime `storage/` is ignored.
+- Production Backend V2 auth and tenant isolation remain intact.
+- Production Infrastructure V3 adds idempotent migration records, tenant audit logs, subscription state, rate limiting, queue records, local worker run-next path, signed artifact URL contracts, sandbox preview records, readiness reporting, deployment env example, Dockerfile, and deployment notes.
+- `scripts/start-admin-backend.mjs` enables V3 services and applies migrations when auth or `WHIPIFY_ADMIN_ENABLE_PRODUCTION_INFRA=1` is present.
+- `components/AdminBackendPanel.tsx` displays production readiness when exposed by the backend.
 
 Verification evidence:
+- `npm run test:production-infrastructure-v3`: pass.
 - `npm run test:production-backend-v2`: pass.
 - `npm run test:admin-backend`: pass.
 - `npm run test:saas-core`: pass.
@@ -17,12 +17,12 @@ Verification evidence:
 - `npm run test:elementor-export`: pass.
 - `npm run test:elementor-output-doctor`: pass.
 - `npm run build`: pass, with existing warnings for missing `/index.css` and large bundle size.
-- Auth-enabled backend smoke: pass.
-- Dashboard auth Playwright smoke: pass.
+- V3 startup smoke: pass.
+- Dashboard production-readiness Playwright smoke: pass.
 
 Important scope note:
-- Production Backend V2 is the auth/tenant boundary, not the full commercial SaaS platform.
-- Remaining production tracks: managed database adapter and migrations, tenant-aware cloud object storage, background worker queue, hosted WordPress sandbox previews, billing/subscriptions, rate limiting, audit logs, deployment secrets, and production infrastructure.
+- V3 provides provider-ready local/test adapters, not real external vendor integrations.
+- Remaining tracks for public SaaS launch: managed database adapter and migrations, Stripe provider, S3/R2/GCS artifact backend, remote worker queue, hosted WordPress provisioning provider, deployment secrets/CI/CD, observability, and public app hardening.
 
 If continuing later, use:
 "Continue the deep Whipify project audit from `codex-work/NEXT_PROMPT.md`. Read `codex-work/PROJECT_MAP.md`, `FILE_REVIEW_STATUS.md`, `AUDIT_LEDGER.md`, `FIX_LEDGER.md`, and `TEST_LEDGER.md` first. Resume at the next unchecked file or unresolved issue. Do not restart from scratch."

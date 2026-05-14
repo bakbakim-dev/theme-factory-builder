@@ -44,14 +44,78 @@ export interface AdminAuthContext {
   role: AdminUserRole;
 }
 
+export interface AdminMigrationRecord {
+  id: string;
+  name: string;
+  appliedAt: string;
+}
+
+export interface AdminAuditEvent {
+  id: string;
+  tenantId: string;
+  userId?: string;
+  action: string;
+  scope: string;
+  targetId?: string;
+  message: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export type AdminSubscriptionStatus = 'trialing' | 'active' | 'past_due' | 'canceled';
+
+export interface AdminSubscription {
+  id: string;
+  tenantId: string;
+  plan: 'trial' | 'starter' | 'growth' | 'scale';
+  status: AdminSubscriptionStatus;
+  currentPeriodEnd: string;
+  provider: 'local' | 'stripe';
+  providerSubscriptionId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AdminQueueStatus = 'queued' | 'running' | 'completed' | 'failed';
+
+export interface AdminQueueItem {
+  id: string;
+  tenantId: string;
+  projectId: string;
+  selectedLanes: SaasOutputLane[];
+  status: AdminQueueStatus;
+  attempts: number;
+  createdAt: string;
+  updatedAt: string;
+  resultJobId?: string;
+  error?: string;
+}
+
+export interface AdminSandboxPreview {
+  id: string;
+  tenantId: string;
+  projectId: string;
+  jobId?: string;
+  status: 'provisioned' | 'failed';
+  previewUrl: string;
+  provider: 'local' | 'wordpress-host';
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AdminDatabaseSnapshot {
-  version: 2;
+  version: 3;
   projects: SaasProject[];
   jobs: SaasConversionJob[];
   tenants: AdminTenant[];
   users: AdminUser[];
   projectTenants: AdminRecordTenantLink[];
   jobTenants: AdminRecordTenantLink[];
+  migrations: AdminMigrationRecord[];
+  auditEvents: AdminAuditEvent[];
+  subscriptions: AdminSubscription[];
+  queueItems: AdminQueueItem[];
+  sandboxPreviews: AdminSandboxPreview[];
 }
 
 export interface AdminDatabase {
@@ -75,6 +139,17 @@ export interface AdminDatabase {
   getUser(id: string): Promise<AdminUser | undefined>;
   getUserByEmail(email: string): Promise<AdminUser | undefined>;
   saveUser(user: AdminUser): Promise<void>;
+  listMigrations(): Promise<AdminMigrationRecord[]>;
+  saveMigration(record: AdminMigrationRecord): Promise<void>;
+  listAuditEventsForTenant(tenantId: string): Promise<AdminAuditEvent[]>;
+  saveAuditEvent(event: AdminAuditEvent): Promise<void>;
+  getSubscriptionForTenant(tenantId: string): Promise<AdminSubscription | undefined>;
+  saveSubscription(subscription: AdminSubscription): Promise<void>;
+  listQueueItemsForTenant(tenantId: string): Promise<AdminQueueItem[]>;
+  listQueuedItems(): Promise<AdminQueueItem[]>;
+  saveQueueItem(item: AdminQueueItem): Promise<void>;
+  listSandboxPreviewsForTenant(tenantId: string): Promise<AdminSandboxPreview[]>;
+  saveSandboxPreview(preview: AdminSandboxPreview): Promise<void>;
 }
 
 export interface CreateAdminProjectFromFilesInput {

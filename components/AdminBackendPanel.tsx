@@ -13,6 +13,7 @@ interface AdminBackendState {
   connected: boolean;
   message: string;
   stats: AdminStats | null;
+  readiness: any | null;
   authRequired: boolean;
   token: string;
 }
@@ -33,6 +34,7 @@ const AdminBackendPanel: React.FC = () => {
     connected: false,
     message: 'Backend not checked yet.',
     stats: null,
+    readiness: null,
     authRequired: false,
     token: typeof window !== 'undefined' ? window.localStorage.getItem(ADMIN_BACKEND_TOKEN_KEY) || '' : '',
   });
@@ -57,6 +59,7 @@ const AdminBackendPanel: React.FC = () => {
           authRequired: true,
           message: 'Admin backend requires login.',
           stats: null,
+          readiness: null,
         }));
         return;
       }
@@ -70,12 +73,21 @@ const AdminBackendPanel: React.FC = () => {
           token: '',
           message: 'Admin backend rejected the saved token. Login again.',
           stats: null,
+          readiness: null,
         }));
         window.localStorage.removeItem(ADMIN_BACKEND_TOKEN_KEY);
         return;
       }
       if (!statsResponse.ok) throw new Error(`Stats request failed with ${statsResponse.status}`);
       const statsJson = await statsResponse.json();
+      let readiness = null;
+      if (healthJson.authRequired) {
+        const readinessResponse = await fetch(`${ADMIN_BACKEND_URL}/api/admin/production/readiness`, { headers: requestHeaders(token) });
+        if (readinessResponse.ok) {
+          const readinessJson = await readinessResponse.json();
+          readiness = readinessJson.readiness || null;
+        }
+      }
       setState({
         connected: true,
         authRequired: Boolean(healthJson.authRequired),
@@ -84,12 +96,14 @@ const AdminBackendPanel: React.FC = () => {
           ? 'Authenticated admin backend connected on 127.0.0.1:8787.'
           : 'Admin backend connected on 127.0.0.1:8787.',
         stats: statsJson.stats || emptyStats,
+        readiness,
       });
     } catch (error) {
       setState({
         connected: false,
         message: error instanceof Error ? error.message : String(error),
         stats: null,
+        readiness: null,
       });
     } finally {
       setIsLoading(false);
@@ -116,6 +130,7 @@ const AdminBackendPanel: React.FC = () => {
         authRequired: true,
         message: error instanceof Error ? error.message : String(error),
         stats: null,
+        readiness: null,
       }));
     } finally {
       setIsLoading(false);
@@ -193,6 +208,34 @@ const AdminBackendPanel: React.FC = () => {
             </div>
           ))}
         </div>
+
+        {state.readiness && (
+          <div className="mt-5 rounded-2xl border border-cyan-400/20 bg-cyan-400/5 p-4">
+            <div className="text-xs uppercase tracking-[0.2em] text-cyan-200 font-black">Production Infrastructure</div>
+            <div className="mt-3 grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+              <div className="rounded-xl bg-slate-950/60 p-3">
+                <p className="text-slate-500 font-bold">Migrations</p>
+                <p className="text-white font-black">{state.readiness.migrations?.appliedCount || 0}/{state.readiness.migrations?.requiredCount || 0}</p>
+              </div>
+              <div className="rounded-xl bg-slate-950/60 p-3">
+                <p className="text-slate-500 font-bold">Billing</p>
+                <p className="text-white font-black">{state.readiness.billing?.status || 'missing'}</p>
+              </div>
+              <div className="rounded-xl bg-slate-950/60 p-3">
+                <p className="text-slate-500 font-bold">Queue Done</p>
+                <p className="text-white font-black">{state.readiness.queue?.completedCount || 0}</p>
+              </div>
+              <div className="rounded-xl bg-slate-950/60 p-3">
+                <p className="text-slate-500 font-bold">Previews</p>
+                <p className="text-white font-black">{state.readiness.sandboxes?.previewCount || 0}</p>
+              </div>
+              <div className="rounded-xl bg-slate-950/60 p-3">
+                <p className="text-slate-500 font-bold">Audit Events</p>
+                <p className="text-white font-black">{state.readiness.audit?.eventCount || 0}</p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );

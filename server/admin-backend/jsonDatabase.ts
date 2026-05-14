@@ -8,13 +8,18 @@ export interface CreateJsonAdminDatabaseInput {
 }
 
 const emptySnapshot = (): AdminDatabaseSnapshot => ({
-  version: 2,
+  version: 3,
   projects: [],
   jobs: [],
   tenants: [],
   users: [],
   projectTenants: [],
   jobTenants: [],
+  migrations: [],
+  auditEvents: [],
+  subscriptions: [],
+  queueItems: [],
+  sandboxPreviews: [],
 });
 
 const normalizeSnapshot = (value: unknown): AdminDatabaseSnapshot => {
@@ -24,13 +29,18 @@ const normalizeSnapshot = (value: unknown): AdminDatabaseSnapshot => {
   }
 
   return {
-    version: 2,
+    version: 3,
     projects: parsed.projects,
     jobs: parsed.jobs,
     tenants: Array.isArray(parsed.tenants) ? parsed.tenants : [],
     users: Array.isArray(parsed.users) ? parsed.users : [],
     projectTenants: Array.isArray(parsed.projectTenants) ? parsed.projectTenants : [],
     jobTenants: Array.isArray(parsed.jobTenants) ? parsed.jobTenants : [],
+    migrations: Array.isArray(parsed.migrations) ? parsed.migrations : [],
+    auditEvents: Array.isArray(parsed.auditEvents) ? parsed.auditEvents : [],
+    subscriptions: Array.isArray(parsed.subscriptions) ? parsed.subscriptions : [],
+    queueItems: Array.isArray(parsed.queueItems) ? parsed.queueItems : [],
+    sandboxPreviews: Array.isArray(parsed.sandboxPreviews) ? parsed.sandboxPreviews : [],
   };
 };
 
@@ -121,6 +131,58 @@ export const createJsonAdminDatabase = async (input: CreateJsonAdminDatabaseInpu
     saveUser: async (user) => {
       const snapshot = await read();
       snapshot.users = [...snapshot.users.filter((item) => item.id !== user.id), user];
+      await write(snapshot);
+    },
+    listMigrations: async () => (await read()).migrations.sort((a, b) => a.appliedAt.localeCompare(b.appliedAt)),
+    saveMigration: async (record) => {
+      const snapshot = await read();
+      snapshot.migrations = [...snapshot.migrations.filter((item) => item.id !== record.id), record];
+      await write(snapshot);
+    },
+    listAuditEventsForTenant: async (tenantId: string) => (
+      (await read()).auditEvents
+        .filter((event) => event.tenantId === tenantId)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    ),
+    saveAuditEvent: async (event) => {
+      const snapshot = await read();
+      snapshot.auditEvents = [...snapshot.auditEvents.filter((item) => item.id !== event.id), event];
+      await write(snapshot);
+    },
+    getSubscriptionForTenant: async (tenantId: string) => (
+      (await read()).subscriptions.find((subscription) => subscription.tenantId === tenantId)
+    ),
+    saveSubscription: async (subscription) => {
+      const snapshot = await read();
+      snapshot.subscriptions = [
+        ...snapshot.subscriptions.filter((item) => item.tenantId !== subscription.tenantId),
+        subscription,
+      ];
+      await write(snapshot);
+    },
+    listQueueItemsForTenant: async (tenantId: string) => (
+      (await read()).queueItems
+        .filter((item) => item.tenantId === tenantId)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    ),
+    listQueuedItems: async () => (
+      (await read()).queueItems
+        .filter((item) => item.status === 'queued')
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+    ),
+    saveQueueItem: async (item) => {
+      const snapshot = await read();
+      snapshot.queueItems = [...snapshot.queueItems.filter((current) => current.id !== item.id), item];
+      await write(snapshot);
+    },
+    listSandboxPreviewsForTenant: async (tenantId: string) => (
+      (await read()).sandboxPreviews
+        .filter((preview) => preview.tenantId === tenantId)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    ),
+    saveSandboxPreview: async (preview) => {
+      const snapshot = await read();
+      snapshot.sandboxPreviews = [...snapshot.sandboxPreviews.filter((current) => current.id !== preview.id), preview];
       await write(snapshot);
     },
   };

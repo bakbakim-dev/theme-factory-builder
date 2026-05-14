@@ -529,3 +529,17 @@
 - status: fixed
 - related tests: `npm run test:production-backend-v2`; `npm run test:admin-backend`; `npm run test:saas-core`; `npm run test:gutenberg-parity`; `npm run test:elementor-export`; `npm run test:elementor-output-doctor`; `npm run build`; auth-enabled backend smoke; dashboard auth smoke.
 - fix evidence: Production Backend V2 regression verifies tenant owner bootstrap, duplicate-email cross-tenant rejection, password hashing, login failure, signed-token verification, protected API `401`, CORS authorization preflight support, tenant-scoped lists, cross-tenant job denial, and tenant-scoped artifact reads.
+
+## Production Infrastructure V3 - 2026-05-14
+
+- ID: AUD-PROD-INFRA-003
+- severity: high
+- lane/scope: SaaS / production infrastructure / provider seams
+- file: `server/admin-backend/productionInfra.ts`; `server/admin-backend/types.ts`; `server/admin-backend/jsonDatabase.ts`; `server/admin-backend/httpServer.ts`; `scripts/start-admin-backend.mjs`; `scripts/production-infrastructure-v3-regression.mjs`; `.env.production.example`; `Dockerfile.admin-backend`; `docs/deployment/production-backend-v3.md`
+- line/range if available: n/a
+- finding: Production Backend V2 had auth and tenant isolation, but still lacked the operational SaaS seams for migrations, audit logs, billing/subscription state, rate limiting, worker queue records, signed artifact access, sandbox preview records, and deployment configuration.
+- why it matters: A SaaS platform needs operational boundaries before real vendor integrations can be safely added. Without explicit contracts and tests, cloud storage, billing, queues, and previews would become ad hoc patches rather than replaceable providers.
+- recommended fix: Add V3 production infrastructure services with local/test adapters, protected API endpoints, startup wiring, deployment artifacts, and regression coverage.
+- status: fixed
+- related tests: `npm run test:production-infrastructure-v3`; V3 startup smoke; dashboard production-readiness smoke; full backend/converter regression set.
+- fix evidence: V3 regression verifies idempotent migrations, subscription state, rate limiting, queue completion, signed artifact URL authorization, sandbox preview records, audit events, readiness endpoint, billing/audit/sandbox/signed URL HTTP endpoints, and rate-limit `429`.

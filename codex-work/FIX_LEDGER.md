@@ -350,3 +350,20 @@
   - Updated dashboard panel to detect auth-required mode and login with a bearer token.
   - Added `npm run test:production-backend-v2`.
 - Risk: V2 still uses the local JSON database adapter and local filesystem artifacts. Public SaaS deployment still requires a managed database adapter, migration strategy, rate limiting, tenant-aware cloud storage, worker queue, and deployment secrets management.
+
+## Production Infrastructure V3 - 2026-05-14
+
+- Changed files: `server/admin-backend/productionInfra.ts`, `server/admin-backend/types.ts`, `server/admin-backend/jsonDatabase.ts`, `server/admin-backend/httpServer.ts`, `scripts/start-admin-backend.mjs`, `scripts/production-infrastructure-v3-regression.mjs`, `components/AdminBackendPanel.tsx`, `.env.production.example`, `Dockerfile.admin-backend`, `docs/deployment/production-backend-v3.md`, `docs/superpowers/specs/2026-05-14-production-infrastructure-v3-design.md`, `docs/superpowers/plans/2026-05-14-production-infrastructure-v3.md`, `package.json`, `codex-work/*`
+- Reason: Add production infrastructure seams after V2 auth/tenant boundaries.
+- Issue IDs fixed: AUD-PROD-INFRA-003
+- Changes:
+  - Added idempotent migration records and runner.
+  - Added tenant-scoped audit events.
+  - Added local subscription/billing state.
+  - Added tenant rate limiting for protected production endpoints.
+  - Added tenant-scoped queue records and local run-next worker path.
+  - Added signed artifact URL generation behind tenant artifact authorization.
+  - Added tenant-scoped sandbox preview records.
+  - Added production readiness summary endpoint and dashboard display.
+  - Added Dockerfile, production env example, and deployment notes.
+- Risk: V3 still uses local/test providers. Real SaaS launch still requires managed database, object storage, Stripe integration, remote workers, hosted WordPress provisioning, production secrets, and deployment hardening.

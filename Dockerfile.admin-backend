@@ -1,0 +1,16 @@
+FROM node:24-alpine
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+
+ENV NODE_ENV=production
+ENV WHIPIFY_ADMIN_STORAGE=/data/whipify-admin
+ENV WHIPIFY_ADMIN_PORT=8787
+
+EXPOSE 8787
+
+CMD ["npm", "run", "admin:backend"]
