@@ -447,3 +447,75 @@ Status values: `reviewed`, `partially reviewed`, `needs second pass`, `fixed`, `
 - review status: fixed
 - notes: Reused the shared `SaasSiteFileInput` contract without changing intake behavior.
 - related tests: `npm run test:saas-core`; `npm run test:admin-backend`.
+
+## Production Backend V2 - 2026-05-14
+
+- path: server/admin-backend/auth.ts
+- category: source
+- lane/scope: SaaS / production backend / auth
+- review status: fixed
+- notes: Added tenant owner bootstrap, password hashing, login, signed bearer token verification, and session info lookup.
+- related tests: `npm run test:production-backend-v2`.
+
+- path: server/admin-backend/types.ts
+- category: source
+- lane/scope: SaaS / production backend / contracts
+- review status: fixed
+- notes: Added tenant, user, role, record-link, public-user, and auth-context contracts while preserving admin database/service contracts.
+- related tests: `npm run test:production-backend-v2`; `npm run test:admin-backend`.
+
+- path: server/admin-backend/jsonDatabase.ts
+- category: source
+- lane/scope: SaaS / production backend / persistence
+- review status: fixed
+- notes: Upgraded snapshot normalization to version 2 and added tenant/user/project-link/job-link persistence methods.
+- related tests: `npm run test:production-backend-v2`; `npm run test:admin-backend`.
+
+- path: server/admin-backend/adminService.ts
+- category: source
+- lane/scope: SaaS / production backend / tenant orchestration
+- review status: fixed
+- notes: Added tenant-scoped project/job/stats/artifact methods while keeping V1 open-mode methods.
+- related tests: `npm run test:production-backend-v2`; `npm run test:admin-backend`.
+
+- path: server/admin-backend/httpServer.ts
+- category: source
+- lane/scope: SaaS / production backend / protected HTTP API
+- review status: fixed
+- notes: Added optional auth-required mode, login, `/me`, protected admin endpoints, unauthenticated `401`, and cross-tenant `404` behavior.
+- related tests: `npm run test:production-backend-v2`; backend auth smoke.
+
+- path: scripts/production-backend-v2-regression.mjs
+- category: test
+- lane/scope: SaaS / production backend / regression
+- review status: fixed
+- notes: Added regression coverage for auth, tenant isolation, protected HTTP endpoints, and tenant-scoped artifact reads.
+- related tests: `npm run test:production-backend-v2`.
+
+- path: scripts/start-admin-backend.mjs
+- category: script
+- lane/scope: SaaS / production backend / startup
+- review status: fixed
+- notes: Added auth module compilation, auth-enabled env bootstrap, and auth-required server mode.
+- related tests: auth-enabled backend smoke.
+
+- path: components/AdminBackendPanel.tsx
+- category: source
+- lane/scope: SaaS / dashboard / admin backend auth
+- review status: fixed
+- notes: Added auth-required detection, login fields, local bearer-token storage, authorized stats requests, and rejected-token handling.
+- related tests: dashboard auth smoke; `npm run build`.
+
+- path: docs/superpowers/specs/2026-05-14-production-backend-v2-design.md
+- category: doc
+- lane/scope: SaaS / production backend / design
+- review status: fixed
+- notes: Documents V2 scope, non-goals, architecture, data/security rules, env variables, and verification.
+- related tests: documentation review.
+
+- path: docs/superpowers/plans/2026-05-14-production-backend-v2.md
+- category: doc
+- lane/scope: SaaS / production backend / plan
+- review status: fixed
+- notes: Tracks the V2 implementation checklist and verification steps.
+- related tests: documentation review.

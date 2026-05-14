@@ -515,3 +515,17 @@
 - status: fixed
 - related tests: `npm run test:admin-backend`; `npm run test:saas-core`; `npm run test:gutenberg-parity`; `npm run test:elementor-export`; `npm run test:elementor-output-doctor`; `npm run build`; local backend/frontend Playwright smoke.
 - fix evidence: Backend regression creates projects from files, runs jobs, persists JSON database records, stores artifacts, verifies health/projects/jobs/stats API endpoints, creates a project/job over HTTP, and confirms generated artifacts. Browser smoke verified the dashboard admin panel connects to `127.0.0.1:8787`.
+
+## Production Backend V2 - 2026-05-14
+
+- ID: AUD-PROD-BACKEND-002
+- severity: high
+- lane/scope: SaaS / production backend / auth / tenant isolation
+- file: `server/admin-backend/auth.ts`; `server/admin-backend/types.ts`; `server/admin-backend/jsonDatabase.ts`; `server/admin-backend/adminService.ts`; `server/admin-backend/httpServer.ts`; `scripts/production-backend-v2-regression.mjs`; `components/AdminBackendPanel.tsx`
+- line/range if available: n/a
+- finding: Admin Backend V1 had no authentication, tenant/workspace boundary, protected API mode, or tenant-scoped artifact access. Any public exposure would allow unauthenticated access to all projects, jobs, stats, and artifacts.
+- why it matters: A SaaS backend must isolate users and workspaces before billing, cloud workers, or hosted previews are safe. Without this boundary, the system cannot be considered production-oriented even if conversion jobs run.
+- recommended fix: Add password-backed tenant owner bootstrap, signed bearer tokens, tenant-scoped database links, protected HTTP mode, tenant-scoped service methods, and regression coverage proving cross-tenant project/job/artifact access is denied.
+- status: fixed
+- related tests: `npm run test:production-backend-v2`; `npm run test:admin-backend`; `npm run test:saas-core`; `npm run test:gutenberg-parity`; `npm run test:elementor-export`; `npm run test:elementor-output-doctor`; `npm run build`; auth-enabled backend smoke; dashboard auth smoke.
+- fix evidence: Production Backend V2 regression verifies tenant owner bootstrap, duplicate-email cross-tenant rejection, password hashing, login failure, signed-token verification, protected API `401`, CORS authorization preflight support, tenant-scoped lists, cross-tenant job denial, and tenant-scoped artifact reads.

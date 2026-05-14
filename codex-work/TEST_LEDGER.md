@@ -1308,3 +1308,50 @@
 - result: pass
 - relevant output summary: Vite production build passed. Existing warnings remain for missing `/index.css` at build time and large bundle size.
 - related fix/finding IDs: AUD-ADMIN-BACKEND-001
+
+## Production Backend V2 - 2026-05-14
+
+- command: `npm run test:production-backend-v2`
+- result: pass
+- relevant output summary: Regression verifies tenant owner bootstrap, duplicate-email cross-tenant rejection, no raw password persistence, login success/failure, signed token verification, tenant-scoped project/job lists, cross-tenant job denial, tenant-scoped artifact reads, protected HTTP `401`, CORS authorization preflight support, `/me`, HTTP project creation, HTTP cross-tenant job denial, and authorized artifact reads.
+- related fix/finding IDs: AUD-PROD-BACKEND-002
+
+- command: `npm run test:admin-backend`
+- result: pass
+- relevant output summary: V1 admin backend regression still passes after adding auth/tenant V2 contracts, proving open local mode compatibility.
+- related fix/finding IDs: AUD-PROD-BACKEND-002
+
+- command: `npm run test:saas-core`
+- result: pass
+- relevant output summary: SaaS core regression passed after adding Production Backend V2.
+- related fix/finding IDs: AUD-PROD-BACKEND-002
+
+- command: `npm run test:gutenberg-parity`
+- result: pass
+- relevant output summary: Gutenberg parity regression passed after adding Production Backend V2.
+- related fix/finding IDs: AUD-PROD-BACKEND-002
+
+- command: `npm run test:elementor-export`
+- result: pass
+- relevant output summary: Elementor export regression passed after adding Production Backend V2.
+- related fix/finding IDs: AUD-PROD-BACKEND-002
+
+- command: `npm run test:elementor-output-doctor`
+- result: pass
+- relevant output summary: Elementor output doctor regression passed after adding Production Backend V2.
+- related fix/finding IDs: AUD-PROD-BACKEND-002
+
+- command: `npm run build`
+- result: pass
+- relevant output summary: Vite production build passed. Existing warnings remain for missing `/index.css` at build time and large bundle size.
+- related fix/finding IDs: AUD-PROD-BACKEND-002
+
+- command: auth-enabled backend smoke with `WHIPIFY_ADMIN_REQUIRE_AUTH=1`, `WHIPIFY_ADMIN_TOKEN_SECRET`, `WHIPIFY_ADMIN_EMAIL`, and `WHIPIFY_ADMIN_PASSWORD`
+- result: pass
+- relevant output summary: Backend reported `authRequired=True`, unauthenticated stats returned `401`, login succeeded for tenant `smoke-tenant`, and authorized stats returned project count.
+- related fix/finding IDs: AUD-PROD-BACKEND-002
+
+- command: dashboard auth Playwright smoke against Vite plus auth-required backend
+- result: pass
+- relevant output summary: Dashboard detected auth-required backend, displayed login fields, accepted configured admin credentials, stored a bearer token, and displayed authenticated backend stats. A first smoke exposed CORS preflight rejection for the `authorization` header; `scripts/production-backend-v2-regression.mjs` now covers that and the fixed smoke passed.
+- related fix/finding IDs: AUD-PROD-BACKEND-002

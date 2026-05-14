@@ -34,6 +34,7 @@ await run(process.execPath, [
   'server/admin-backend/types.ts',
   'server/admin-backend/jsonDatabase.ts',
   'server/admin-backend/filesystemArtifactStore.ts',
+  'server/admin-backend/auth.ts',
   'server/admin-backend/adminService.ts',
   'server/admin-backend/httpServer.ts',
   'utils/saas-core/types.ts',

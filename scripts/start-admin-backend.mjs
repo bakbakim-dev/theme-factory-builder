@@ -26,6 +26,7 @@ await run(process.execPath, [
   'server/admin-backend/types.ts',
   'server/admin-backend/jsonDatabase.ts',
   'server/admin-backend/filesystemArtifactStore.ts',
+  'server/admin-backend/auth.ts',
   'server/admin-backend/adminService.ts',
   'server/admin-backend/httpServer.ts',
   'utils/saas-core/types.ts',
@@ -39,6 +40,7 @@ await run(process.execPath, [
 
 const { createJsonAdminDatabase } = await import(pathToFileURL(path.join(compiledDir, 'server/admin-backend/jsonDatabase.js')).href);
 const { createFilesystemSaasArtifactStore } = await import(pathToFileURL(path.join(compiledDir, 'server/admin-backend/filesystemArtifactStore.js')).href);
+const { createAdminAuthService } = await import(pathToFileURL(path.join(compiledDir, 'server/admin-backend/auth.js')).href);
 const { createAdminBackendService } = await import(pathToFileURL(path.join(compiledDir, 'server/admin-backend/adminService.js')).href);
 const { createAdminHttpServer } = await import(pathToFileURL(path.join(compiledDir, 'server/admin-backend/httpServer.js')).href);
 
@@ -46,14 +48,41 @@ const storageRoot = process.env.WHIPIFY_ADMIN_STORAGE || path.join(repoRoot, 'st
 const port = Number(process.env.WHIPIFY_ADMIN_PORT || 8787);
 let idIndex = 0;
 
+const database = await createJsonAdminDatabase({ filePath: path.join(storageRoot, 'admin-db.json') });
+const requireAuth = process.env.WHIPIFY_ADMIN_REQUIRE_AUTH === '1' || Boolean(process.env.WHIPIFY_ADMIN_EMAIL || process.env.WHIPIFY_ADMIN_PASSWORD);
+const tokenSecret = process.env.WHIPIFY_ADMIN_TOKEN_SECRET || '';
+const adminEmail = process.env.WHIPIFY_ADMIN_EMAIL || '';
+const adminPassword = process.env.WHIPIFY_ADMIN_PASSWORD || '';
+
+if (requireAuth && (!tokenSecret || !adminEmail || !adminPassword)) {
+  throw new Error('WHIPIFY_ADMIN_TOKEN_SECRET, WHIPIFY_ADMIN_EMAIL, and WHIPIFY_ADMIN_PASSWORD are required when auth is enabled.');
+}
+
+const auth = requireAuth ? createAdminAuthService({
+  database,
+  tokenSecret,
+  nextId: () => `admin-${Date.now().toString(36)}-${idIndex++}`,
+  clock: () => new Date().toISOString(),
+}) : undefined;
+
+if (auth) {
+  await auth.ensureTenantOwner({
+    tenantName: process.env.WHIPIFY_ADMIN_TENANT_NAME || 'Whipify Admin',
+    tenantSlug: process.env.WHIPIFY_ADMIN_TENANT_SLUG || 'whipify-admin',
+    email: adminEmail,
+    displayName: process.env.WHIPIFY_ADMIN_DISPLAY_NAME || 'Whipify Admin',
+    password: adminPassword,
+  });
+}
+
 const service = createAdminBackendService({
-  database: await createJsonAdminDatabase({ filePath: path.join(storageRoot, 'admin-db.json') }),
+  database,
   artifactStore: createFilesystemSaasArtifactStore({ rootDir: path.join(storageRoot, 'artifacts') }),
   nextId: () => `admin-${Date.now().toString(36)}-${idIndex++}`,
   clock: () => new Date().toISOString(),
 });
 
-const server = createAdminHttpServer({ service });
+const server = createAdminHttpServer({ service, auth, requireAuth });
 server.listen(port, '127.0.0.1', () => {
-  console.log(`Whipify admin backend listening on http://127.0.0.1:${port}`);
+  console.log(`Whipify admin backend listening on http://127.0.0.1:${port} (auth ${requireAuth ? 'enabled' : 'disabled'})`);
 });

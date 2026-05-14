@@ -333,3 +333,20 @@
   - Added `npm run test:admin-backend`.
   - Added dashboard `AdminBackendPanel` that checks the local backend and displays operator stats.
 - Risk: Admin Backend V1 is local/dev-only and has no auth. It should not be exposed publicly until authentication, authorization, rate limits, and tenant isolation are implemented.
+
+## Production Backend V2 - 2026-05-14
+
+- Changed files: `.gitignore`, `server/admin-backend/types.ts`, `server/admin-backend/jsonDatabase.ts`, `server/admin-backend/auth.ts`, `server/admin-backend/adminService.ts`, `server/admin-backend/httpServer.ts`, `scripts/start-admin-backend.mjs`, `scripts/admin-backend-regression.mjs`, `scripts/production-backend-v2-regression.mjs`, `components/AdminBackendPanel.tsx`, `package.json`, `docs/superpowers/specs/2026-05-14-production-backend-v2-design.md`, `docs/superpowers/plans/2026-05-14-production-backend-v2.md`, `codex-work/*`
+- Reason: Move the admin backend from open local V1 mode toward production-safe contracts with authentication, tenant isolation, protected endpoints, and tenant-scoped artifact access.
+- Issue IDs fixed: AUD-PROD-BACKEND-002
+- Changes:
+  - Added tenant, user, role, record-link, public-user, and auth-context contracts.
+  - Added PBKDF2-SHA256 password hashing and owner bootstrap.
+  - Added signed bearer token login and verification.
+  - Added JSON snapshot v2 with tenants, users, project-tenant links, and job-tenant links.
+  - Added tenant-scoped project/job creation, listing, stats, conversion execution, and artifact reads.
+  - Added auth-required HTTP mode with login, `/me`, protected stats/projects/jobs/artifacts, `401` unauthenticated responses, and `404` cross-tenant denials.
+  - Updated backend startup to enable auth from environment variables.
+  - Updated dashboard panel to detect auth-required mode and login with a bearer token.
+  - Added `npm run test:production-backend-v2`.
+- Risk: V2 still uses the local JSON database adapter and local filesystem artifacts. Public SaaS deployment still requires a managed database adapter, migration strategy, rate limiting, tenant-aware cloud storage, worker queue, and deployment secrets management.

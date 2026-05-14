@@ -37,6 +37,7 @@
     "test:static-smoke": "node scripts/static-output-smoke.mjs",
     "test:saas-core": "node scripts/saas-core-regression.mjs",
     "test:admin-backend": "node scripts/admin-backend-regression.mjs",
+    "test:production-backend-v2": "node scripts/production-backend-v2-regression.mjs",
     "admin:backend": "node scripts/start-admin-backend.mjs",
     "test:static-dashboard-smoke": "node scripts/static-dashboard-smoke.mjs"
   },

@@ -13,9 +13,12 @@ interface AdminBackendState {
   connected: boolean;
   message: string;
   stats: AdminStats | null;
+  authRequired: boolean;
+  token: string;
 }
 
 const ADMIN_BACKEND_URL = 'http://127.0.0.1:8787';
+const ADMIN_BACKEND_TOKEN_KEY = 'whipify-admin-backend-token';
 
 const emptyStats: AdminStats = {
   projectCount: 0,
@@ -30,20 +33,56 @@ const AdminBackendPanel: React.FC = () => {
     connected: false,
     message: 'Backend not checked yet.',
     stats: null,
+    authRequired: false,
+    token: typeof window !== 'undefined' ? window.localStorage.getItem(ADMIN_BACKEND_TOKEN_KEY) || '' : '',
   });
   const [isLoading, setIsLoading] = useState(false);
+  const [email, setEmail] = useState('admin@example.com');
+  const [password, setPassword] = useState('');
 
-  const refresh = async () => {
+  const requestHeaders = (token = state.token): HeadersInit => (
+    token ? { authorization: `Bearer ${token}` } : {}
+  );
+
+  const refresh = async (token = state.token) => {
     setIsLoading(true);
     try {
       const health = await fetch(`${ADMIN_BACKEND_URL}/api/admin/health`);
       if (!health.ok) throw new Error(`Health check failed with ${health.status}`);
-      const statsResponse = await fetch(`${ADMIN_BACKEND_URL}/api/admin/stats`);
+      const healthJson = await health.json();
+      if (healthJson.authRequired && !token) {
+        setState((current) => ({
+          ...current,
+          connected: false,
+          authRequired: true,
+          message: 'Admin backend requires login.',
+          stats: null,
+        }));
+        return;
+      }
+
+      const statsResponse = await fetch(`${ADMIN_BACKEND_URL}/api/admin/stats`, { headers: requestHeaders(token) });
+      if (statsResponse.status === 401) {
+        setState((current) => ({
+          ...current,
+          connected: false,
+          authRequired: true,
+          token: '',
+          message: 'Admin backend rejected the saved token. Login again.',
+          stats: null,
+        }));
+        window.localStorage.removeItem(ADMIN_BACKEND_TOKEN_KEY);
+        return;
+      }
       if (!statsResponse.ok) throw new Error(`Stats request failed with ${statsResponse.status}`);
       const statsJson = await statsResponse.json();
       setState({
         connected: true,
-        message: 'Admin backend connected on 127.0.0.1:8787.',
+        authRequired: Boolean(healthJson.authRequired),
+        token,
+        message: healthJson.authRequired
+          ? 'Authenticated admin backend connected on 127.0.0.1:8787.'
+          : 'Admin backend connected on 127.0.0.1:8787.',
         stats: statsJson.stats || emptyStats,
       });
     } catch (error) {
@@ -52,6 +91,32 @@ const AdminBackendPanel: React.FC = () => {
         message: error instanceof Error ? error.message : String(error),
         stats: null,
       });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const login = async () => {
+    setIsLoading(true);
+    try {
+      const response = await fetch(`${ADMIN_BACKEND_URL}/api/admin/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      if (!response.ok) throw new Error(`Login failed with ${response.status}`);
+      const json = await response.json();
+      window.localStorage.setItem(ADMIN_BACKEND_TOKEN_KEY, json.token);
+      setState((current) => ({ ...current, token: json.token, authRequired: true }));
+      await refresh(json.token);
+    } catch (error) {
+      setState((current) => ({
+        ...current,
+        connected: false,
+        authRequired: true,
+        message: error instanceof Error ? error.message : String(error),
+        stats: null,
+      }));
     } finally {
       setIsLoading(false);
     }
@@ -75,7 +140,7 @@ const AdminBackendPanel: React.FC = () => {
           </div>
           <button
             type="button"
-            onClick={refresh}
+            onClick={() => refresh()}
             disabled={isLoading}
             className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm font-bold text-slate-100 hover:border-cyan-400/50 disabled:opacity-60"
           >
@@ -83,6 +148,33 @@ const AdminBackendPanel: React.FC = () => {
             Check Backend
           </button>
         </div>
+
+        {state.authRequired && !state.connected && (
+          <div className="mt-5 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+            <input
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              className="rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none focus:border-cyan-400/70"
+              placeholder="Admin email"
+              type="email"
+            />
+            <input
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none focus:border-cyan-400/70"
+              placeholder="Admin password"
+              type="password"
+            />
+            <button
+              type="button"
+              onClick={login}
+              disabled={isLoading || !email || !password}
+              className="rounded-2xl bg-cyan-300 px-5 py-3 text-sm font-black text-slate-950 hover:bg-cyan-200 disabled:opacity-60"
+            >
+              Login
+            </button>
+          </div>
+        )}
 
         <div className="mt-5 grid grid-cols-2 md:grid-cols-5 gap-3">
           {[
