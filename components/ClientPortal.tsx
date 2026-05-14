@@ -327,6 +327,48 @@ const ClientPortal: React.FC<ClientPortalProps> = ({ onOpenOperatorTools, operat
           </div>
         </PortalCard>
 
+        <PortalCard className="mt-6 overflow-hidden border-slate-950 bg-slate-950 p-0 text-white">
+          <div className="grid gap-0 lg:grid-cols-[0.9fr_1.1fr]">
+            <div className="bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.26),transparent_38%),linear-gradient(135deg,#020617,#0f172a)] p-6 sm:p-8">
+              <div className="inline-flex items-center gap-2 rounded-full border border-cyan-300/30 bg-cyan-300/10 px-3 py-1 text-xs font-black uppercase tracking-[0.2em] text-cyan-100">
+                <ShieldCheck className="h-4 w-4" />
+                New Admin Ops UI V2
+              </div>
+              <h2 className="mt-5 text-3xl font-black tracking-tight sm:text-4xl">
+                A conversion operations cockpit is now inside operator tools.
+              </h2>
+              <p className="mt-4 text-sm leading-7 text-slate-300">
+                If you do not see the admin/backend changes, open operator tools. The new backend UI is not on the
+                customer landing screen by default; it lives in the internal console where conversion teams manage runs,
+                logs, visual QA, Elementor editability, support timelines, and backend providers.
+              </p>
+              <button
+                type="button"
+                onClick={onOpenOperatorTools}
+                className="mt-6 inline-flex items-center justify-center gap-2 rounded-full bg-cyan-300 px-5 py-3 text-sm font-black text-slate-950 shadow-lg shadow-cyan-950/30"
+              >
+                Open operator tools
+                <ArrowRight className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="grid gap-3 p-6 sm:grid-cols-2 sm:p-8">
+              {[
+                ['Command Center', 'Global search, quick actions, and operational focus metrics.'],
+                ['Run Detail', 'Conversion timeline, run controls, status, artifacts, and warnings.'],
+                ['Live Logs', 'Structured stage/severity logs with copy/share controls.'],
+                ['Visual QA', 'Source screenshot, converted screenshot, diff heatmap, and issue labels.'],
+                ['Editability', 'Elementor editability score, fallback count, and custom-widget actions.'],
+                ['Support Timeline', 'Customer timeline, safe impersonation request, and support notes.'],
+              ].map(([title, body]) => (
+                <div key={title} className="rounded-3xl border border-white/10 bg-white/[0.06] p-4">
+                  <h3 className="font-black text-white">{title}</h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-400">{body}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </PortalCard>
+
         <div id="client-projects" className="mt-6 grid gap-6 lg:grid-cols-[1fr_0.8fr]">
           <PortalCard className="p-6">
             <div className="flex items-center justify-between gap-4">

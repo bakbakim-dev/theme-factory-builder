@@ -430,3 +430,15 @@
   - Added `npm run test:admin-ops-ui-v2`.
   - Tightened existing Admin Console V1 tab selectors to exact matches after adding `Support Timeline`.
 - Risk: The new pages are UI/operations surfaces over the current local/test providers. Real screenshot images, run log streams, support notes, and editability drilldowns still need provider-backed data.
+
+## Admin Ops UI V2 Visibility Fix - 2026-05-14
+
+- Changed files: `components/ClientPortal.tsx`, `scripts/admin-ops-ui-v2-regression.mjs`, `codex-work/*`
+- Reason: The Admin Ops UI V2 pages existed but were hidden behind the operator-tools toggle, making the visual change easy to miss from the first customer portal screen.
+- Issue IDs fixed: AUD-ADMIN-OPS-UI-007
+- Changes:
+  - Added a visible `New Admin Ops UI V2` callout on the Client Portal.
+  - Listed the new operator pages directly on the customer portal: Command Center, Run Detail, Live Logs, Visual QA, Editability, and Support Timeline.
+  - Added a portal button that opens operator tools from the new callout.
+  - Tightened Admin Ops UI V2 regression selectors after the portal started mentioning the same labels.
+- Risk: This is a visibility/navigation improvement only. Provider-backed screenshots, logs, support notes, and editability drilldowns remain future integration work.

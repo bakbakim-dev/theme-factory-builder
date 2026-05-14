@@ -100,7 +100,7 @@ try {
 
   await page.getByRole('button', { name: 'Command Center' }).click();
   await page.getByPlaceholder('Search projects, jobs, artifacts, customers, errors').fill('Ops');
-  await page.getByText('Quick actions').waitFor({ timeout: 15000 });
+  await page.getByRole('heading', { name: 'Quick actions' }).waitFor({ timeout: 15000 });
   await page.getByText('Create project').first().waitFor({ timeout: 15000 });
   await page.getByText('Rerun failed conversion').first().waitFor({ timeout: 15000 });
   await page.getByText('Open latest preview').first().waitFor({ timeout: 15000 });
@@ -117,9 +117,9 @@ try {
   await page.getByText('copy log excerpt').first().waitFor({ timeout: 15000 });
 
   await page.getByRole('button', { name: 'Visual QA' }).click();
-  await page.getByText('Source screenshot').waitFor({ timeout: 15000 });
-  await page.getByText('Converted screenshot').waitFor({ timeout: 15000 });
-  await page.getByText('Diff heatmap').waitFor({ timeout: 15000 });
+  await page.getByRole('heading', { name: 'Source screenshot' }).waitFor({ timeout: 15000 });
+  await page.getByRole('heading', { name: 'Converted screenshot' }).waitFor({ timeout: 15000 });
+  await page.getByRole('heading', { name: 'Diff heatmap' }).waitFor({ timeout: 15000 });
   await page.getByText('alignment drift').waitFor({ timeout: 15000 });
 
   await page.getByRole('button', { name: 'Editability' }).click();
@@ -128,8 +128,8 @@ try {
   await page.getByText('Regenerate as custom widget').waitFor({ timeout: 15000 });
 
   await page.getByRole('button', { name: 'Support Timeline' }).click();
-  await page.getByText('Customer timeline').waitFor({ timeout: 15000 });
-  await page.getByText('safe impersonation request').waitFor({ timeout: 15000 });
+  await page.getByRole('heading', { name: 'Customer timeline' }).waitFor({ timeout: 15000 });
+  await page.getByTestId('admin-console-page-support-timeline').getByText('safe impersonation request').waitFor({ timeout: 15000 });
   await page.getByText('support note').first().waitFor({ timeout: 15000 });
 
   await browser.close();

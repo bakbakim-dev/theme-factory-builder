@@ -1595,3 +1595,20 @@
 - result: pass
 - relevant output summary: Elementor output doctor regression passed after Admin Ops UI V2 changes.
 - related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+## Admin Ops UI V2 Visibility Fix - 2026-05-14
+
+- command: `npm run test:client-portal-v1`
+- result: pass
+- relevant output summary: Client portal regression passed after adding the visible Admin Ops UI V2 callout.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run build`
+- result: pass
+- relevant output summary: Vite production build passed. Existing warnings remain for missing `/index.css` at build time and large bundle size.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:admin-ops-ui-v2`
+- result: fail, then pass
+- relevant output summary: Initial run failed due text selector collisions after the new portal callout mentioned admin ops labels. Selectors were tightened to headings/test-id scopes and the regression passed.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
