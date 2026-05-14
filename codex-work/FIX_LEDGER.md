@@ -288,3 +288,19 @@
 - Live result: Active live importer is `1.3.81`. Targeted visual parity for `/edmonton-pricing/`, `/edmonton-move-in-move-out-cleaning/`, `/blog/`, and `/calgary/` passed across desktop/mobile. Broad 25-page visual parity crawl passed across desktop/mobile with `failureCount: 0`. Live interaction smoke passed for pricing tabs, pricing FAQ, move-out FAQ, and Calgary header route/phone localization.
 - Evidence paths: `logs/regression-2026-05-07/visual-parity-v81-targeted/summary.json`; `logs/regression-2026-05-07/visual-parity-v81-broader-crawl-25/summary.json`; generated importer package under `logs/regression-2026-05-07/theme-v12-saas-parity/plugin-v81-faq-answer-hydrator/`.
 - Risk: The reference domain has blank responses for some Calgary/location alias pages; the visual parity harness now records those as `reference-blank` instead of pixel-comparing against empty screenshots. Older inactive Whipify Elementor Importer folders remain installed in wp-admin and should stay inactive.
+
+## SaaS Core V1 Foundation - 2026-05-13
+
+- Changed files: `docs/superpowers/specs/2026-05-13-saas-core-v1-design.md`, `docs/superpowers/plans/2026-05-13-saas-core-v1.md`, `utils/saas-core/types.ts`, `utils/saas-core/analyzer.ts`, `utils/saas-core/qa.ts`, `utils/saas-core/orchestrator.ts`, `components/SaasCorePanel.tsx`, `App.tsx`, `scripts/saas-core-regression.mjs`, `package.json`, `codex-work/*`
+- Reason: The converter needed a repeatable SaaS foundation for projects, jobs, analysis, QA reporting, artifacts, and release gates before it can become a hosted product.
+- Issue IDs fixed: AUD-SAAS-CORE-001, AUD-SAAS-CORE-002
+- Changes:
+  - Added the SaaS Core V1 design and implementation plan.
+  - Added typed project, intake, analysis, QA, job, artifact, and repository models.
+  - Added deterministic intake analysis for routes, assets, page archetypes, section signals, risk flags, and lane suitability.
+  - Added deterministic QA scoring for editability, visual readiness, fallback ratio, source-of-truth checks, warnings, and release status.
+  - Added project/job orchestration with queued/running/completed/failed events and artifact manifest support.
+  - Added memory and storage-backed project repositories.
+  - Added a visible React SaaS Core panel that runs a sample local conversion job and persists it in browser storage.
+  - Added `npm run test:saas-core`.
+- Risk: This is SaaS Core V1, not full hosted SaaS. Auth, billing, remote queues, object storage, and hosted WordPress sandbox infrastructure remain future work.

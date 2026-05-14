@@ -27,22 +27,26 @@ Whipify / Theme Factory AI converts React or static build artifacts into WordPre
 
 ## Current Active Work
 
-Active focus is Elementor live visual-fidelity parity for the Edmonton page:
+Active focus is SaaS Core V1 productization. The Elementor V81 live parity build track is complete locally and recorded in `NEXT_PROMPT.md`.
 
-- Current Elementor page: `https://mikaily128.sg-host.com/edmonton/`
-- Reference static page: `https://mikaily129.sg-host.com/edmonton/`
-- Current live runtime path: generated theme visual-fidelity CSS/JS plus active `Whipify Elementor Importer` version `1.3.4`.
-- The old `.tools/live-patches/000-whipify-edmonton-elementor-patch` flow is diagnostic history only; public verification shows no Edmonton patch CSS/JS is loaded.
-- Importer `1.3.4` bundles generic visual-fidelity fallback assets, always enqueues its override JS on Whipify Elementor pages so older generated theme runtimes can be superseded, and always enqueues high-priority override CSS for older installed generated themes that need durable fixes such as pricing buttons, About fallback layout, source-layout metrics, footer button CTAs, breadcrumb offset, leading source icon SVG injection, four-column compact paragraph utility sizing, true `md:w-1/3` carousel widths, and source-like About counter animation.
+SaaS Core V1 adds a local-first product foundation around the converter:
 
-## Latest Edmonton Evidence
+- Project model for uploaded/captured sites.
+- Conversion job lifecycle.
+- Intake analysis for routes, assets, page archetypes, section signals, risk flags, and lane suitability.
+- QA report scoring for editability, visual readiness, source-of-truth checks, warnings, and release status.
+- Artifact manifest tracking.
+- Browser-storage-compatible project persistence.
+- Dashboard panel mounted above the existing converter.
 
-- Evidence directory: `.tools/live-edmonton-1-3-4-verify-1777614786829`
-- Section screenshot directory: `.tools/live-edmonton-section-pass-1777614339900`
-- FAQ starts closed with `faqOpenCount=0`.
-- Review carousel first card now measures `384px` wide with `flex-basis: 33.3333%`, matching the source/reference track.
-- About counters initialize as `0+`, `0+`, `0+`, `0%`, `15+`, `100%` and settle to `10+`, `5,000+`, `500+`, `95%`, `15+`, `100%`.
-- Cleanup note: obsolete inactive Edmonton patch plugin rows and old inactive importer rows remain visible in wp-admin, but public verification confirms active runtime assets come from importer `1.3.4`.
+This is not full hosted SaaS yet. It intentionally excludes auth, billing, remote queues, object storage, and hosted WordPress sandbox provisioning.
+
+## Latest Elementor Evidence
+
+- Active live importer recorded from the V81 pass: `Whipify Elementor Importer 1.3.81`.
+- Targeted visual evidence: `logs/regression-2026-05-07/visual-parity-v81-final-targeted-20260513/summary.json`.
+- Broad crawl evidence: `logs/regression-2026-05-07/visual-parity-v81-final-broader-crawl-25-20260513/summary.json`.
+- V81 broad crawl compared 25 pages across 2 viewports with `failureCount: 0`.
 
 ## Exclusions By Default
 

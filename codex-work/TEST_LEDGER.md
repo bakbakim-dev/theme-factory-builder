@@ -1202,3 +1202,35 @@
 - result: pass
 - relevant output summary: Fresh broad visual parity crawl compared 25 pages across 2 viewports and passed with `failureCount: 0`.
 - related fix/finding IDs: AUD-EL-VISUAL-032, AUD-EL-VISUAL-033
+
+## SaaS Core V1 Foundation - 2026-05-13
+
+- command: `npm run test:saas-core`
+- result: pass
+- relevant output summary: Regression covers SaaS intake analysis, page archetype detection, lane suitability, QA report scoring, source-of-truth checks, conversion job lifecycle, artifact manifest output, failure handling, memory repository, and storage-backed repository rehydration.
+- related fix/finding IDs: AUD-SAAS-CORE-001
+
+- command: local Playwright smoke against `http://127.0.0.1:5174/`
+- result: pass
+- relevant output summary: Temporary Vite dev server rendered the SaaS Core V1 panel, showed the existing converter still mounted, ran the sample SaaS job from the UI, displayed completed job/artifact/editability status, and persisted the project in `localStorage`.
+- related fix/finding IDs: AUD-SAAS-CORE-001
+
+- command: `npm run test:gutenberg-parity`
+- result: pass
+- relevant output summary: Gutenberg parity regression passed after adding the SaaS panel and modules.
+- related fix/finding IDs: AUD-SAAS-CORE-001
+
+- command: `npm run test:elementor-export`
+- result: pass
+- relevant output summary: Elementor export regression passed after adding the SaaS panel and modules.
+- related fix/finding IDs: AUD-SAAS-CORE-001
+
+- command: `npm run test:elementor-output-doctor`
+- result: pass
+- relevant output summary: Elementor output doctor regression passed after adding the SaaS panel and modules.
+- related fix/finding IDs: AUD-SAAS-CORE-001
+
+- command: `npm run build`
+- result: pass
+- relevant output summary: Vite production build passed after mounting the SaaS panel. Existing warnings remain for missing `/index.css` at build time and large bundle size.
+- related fix/finding IDs: AUD-SAAS-CORE-001, AUD-SAAS-CORE-002

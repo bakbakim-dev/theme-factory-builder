@@ -1,5 +1,6 @@
 import React from 'react';
 import Dashboard from './components/Dashboard';
+import SaasCorePanel from './components/SaasCorePanel';
 import { ConversionRecord } from './types';
 
 export default function App() {
@@ -25,8 +26,11 @@ export default function App() {
           </div>
         </nav>
         
-        <main className="flex justify-center w-full">
-          <Dashboard onConversionComplete={handleConversionComplete} />
+        <main className="w-full">
+          <SaasCorePanel />
+          <div className="flex justify-center w-full">
+            <Dashboard onConversionComplete={handleConversionComplete} />
+          </div>
         </main>
 
         <footer className="py-8 text-center text-slate-600 text-sm">

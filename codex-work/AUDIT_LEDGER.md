@@ -463,3 +463,29 @@
 - status: fixed
 - related tests: `npm run test:elementor-export`; live Playwright interaction smoke for pricing tabs, pricing FAQ, move-out FAQ, and Calgary header localization.
 - fix evidence: Live smoke after deploying importer `1.3.81` shows pricing tabs switch to Deep and Move In/Out panels, `/edmonton-pricing/` FAQ first opens then closes when the second opens, `/edmonton-move-in-move-out-cleaning/` FAQ first opens then closes when the second opens, and Calgary header phone/routes localize to `(403) 768-1341`, `/calgary-services/`, and `/calgary-pricing/`.
+
+## SaaS Core V1 Productization - 2026-05-13
+
+- ID: AUD-SAAS-CORE-001
+- severity: high
+- lane/scope: SaaS / shared orchestration / dashboard
+- file: `utils/saas-core/*`; `components/SaasCorePanel.tsx`; `App.tsx`
+- line/range if available: n/a
+- finding: The converter had strong lane-specific output logic and live Elementor parity evidence, but no durable SaaS product model for projects, jobs, intake analysis, QA reports, artifact manifests, or release gates. Without this layer, every conversion remains closer to a manual local workflow than a repeatable SaaS process.
+- why it matters: SaaS readiness requires repeatability, observability, failure states, and honest reports. A converter cannot be marketed responsibly as SaaS-grade if it cannot describe what was converted, what passed, what needs review, and what artifacts were produced.
+- recommended fix: Add a local-first SaaS Core V1 layer with typed project/job/report models, analyzer, QA scorer, artifact manifest support, browser-storage-compatible persistence, and a dashboard panel. Keep auth, billing, cloud queues, and hosted sandbox provisioning out of V1 to avoid fake production claims.
+- status: fixed
+- related tests: `npm run test:saas-core`; local browser smoke; `npm run test:gutenberg-parity`; `npm run test:elementor-export`; `npm run test:elementor-output-doctor`; `npm run build`.
+- fix evidence: Added `utils/saas-core/types.ts`, `utils/saas-core/analyzer.ts`, `utils/saas-core/qa.ts`, `utils/saas-core/orchestrator.ts`, `components/SaasCorePanel.tsx`, `scripts/saas-core-regression.mjs`, and mounted the panel in `App.tsx`. Fresh regression and build checks passed.
+
+- ID: AUD-SAAS-CORE-002
+- severity: medium
+- lane/scope: SaaS / product positioning
+- file: `docs/superpowers/specs/2026-05-13-saas-core-v1-design.md`; `docs/superpowers/plans/2026-05-13-saas-core-v1.md`
+- line/range if available: n/a
+- finding: A full hosted SaaS platform would require auth, billing, database persistence, remote worker queues, object storage, hosted WordPress sandboxes, deployment infrastructure, and support tooling. Implementing a local-first V1 foundation without documenting those boundaries could create the false impression that the product is production SaaS-complete.
+- why it matters: Product readiness claims need to be honest. The current work starts SaaS productization, but does not complete the hosted commercial platform.
+- recommended fix: Document the SaaS Core V1 scope and non-goals explicitly, and preserve future extension points for production infrastructure.
+- status: fixed
+- related tests: documentation review; `npm run build`.
+- fix evidence: Added the SaaS Core V1 design and implementation plan under `docs/superpowers/`, both explicitly stating that auth, billing, remote queues, object storage, and hosted sandbox provisioning remain future work.

@@ -259,3 +259,68 @@ Status values: `reviewed`, `partially reviewed`, `needs second pass`, `fixed`, `
 - review status: partially reviewed / fixed
 - notes: Updated live/reference visual parity harness to classify effectively blank reference pages instead of failing valid live pages against blank screenshots. This keeps broad SaaS crawl evidence honest when the reference domain serves empty pages for some routes.
 - related tests: targeted and broader live visual parity runs.
+
+## SaaS Core V1 Foundation - 2026-05-13
+
+- path: docs/superpowers/specs/2026-05-13-saas-core-v1-design.md
+- category: doc
+- lane/scope: SaaS / product architecture
+- review status: fixed
+- notes: Added SaaS Core V1 design scope, architecture, data flow, quality gates, non-goals, and success criteria.
+- related tests: Documentation reviewed during implementation; `npm run build`.
+
+- path: docs/superpowers/plans/2026-05-13-saas-core-v1.md
+- category: doc
+- lane/scope: SaaS / implementation plan
+- review status: fixed
+- notes: Added implementation plan for SaaS Core V1 modules, dashboard surface, tests, and ledgers.
+- related tests: `npm run test:saas-core`; `npm run build`.
+
+- path: utils/saas-core/types.ts
+- category: source
+- lane/scope: SaaS / shared types
+- review status: fixed
+- notes: Added canonical typed models for SaaS intake, projects, jobs, analysis, QA reports, artifacts, and repositories.
+- related tests: `npm run test:saas-core`.
+
+- path: utils/saas-core/analyzer.ts
+- category: source
+- lane/scope: SaaS / intake analysis
+- review status: fixed
+- notes: Added deterministic route/page archetype, section signal, risk flag, and lane suitability analysis.
+- related tests: `npm run test:saas-core`.
+
+- path: utils/saas-core/qa.ts
+- category: source
+- lane/scope: SaaS / QA reporting
+- review status: fixed
+- notes: Added deterministic QA report scoring for editability, visual readiness, fallback ratio, source-of-truth checks, warnings, and release status.
+- related tests: `npm run test:saas-core`.
+
+- path: utils/saas-core/orchestrator.ts
+- category: source
+- lane/scope: SaaS / project and job orchestration
+- review status: fixed
+- notes: Added local project creation, conversion job lifecycle, artifact manifest support, failure handling, and memory/storage repositories.
+- related tests: `npm run test:saas-core`.
+
+- path: components/SaasCorePanel.tsx
+- category: source
+- lane/scope: SaaS / dashboard
+- review status: fixed
+- notes: Added local-first SaaS Core panel that runs a sample job, displays analysis/QA/artifacts, and persists to browser storage.
+- related tests: local Playwright smoke; `npm run build`.
+
+- path: App.tsx
+- category: source
+- lane/scope: dashboard
+- review status: fixed
+- notes: Mounted the SaaS Core panel above the existing converter without changing conversion behavior.
+- related tests: local Playwright smoke; `npm run build`.
+
+- path: scripts/saas-core-regression.mjs
+- category: test
+- lane/scope: SaaS / regression harness
+- review status: fixed
+- notes: Added regression coverage for analyzer, QA, job lifecycle, artifact manifest, and repository behavior.
+- related tests: `npm run test:saas-core`.
