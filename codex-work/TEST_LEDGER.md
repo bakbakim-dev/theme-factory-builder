@@ -1612,3 +1612,65 @@
 - result: fail, then pass
 - relevant output summary: Initial run failed due text selector collisions after the new portal callout mentioned admin ops labels. Selectors were tightened to headings/test-id scopes and the regression passed.
 - related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+## Operator Console Mission Control Redesign - 2026-05-14
+
+- command: `npm run test:operator-console-redesign`
+- result: fail, then pass
+- relevant output summary: Initial red run failed because the old operator panel did not expose `operator-console-shell` or Mission Control UI. After redesign, regression passed and verified sidebar groups, command search, KPI strip, visual QA spotlight, editability radar, artifact vault, and navigation to Visual QA/Live Logs.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:admin-ops-ui-v2`
+- result: pass
+- relevant output summary: Admin Ops UI V2 regression passed inside the new Mission Control shell.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:admin-console-v1`
+- result: fail, then pass
+- relevant output summary: Initial run failed because assertions expected `Admin Console V1` and an unscoped `Search projects` placeholder. Tests were updated for `Whipify Mission Control` and scoped project search, then passed.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:client-portal-v1`
+- result: pass
+- relevant output summary: Client portal regression passed after Mission Control redesign.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:production-backend-blueprint`
+- result: pass
+- relevant output summary: Production backend blueprint regression passed after Mission Control redesign.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:production-infrastructure-v3`
+- result: pass
+- relevant output summary: Production infrastructure regression passed after Mission Control redesign.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:production-backend-v2`
+- result: pass
+- relevant output summary: Production backend V2 regression passed after Mission Control redesign.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:admin-backend`
+- result: pass
+- relevant output summary: Admin backend regression passed after Mission Control redesign.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:gutenberg-parity`
+- result: pass
+- relevant output summary: Gutenberg parity regression passed after Mission Control redesign.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:elementor-export`
+- result: pass
+- relevant output summary: Elementor export regression passed after Mission Control redesign.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:elementor-output-doctor`
+- result: pass
+- relevant output summary: Elementor output doctor regression passed after Mission Control redesign.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run build`
+- result: pass
+- relevant output summary: Vite production build passed. Existing warnings remain for missing `/index.css` at build time and large bundle size.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007

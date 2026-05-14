@@ -442,3 +442,19 @@
   - Added a portal button that opens operator tools from the new callout.
   - Tightened Admin Ops UI V2 regression selectors after the portal started mentioning the same labels.
 - Risk: This is a visibility/navigation improvement only. Provider-backed screenshots, logs, support notes, and editability drilldowns remain future integration work.
+
+## Operator Console Mission Control Redesign - 2026-05-14
+
+- Changed files: `components/AdminBackendPanel.tsx`, `scripts/operator-console-redesign-regression.mjs`, `scripts/admin-console-v1-regression.mjs`, `scripts/client-portal-v1-regression.mjs`, `package.json`, `codex-work/*`
+- Reason: The operator tools had more features but still looked like a tabbed internal panel. The user requested a huge UI design upgrade into a beautiful, extensive operations product.
+- Issue IDs fixed: AUD-ADMIN-OPS-UI-007
+- Changes:
+  - Replaced the old horizontal tab-strip shell with a full `Whipify Mission Control` operations cockpit.
+  - Added left sidebar navigation grouped into Operations Cockpit, Conversion Ops, QA Studio, and Control Plane.
+  - Added top command/search bar for projects, runs, pages, artifacts, customers, and errors.
+  - Added KPI strip for active conversions, pages needing review, provider health, and artifact vault.
+  - Added right-side operations rail with Visual QA spotlight, Elementor editability radar, and Artifact vault.
+  - Preserved existing page render logic and backend actions inside the new shell.
+  - Added `npm run test:operator-console-redesign`.
+  - Updated older regressions to target the new Mission Control label and scoped search input.
+- Risk: This is a substantial visual shell upgrade, but real screenshot images, live logs, provider data, support notes, and editability drilldowns still need provider-backed data sources.

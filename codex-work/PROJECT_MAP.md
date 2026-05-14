@@ -46,6 +46,7 @@ SaaS Core V1 adds a local-first product foundation around the converter:
 - Client Portal V1 for the customer-facing `Theme Convert` SaaS surface, with non-technical intake language, output-mode selection, conversion workflow, project workspace, preview/QA/download surfaces, and operator tools moved behind an explicit toggle.
 - Production Backend Blueprint for the recommended hybrid backend stack, provider readiness seams, and the production schema contract spanning Neon Postgres, Better Auth, Cloudflare R2, Trigger.dev, Stripe Billing, Temporal Cloud, sandbox previews, and observability.
 - Admin Ops UI V2 adds Whipify-specific operator screens for global command/search, conversion run timelines, structured live logs, visual QA, Elementor editability, and customer support timelines.
+- Operator Console Mission Control redesign replaces the old tabbed operator panel with a sidebar-first operations cockpit, top command bar, KPI strip, and right-side QA/editability/artifact rail.
 
 This is not full hosted SaaS yet. Production Infrastructure V3 adds tested provider seams, but real external vendors still need to be wired in for Stripe, managed database hosting, cloud object storage, remote workers, and hosted WordPress provisioning.
 

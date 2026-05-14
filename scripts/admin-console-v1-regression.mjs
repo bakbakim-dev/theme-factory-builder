@@ -98,7 +98,7 @@ try {
   await page.evaluate(() => localStorage.removeItem('whipify-admin-backend-token'));
   await page.reload({ waitUntil: 'networkidle' });
   await page.getByRole('navigation').getByRole('button', { name: 'Open operator tools' }).click();
-  await page.getByText('Admin Console V1', { exact: true }).waitFor({ timeout: 15000 });
+  await page.getByText('Whipify Mission Control').waitFor({ timeout: 15000 });
   await page.getByRole('button', { name: 'Check Backend' }).click();
   await page.getByText('Admin backend requires login.').waitFor({ timeout: 15000 });
   await page.getByPlaceholder('Admin email').fill('admin@example.com');
@@ -126,7 +126,7 @@ try {
   }
 
   await page.getByRole('button', { name: 'Projects', exact: true }).click();
-  await page.getByPlaceholder('Search projects').fill('Console');
+  await page.getByTestId('admin-console-page-projects').getByPlaceholder('Search projects').fill('Console');
   await page.getByRole('heading', { name: 'Console Test Site' }).first().waitFor({ timeout: 15000 });
   await page.getByRole('button', { name: 'Open Detail' }).first().click();
   await page.getByText('Project Detail').waitFor({ timeout: 15000 });

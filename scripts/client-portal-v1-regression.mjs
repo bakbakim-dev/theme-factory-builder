@@ -90,7 +90,7 @@ try {
   await page.getByText('Customer portal first. Operator console second.').waitFor({ timeout: 15000 });
 
   await page.getByRole('navigation').getByRole('button', { name: 'Open operator tools' }).click();
-  await page.getByText('Admin Console V1', { exact: true }).waitFor({ timeout: 15000 });
+  await page.getByText('Whipify Mission Control').waitFor({ timeout: 15000 });
 
   await browser.close();
   console.log('client portal v1 regression passed');

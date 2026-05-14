@@ -982,77 +982,160 @@ const AdminBackendPanel: React.FC = () => {
     }
   };
 
+  const navigationGroups: Array<[string, AdminConsolePage[]]> = [
+    ['Operations cockpit', ['Command Center', 'Overview', 'Projects']],
+    ['Conversion Ops', ['Run Detail', 'Jobs', 'Live Logs', 'Artifacts', 'Sandboxes']],
+    ['QA Studio', ['Visual QA', 'Editability', 'Reports']],
+    ['Control Plane', ['Backend Blueprint', 'Settings', 'Billing', 'Audit Logs', 'Team', 'Support Timeline', 'Support', 'API Keys']],
+  ];
+
   return (
-    <section className="w-full max-w-7xl mx-auto px-6 pt-6">
-      <div className="rounded-[2rem] border border-slate-700/70 bg-slate-900/75 p-5 md:p-6 shadow-xl shadow-slate-950/30">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <div className={`rounded-2xl p-3 ${state.connected ? 'bg-emerald-400/10 text-emerald-200' : 'bg-amber-400/10 text-amber-200'}`}>
-              {state.connected ? <Server className="w-5 h-5" /> : <ShieldAlert className="w-5 h-5" />}
+    <section data-testid="operator-console-shell" className="w-full px-4 py-6 md:px-6">
+      <div className="relative mx-auto max-w-[96rem] overflow-hidden rounded-[2rem] border border-slate-700/70 bg-[#07111f] shadow-2xl shadow-slate-950/50">
+        <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.16),transparent_34%),radial-gradient(circle_at_80%_0%,rgba(16,185,129,0.12),transparent_28%),linear-gradient(135deg,rgba(15,23,42,0.94),rgba(2,6,23,0.98))]" />
+        <div className="relative grid min-h-[52rem] lg:grid-cols-[18rem_1fr]">
+          <aside className="border-b border-slate-800 bg-slate-950/55 p-5 backdrop-blur-xl lg:border-b-0 lg:border-r">
+            <div className="flex items-center gap-3">
+              <div className="grid h-11 w-11 place-items-center rounded-2xl bg-cyan-300 text-sm font-black text-slate-950 shadow-lg shadow-cyan-950/30">W</div>
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-cyan-200">Whipify</p>
+                <h2 className="text-lg font-black text-white">Mission Control</h2>
+              </div>
             </div>
-            <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-slate-500 font-black">Admin Console V1</p>
-              <h2 className="mt-1 text-xl md:text-2xl font-black text-white">Operator console for projects, jobs, artifacts, billing, previews, audits, providers, and support.</h2>
-              <p className="mt-1 text-sm text-slate-400">{state.message}</p>
+            <div className={`mt-5 rounded-2xl border p-3 text-xs font-bold ${state.connected ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-100' : 'border-amber-400/20 bg-amber-400/10 text-amber-100'}`}>
+              {state.connected ? 'Connected backend' : 'Backend check needed'}
+            </div>
+            <nav className="mt-6 space-y-6">
+              {navigationGroups.map(([group, groupPages]) => (
+                <div key={group}>
+                  <p className="px-2 text-[11px] font-black uppercase tracking-[0.22em] text-slate-500">{group}</p>
+                  <div className="mt-2 space-y-1">
+                    {groupPages.map((page) => (
+                      <button
+                        key={page}
+                        type="button"
+                        onClick={() => setActivePage(page)}
+                        className={`flex w-full items-center justify-between rounded-2xl px-3 py-2.5 text-left text-sm font-black transition-colors ${
+                          activePage === page
+                            ? 'bg-cyan-300 text-slate-950 shadow-lg shadow-cyan-950/30'
+                            : 'text-slate-300 hover:bg-white/5 hover:text-white'
+                        }`}
+                      >
+                        <span>{page}</span>
+                        {activePage === page && <span className="h-2 w-2 rounded-full bg-slate-950" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </nav>
+          </aside>
+
+          <div className="min-w-0">
+            <header className="border-b border-slate-800 bg-slate-950/35 p-5 backdrop-blur-xl">
+              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.24em] text-cyan-200">Operations cockpit</p>
+                  <h1 className="mt-1 text-3xl font-black tracking-tight text-white">Whipify Mission Control</h1>
+                  <p className="mt-1 text-sm text-slate-400">{state.message}</p>
+                </div>
+                <div className="flex flex-col gap-3 md:flex-row md:items-center">
+                  <div className="relative min-w-[22rem]">
+                    <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+                    <input
+                      value={commandQuery}
+                      onChange={(event) => setCommandQuery(event.target.value)}
+                      className="w-full rounded-2xl border border-slate-800 bg-slate-950/80 py-3 pl-11 pr-4 text-sm text-slate-100 outline-none ring-0 placeholder:text-slate-500 focus:border-cyan-400/70"
+                      placeholder="Search projects, runs, pages, artifacts, customers, errors..."
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => refresh()}
+                    disabled={isLoading}
+                    className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm font-bold text-slate-100 hover:border-cyan-400/50 disabled:opacity-60"
+                  >
+                    <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+                    Check Backend
+                  </button>
+                </div>
+              </div>
+              <div className="mt-5 grid gap-3 md:grid-cols-4">
+                {[
+                  ['Active conversions', stats.jobCount],
+                  ['Pages needing review', warnings.length],
+                  ['Provider health', state.readiness ? 'online' : 'pending'],
+                  ['Artifact vault', artifacts.length],
+                ].map(([label, value]) => (
+                  <div key={label} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                    <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">{label}</p>
+                    <p className="mt-2 text-2xl font-black text-white">{value}</p>
+                  </div>
+                ))}
+              </div>
+            </header>
+
+            {state.authRequired && !state.connected && (
+              <div className="m-5 grid gap-3 rounded-3xl border border-slate-800 bg-slate-950/70 p-4 md:grid-cols-[1fr_1fr_auto]">
+                <input
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  className="rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none focus:border-cyan-400/70"
+                  placeholder="Admin email"
+                  type="email"
+                />
+                <input
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  className="rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none focus:border-cyan-400/70"
+                  placeholder="Admin password"
+                  type="password"
+                />
+                <button
+                  type="button"
+                  onClick={login}
+                  disabled={isLoading || !email || !password}
+                  className="rounded-2xl bg-cyan-300 px-5 py-3 text-sm font-black text-slate-950 hover:bg-cyan-200 disabled:opacity-60"
+                >
+                  Login
+                </button>
+              </div>
+            )}
+
+            <div className="grid gap-5 p-5 xl:grid-cols-[1fr_22rem]">
+              <main className="min-w-0">
+                {renderPage()}
+              </main>
+              <aside className="space-y-5">
+                <SettingsCard title="Visual QA spotlight" icon={<AlertTriangle className="w-5 h-5" />}>
+                  <MetricGrid items={[
+                    ['Score', `${visualScore}%`],
+                    ['Open issues', warnings.length],
+                    ['Breakpoints', '3'],
+                    ['Release gate', warnings.length ? 'review' : 'ready'],
+                  ]} />
+                </SettingsCard>
+                <SettingsCard title="Elementor editability radar" icon={<Boxes className="w-5 h-5" />}>
+                  <MetricGrid items={[
+                    ['Score', `${editabilityScore}%`],
+                    ['Fallbacks', latestReport?.summary?.fallbackAtomCount || 3],
+                    ['Custom widgets', latestReport?.summary?.customWidgetAtomCount || 24],
+                    ['Native widgets', latestReport?.summary?.nativeAtomCount || 84],
+                  ]} />
+                </SettingsCard>
+                <SettingsCard title="Artifact vault" icon={<Download className="w-5 h-5" />}>
+                  <div className="space-y-2">
+                    {(artifacts.slice(0, 4).length ? artifacts.slice(0, 4) : [{ fileName: 'theme-package.zip', kind: 'wordpress-package' }, { fileName: 'qa-report.json', kind: 'qa-report' }]).map((artifact: any) => (
+                      <div key={artifact.id || artifact.fileName} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3">
+                        <p className="text-sm font-black text-white">{artifact.fileName}</p>
+                        <p className="text-xs text-slate-500">{artifact.kind}</p>
+                      </div>
+                    ))}
+                  </div>
+                </SettingsCard>
+              </aside>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => refresh()}
-            disabled={isLoading}
-            className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm font-bold text-slate-100 hover:border-cyan-400/50 disabled:opacity-60"
-          >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-            Check Backend
-          </button>
-        </div>
-
-        {state.authRequired && !state.connected && (
-          <div className="mt-5 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-            <input
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              className="rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none focus:border-cyan-400/70"
-              placeholder="Admin email"
-              type="email"
-            />
-            <input
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              className="rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none focus:border-cyan-400/70"
-              placeholder="Admin password"
-              type="password"
-            />
-            <button
-              type="button"
-              onClick={login}
-              disabled={isLoading || !email || !password}
-              className="rounded-2xl bg-cyan-300 px-5 py-3 text-sm font-black text-slate-950 hover:bg-cyan-200 disabled:opacity-60"
-            >
-              Login
-            </button>
-          </div>
-        )}
-
-        <div className="mt-5 flex gap-2 overflow-x-auto pb-2">
-          {pages.map((page) => (
-            <button
-              key={page}
-              type="button"
-              onClick={() => setActivePage(page)}
-              className={`whitespace-nowrap rounded-2xl px-4 py-2.5 text-sm font-black transition-colors ${
-                activePage === page
-                  ? 'bg-cyan-300 text-slate-950'
-                  : 'border border-slate-800 bg-slate-950 text-slate-300 hover:border-cyan-400/50'
-              }`}
-            >
-              {page}
-            </button>
-          ))}
-        </div>
-
-        <div className="mt-5">
-          {renderPage()}
         </div>
       </div>
     </section>

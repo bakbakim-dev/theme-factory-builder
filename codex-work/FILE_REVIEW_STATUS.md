@@ -711,3 +711,19 @@ Status values: `reviewed`, `partially reviewed`, `needs second pass`, `fixed`, `
 - review status: fixed
 - notes: Updated old tab navigation selectors to exact button names after adding `Support Timeline`.
 - related tests: `npm run test:admin-console-v1`.
+
+## Operator Console Mission Control Redesign - 2026-05-14
+
+- path: components/AdminBackendPanel.tsx
+- category: source
+- lane/scope: SaaS / admin UI / operator console
+- review status: fixed
+- notes: Replaced old tab-strip admin panel shell with full Mission Control layout: sidebar groups, command bar, KPI strip, central page content, and right operations rail.
+- related tests: `npm run test:operator-console-redesign`; `npm run test:admin-ops-ui-v2`; `npm run test:admin-console-v1`; `npm run build`.
+
+- path: scripts/operator-console-redesign-regression.mjs
+- category: test
+- lane/scope: SaaS / admin UI / regression
+- review status: fixed
+- notes: Verifies the redesigned Mission Control shell, sidebar group labels, command search, KPI strip, right rail cards, and navigation into Visual QA/Live Logs.
+- related tests: `npm run test:operator-console-redesign`.
