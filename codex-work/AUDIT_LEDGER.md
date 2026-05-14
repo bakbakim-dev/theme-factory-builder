@@ -585,3 +585,17 @@
 - status: fixed
 - related tests: `npm run test:production-backend-blueprint`; `npm run test:admin-console-v1`; `npm run build`; SaaS/backend regressions.
 - fix evidence: The blueprint regression now verifies Neon Postgres, Better Auth, Cloudflare R2, Trigger.dev, Stripe Billing, Temporal Cloud, SQL schema contract strings, provider readiness counts, and the operator UI page with Vercel-style and Trigger.dev-style product cues.
+
+## Admin Ops UI V2 - 2026-05-14
+
+- ID: AUD-ADMIN-OPS-UI-007
+- severity: high
+- lane/scope: SaaS / admin UI / conversion operations
+- file: `components/AdminBackendPanel.tsx`; `scripts/admin-ops-ui-v2-regression.mjs`; `scripts/admin-console-v1-regression.mjs`
+- line/range if available: n/a
+- finding: Admin Console V1 covered core management pages, but it still lacked Whipify-specific operations surfaces for command search, run timelines, live logs, visual QA, Elementor editability, and customer support timelines.
+- why it matters: Whipify is a conversion operations product. Operators need purpose-built screens to debug visual mismatches, non-editable Elementor regions, failed conversion runs, customer previews, artifact handoff, and support activity.
+- recommended fix: Add Admin Ops UI V2 pages inspired by Vercel-style project/deployment pages, Trigger.dev-style run logs, Sentry-style triage, and Stripe/Supabase-style provider/account operations.
+- status: fixed
+- related tests: `npm run test:admin-ops-ui-v2`; `npm run test:admin-console-v1`; `npm run build`; backend and converter guardrails.
+- fix evidence: Admin Ops UI V2 regression verifies Command Center, Run Detail, Live Logs, Visual QA, Editability, and Support Timeline pages plus key actions and status text.

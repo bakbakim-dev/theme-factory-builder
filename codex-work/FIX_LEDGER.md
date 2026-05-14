@@ -414,3 +414,19 @@
   - Added a dedicated Admin Console `Backend Blueprint` page showing the recommended stack, provider readiness, schema contract, and UI inspiration cues.
   - Added `npm run test:production-backend-blueprint`.
 - Risk: This is still a provider blueprint, not a live integration. Real Neon, Better Auth, R2, Trigger.dev, Stripe, and sandbox wiring still need actual credentials and deployment adapters.
+
+## Admin Ops UI V2 - 2026-05-14
+
+- Changed files: `components/AdminBackendPanel.tsx`, `scripts/admin-ops-ui-v2-regression.mjs`, `scripts/admin-console-v1-regression.mjs`, `package.json`, `codex-work/*`
+- Reason: Add Whipify-specific conversion operations screens based on current SaaS admin patterns from Vercel, Trigger.dev, Stripe, Sentry, Supabase, and Linear-style workflows.
+- Issue IDs fixed: AUD-ADMIN-OPS-UI-007
+- Changes:
+  - Added `Command Center` with global search and quick actions.
+  - Added `Run Detail` with conversion timeline, run controls, metadata, and retry/cancel/copy/open actions.
+  - Added `Live Logs` with structured stage/severity log cards and log controls.
+  - Added `Visual QA` with source screenshot, converted screenshot, diff heatmap, and visual issue labels.
+  - Added `Editability` with Elementor editability score, widget/fallback metrics, editable region checks, and regenerate/custom-widget actions.
+  - Added `Support Timeline` with customer timeline, safe impersonation request, support note, and support guardrails.
+  - Added `npm run test:admin-ops-ui-v2`.
+  - Tightened existing Admin Console V1 tab selectors to exact matches after adding `Support Timeline`.
+- Risk: The new pages are UI/operations surfaces over the current local/test providers. Real screenshot images, run log streams, support notes, and editability drilldowns still need provider-backed data.

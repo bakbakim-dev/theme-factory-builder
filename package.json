@@ -42,6 +42,7 @@
     "test:admin-console-v1": "node scripts/admin-console-v1-regression.mjs",
     "test:client-portal-v1": "node scripts/client-portal-v1-regression.mjs",
     "test:production-backend-blueprint": "node scripts/production-backend-blueprint-regression.mjs",
+    "test:admin-ops-ui-v2": "node scripts/admin-ops-ui-v2-regression.mjs",
     "admin:backend": "node scripts/start-admin-backend.mjs",
     "test:static-dashboard-smoke": "node scripts/static-dashboard-smoke.mjs"
   },

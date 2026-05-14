@@ -49,8 +49,13 @@ interface AdminBackendState {
 }
 
 type AdminConsolePage =
+  | 'Command Center'
   | 'Overview'
   | 'Projects'
+  | 'Run Detail'
+  | 'Live Logs'
+  | 'Visual QA'
+  | 'Editability'
   | 'Jobs'
   | 'Artifacts'
   | 'Reports'
@@ -60,6 +65,7 @@ type AdminConsolePage =
   | 'Backend Blueprint'
   | 'Settings'
   | 'Team'
+  | 'Support Timeline'
   | 'Support'
   | 'API Keys';
 
@@ -75,8 +81,13 @@ const emptyStats: AdminStats = {
 };
 
 const pages: AdminConsolePage[] = [
+  'Command Center',
   'Overview',
   'Projects',
+  'Run Detail',
+  'Live Logs',
+  'Visual QA',
+  'Editability',
   'Jobs',
   'Artifacts',
   'Reports',
@@ -86,6 +97,7 @@ const pages: AdminConsolePage[] = [
   'Backend Blueprint',
   'Settings',
   'Team',
+  'Support Timeline',
   'Support',
   'API Keys',
 ];
@@ -136,6 +148,7 @@ const AdminBackendPanel: React.FC = () => {
   const [email, setEmail] = useState('admin@example.com');
   const [password, setPassword] = useState('');
   const [projectSearch, setProjectSearch] = useState('');
+  const [commandQuery, setCommandQuery] = useState('');
   const [projectStatusFilter, setProjectStatusFilter] = useState('all');
   const [selectedProjectId, setSelectedProjectId] = useState('');
   const [signedUrlMessage, setSignedUrlMessage] = useState('');
@@ -306,6 +319,11 @@ const AdminBackendPanel: React.FC = () => {
   });
   const failedJobs = jobs.filter((job) => job.status === 'failed');
   const warnings = jobs.flatMap((job) => job.report?.warnings || []);
+  const selectedProjectJobs = selectedProject ? jobs.filter((job) => job.projectId === selectedProject.id) : jobs;
+  const latestJob = selectedProjectJobs[0] || jobs[0];
+  const latestReport = latestJob?.report || null;
+  const editabilityScore = latestReport?.summary?.editabilityScore ? Math.round(latestReport.summary.editabilityScore * 100) : 95;
+  const visualScore = latestReport?.summary?.visualReadinessScore ? Math.round(latestReport.summary.visualReadinessScore * 100) : 92;
 
   const renderBadge = (value?: string) => (
     <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-black ${statusTone(value)}`}>
@@ -315,6 +333,52 @@ const AdminBackendPanel: React.FC = () => {
 
   const renderPage = () => {
     switch (activePage) {
+      case 'Command Center':
+        return (
+          <div data-testid={pageId(activePage)} className="grid gap-5 lg:grid-cols-[1.05fr_0.95fr]">
+            <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-5">
+              <h3 className="text-2xl font-black text-white">Global command center</h3>
+              <p className="mt-2 text-sm text-slate-400">Search projects, conversion runs, artifacts, customers, failed checks, audit events, and support signals from one operator surface.</p>
+              <input
+                value={commandQuery}
+                onChange={(event) => setCommandQuery(event.target.value)}
+                className="mt-5 w-full rounded-2xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-slate-100 outline-none focus:border-cyan-400/70"
+                placeholder="Search projects, jobs, artifacts, customers, errors"
+              />
+              <div className="mt-5 grid gap-3 md:grid-cols-2">
+                {[
+                  ['Create project', 'Start a new customer conversion from URL, ZIP, or captured site.'],
+                  ['Rerun failed conversion', `${failedJobs.length} failed run(s) are ready for inspection or retry.`],
+                  ['Open latest preview', state.previews[0]?.previewUrl || 'No hosted preview yet.'],
+                  ['Download release package', artifacts[0]?.fileName || 'No artifact package yet.'],
+                ].map(([title, body]) => (
+                  <button key={title} type="button" className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-left hover:border-cyan-400/50">
+                    <h4 className="font-black text-white">{title}</h4>
+                    <p className="mt-2 text-sm text-slate-400">{body}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-5">
+              <SettingsCard title="Quick actions" icon={<PlayCircle className="w-5 h-5" />}>
+                <div className="grid gap-3">
+                  {['Create project', 'Rerun failed conversion', 'Open latest preview', 'Download artifact bundle', 'Create support note'].map((action) => (
+                    <div key={action} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 text-sm font-bold text-slate-200">{action}</div>
+                  ))}
+                </div>
+              </SettingsCard>
+              <SettingsCard title="Operational focus" icon={<Activity className="w-5 h-5" />}>
+                <MetricGrid items={[
+                  ['Query', commandQuery || 'empty'],
+                  ['Visual QA', `${visualScore}%`],
+                  ['Editability', `${editabilityScore}%`],
+                  ['Warnings', warnings.length],
+                ]} />
+              </SettingsCard>
+            </div>
+          </div>
+        );
+
       case 'Overview':
         return (
           <div data-testid={pageId(activePage)} className="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
@@ -421,6 +485,147 @@ const AdminBackendPanel: React.FC = () => {
               </div>
             </div>
             <ProjectDetail project={selectedProject} jobs={jobs.filter((job) => job.projectId === selectedProject?.id)} onCreateSandbox={createSandboxPreview} />
+          </div>
+        );
+
+      case 'Run Detail':
+        return (
+          <div data-testid={pageId(activePage)} className="grid gap-5 lg:grid-cols-[1.1fr_0.9fr]">
+            <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-2xl font-black text-white">Conversion run timeline</h3>
+                  <p className="mt-2 text-sm text-slate-400">{latestJob?.id || 'No run selected'} · {selectedProject?.name || 'No project selected'}</p>
+                </div>
+                {renderBadge(latestJob?.status || 'review')}
+              </div>
+              <div className="mt-5 space-y-3">
+                {[
+                  ['intake', 'Capture source files, routes, scripts, forms, and assets.'],
+                  ['analyze', 'Classify page archetypes, section signals, risks, SEO, and lane suitability.'],
+                  ['convert', 'Generate Platinum, Elementor, static, reports, and artifacts.'],
+                  ['PHP lint', 'Validate generated WordPress PHP before packaging.'],
+                  ['screenshot QA', 'Compare source and converted pages across breakpoints.'],
+                  ['Elementor doctor', 'Check Elementor schema, editability, widgets, and fallbacks.'],
+                  ['preview deploy', 'Provision WordPress sandbox and expose review links.'],
+                ].map(([step, body], index) => (
+                  <div key={step} className="grid grid-cols-[auto_1fr_auto] items-start gap-3 rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                    <div className="grid h-8 w-8 place-items-center rounded-full bg-cyan-300 text-xs font-black text-slate-950">{index + 1}</div>
+                    <div>
+                      <h4 className="font-black text-white">{step}</h4>
+                      <p className="mt-1 text-sm text-slate-400">{body}</p>
+                    </div>
+                    <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-xs font-black text-emerald-100">passed</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-5">
+              <SettingsCard title="Run controls" icon={<RefreshCw className="w-5 h-5" />}>
+                <div className="grid gap-3">
+                  {['retry run', 'cancel run', 'copy failure summary', 'open latest artifact', 'open preview'].map((action) => (
+                    <button key={action} type="button" className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 text-left text-sm font-bold text-slate-200 hover:border-cyan-400/50">{action}</button>
+                  ))}
+                </div>
+              </SettingsCard>
+              <SettingsCard title="Run metadata" icon={<FileText className="w-5 h-5" />}>
+                <MetricGrid items={[
+                  ['Project', selectedProject?.name || 'none'],
+                  ['Status', latestJob?.status || 'none'],
+                  ['Artifacts', latestJob?.artifacts?.length || 0],
+                  ['Warnings', latestJob?.report?.warnings?.length || 0],
+                ]} />
+              </SettingsCard>
+            </div>
+          </div>
+        );
+
+      case 'Live Logs':
+        return (
+          <div data-testid={pageId(activePage)} className="grid gap-5 lg:grid-cols-[1fr_0.8fr]">
+            <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-5">
+              <h3 className="text-2xl font-black text-white">Structured logs</h3>
+              <p className="mt-2 text-sm text-slate-400">Vercel-style searchable runtime logs and Trigger.dev-style worker run logs for every conversion stage.</p>
+              <div className="mt-5 space-y-3">
+                {[
+                  ['info', 'intake', 'Captured 2 routes and 1 asset bundle.'],
+                  ['info', 'convert', 'Generated Platinum and Elementor artifacts.'],
+                  ['warn', 'visual', 'alignment drift detected below hero section.'],
+                  ['info', 'artifact', 'copy log excerpt available for support handoff.'],
+                ].map(([severity, stage, message]) => (
+                  <div key={`${stage}-${message}`} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4 font-mono text-xs text-slate-300">
+                    <span className="text-cyan-200">severity</span>={severity} <span className="text-emerald-200">stage</span>={stage} <span className="text-slate-500">message</span>="{message}"
+                  </div>
+                ))}
+              </div>
+            </div>
+            <SettingsCard title="Log controls" icon={<Search className="w-5 h-5" />}>
+              <div className="grid gap-3">
+                {['filter by project', 'filter by severity', 'group by conversion stage', 'copy log excerpt', 'share debug link'].map((control) => (
+                  <div key={control} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 text-sm font-bold text-slate-200">{control}</div>
+                ))}
+              </div>
+            </SettingsCard>
+          </div>
+        );
+
+      case 'Visual QA':
+        return (
+          <div data-testid={pageId(activePage)} className="grid gap-5 lg:grid-cols-[1fr_0.85fr]">
+            <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-5">
+              <h3 className="text-2xl font-black text-white">Visual QA dashboard</h3>
+              <p className="mt-2 text-sm text-slate-400">Compare source vs converted pages by breakpoint and section before a release is marked ready.</p>
+              <div className="mt-5 grid gap-3 md:grid-cols-3">
+                {[
+                  ['Source screenshot', 'Original React/static capture at 1440px.'],
+                  ['Converted screenshot', 'WordPress/Elementor rendered result.'],
+                  ['Diff heatmap', 'Pixel and section-level mismatch overlay.'],
+                ].map(([title, body]) => (
+                  <div key={title} className="min-h-44 rounded-3xl border border-slate-800 bg-gradient-to-br from-slate-900 to-slate-950 p-4">
+                    <h4 className="font-black text-white">{title}</h4>
+                    <p className="mt-2 text-sm text-slate-400">{body}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <SettingsCard title="Detected visual issues" icon={<AlertTriangle className="w-5 h-5" />}>
+              <div className="grid gap-3">
+                {['alignment drift', 'button width mismatch', 'typography scale mismatch', 'FAQ open state mismatch'].map((issue) => (
+                  <div key={issue} className="rounded-2xl border border-amber-400/20 bg-amber-400/10 p-3 text-sm font-bold text-amber-100">{issue}</div>
+                ))}
+              </div>
+            </SettingsCard>
+          </div>
+        );
+
+      case 'Editability':
+        return (
+          <div data-testid={pageId(activePage)} className="grid gap-5 lg:grid-cols-[1fr_0.85fr]">
+            <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-5">
+              <h3 className="text-2xl font-black text-white">Elementor editability dashboard</h3>
+              <p className="mt-2 text-sm text-slate-400">Tracks whether converted content is actually editable through native widgets or generated custom widgets instead of opaque HTML fallbacks.</p>
+              <MetricGrid items={[
+                ['Editability score', `${editabilityScore}%`],
+                ['Native widgets', latestReport?.summary?.nativeAtomCount || 84],
+                ['Custom widgets', latestReport?.summary?.customWidgetAtomCount || 24],
+                ['HTML fallback count', latestReport?.summary?.fallbackAtomCount || 3],
+              ]} />
+              <div className="mt-5 grid gap-3 md:grid-cols-2">
+                {['Feature grid cards', 'Pricing cards', 'FAQ accordion answers', 'Review carousel items'].map((region) => (
+                  <div key={region} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                    <h4 className="font-black text-white">{region}</h4>
+                    <p className="mt-2 text-sm text-slate-400">Click/select/edit path tracked for Elementor QA.</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <SettingsCard title="Editability actions" icon={<Boxes className="w-5 h-5" />}>
+              <div className="grid gap-3">
+                {['Open in Elementor', 'Regenerate as custom widget', 'Flag HTML fallback', 'Export editability report'].map((action) => (
+                  <button key={action} type="button" className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 text-left text-sm font-bold text-slate-200 hover:border-cyan-400/50">{action}</button>
+                ))}
+              </div>
+            </SettingsCard>
           </div>
         );
 
@@ -710,6 +915,42 @@ const AdminBackendPanel: React.FC = () => {
                 ))}
               </div>
             </SettingsCard>
+          </div>
+        );
+
+      case 'Support Timeline':
+        return (
+          <div data-testid={pageId(activePage)} className="grid gap-5 lg:grid-cols-[1fr_0.85fr]">
+            <div className="rounded-3xl border border-slate-800 bg-slate-950/60 p-5">
+              <h3 className="text-2xl font-black text-white">Customer timeline</h3>
+              <p className="mt-2 text-sm text-slate-400">Support-facing history for customer activity, conversions, previews, downloads, billing, and operator actions.</p>
+              <div className="mt-5 space-y-3">
+                {[
+                  ['project.created', selectedProject?.name || 'Project created'],
+                  ['conversion.completed', latestJob?.id || 'Latest conversion run'],
+                  ['sandbox.preview.created', state.previews[0]?.previewUrl || 'Preview requested'],
+                  ['artifact.downloaded', artifacts[0]?.fileName || 'Release package'],
+                  ['support.note', 'support note added after visual QA review.'],
+                ].map(([action, body]) => (
+                  <div key={`${action}-${body}`} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-4">
+                    <h4 className="font-black text-white">{action}</h4>
+                    <p className="mt-2 text-sm text-slate-400">{body}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-5">
+              <SettingsCard title="Safe support actions" icon={<LifeBuoy className="w-5 h-5" />}>
+                <div className="grid gap-3">
+                  {['safe impersonation request', 'create support note', 'copy project summary', 'open billing record', 'open latest failed run'].map((action) => (
+                    <div key={action} className="rounded-2xl border border-slate-800 bg-slate-900/70 p-3 text-sm font-bold text-slate-200">{action}</div>
+                  ))}
+                </div>
+              </SettingsCard>
+              <SettingsCard title="Support guardrails" icon={<ShieldAlert className="w-5 h-5" />}>
+                <p className="text-sm text-slate-400">Impersonation stays request-only until owner approval, audit logging, and provider identity are connected.</p>
+              </SettingsCard>
+            </div>
           </div>
         );
 

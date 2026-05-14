@@ -688,3 +688,26 @@ Status values: `reviewed`, `partially reviewed`, `needs second pass`, `fixed`, `
 - review status: fixed
 - notes: Verifies the recommended backend stack, SQL contract, readiness counts, and the new admin-console blueprint page.
 - related tests: `npm run test:production-backend-blueprint`.
+
+## Admin Ops UI V2 - 2026-05-14
+
+- path: components/AdminBackendPanel.tsx
+- category: source
+- lane/scope: SaaS / admin UI / conversion operations
+- review status: fixed
+- notes: Added Command Center, Run Detail, Live Logs, Visual QA, Editability, and Support Timeline pages to make the admin backend UI Whipify-specific rather than generic CRUD/admin tooling.
+- related tests: `npm run test:admin-ops-ui-v2`; `npm run test:admin-console-v1`; `npm run build`.
+
+- path: scripts/admin-ops-ui-v2-regression.mjs
+- category: test
+- lane/scope: SaaS / admin UI / regression
+- review status: fixed
+- notes: Seeds a project/job/preview and verifies the new ops pages, quick actions, run timeline, structured logs, visual QA, editability, and support timeline surfaces.
+- related tests: `npm run test:admin-ops-ui-v2`.
+
+- path: scripts/admin-console-v1-regression.mjs
+- category: test
+- lane/scope: SaaS / admin UI / regression
+- review status: fixed
+- notes: Updated old tab navigation selectors to exact button names after adding `Support Timeline`.
+- related tests: `npm run test:admin-console-v1`.

@@ -121,34 +121,34 @@ try {
     'API Keys',
   ];
   for (const tab of expectedTabs) {
-    await page.getByRole('button', { name: tab }).click();
+    await page.getByRole('button', { name: tab, exact: true }).click();
     await page.getByTestId(`admin-console-page-${tab.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`).waitFor({ timeout: 15000 });
   }
 
-  await page.getByRole('button', { name: 'Projects' }).click();
+  await page.getByRole('button', { name: 'Projects', exact: true }).click();
   await page.getByPlaceholder('Search projects').fill('Console');
   await page.getByRole('heading', { name: 'Console Test Site' }).first().waitFor({ timeout: 15000 });
   await page.getByRole('button', { name: 'Open Detail' }).first().click();
   await page.getByText('Project Detail').waitFor({ timeout: 15000 });
 
-  await page.getByRole('button', { name: 'Artifacts' }).click();
+  await page.getByRole('button', { name: 'Artifacts', exact: true }).click();
   await page.getByRole('button', { name: 'Create Signed URL' }).first().click();
   await page.getByText('Signed URL ready').waitFor({ timeout: 15000 });
 
-  await page.getByRole('button', { name: 'Reports' }).click();
+  await page.getByRole('button', { name: 'Reports', exact: true }).click();
   await page.getByText('Conversion Report Viewer').waitFor({ timeout: 15000 });
 
-  await page.getByRole('button', { name: 'Audit Logs' }).click();
+  await page.getByRole('button', { name: 'Audit Logs', exact: true }).click();
   await page.getByText('sandbox.preview.created').waitFor({ timeout: 15000 });
 
-  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByText('Provider Configuration').waitFor({ timeout: 15000 });
   await page.getByText('Worker Health').waitFor({ timeout: 15000 });
   await page.getByText('Rate Limit Usage').waitFor({ timeout: 15000 });
   await page.getByText('Incident Dashboard').waitFor({ timeout: 15000 });
   await page.getByText('Admin Notifications').waitFor({ timeout: 15000 });
 
-  await page.getByRole('button', { name: 'Support' }).click();
+  await page.getByRole('button', { name: 'Support', exact: true }).click();
   await page.getByText('Impersonation requires owner role and explicit audit trail').waitFor({ timeout: 15000 });
 
   await browser.close();

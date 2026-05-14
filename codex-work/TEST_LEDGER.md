@@ -1538,3 +1538,60 @@
 - result: pass
 - relevant output summary: Production infrastructure regression still passed after backend blueprint changes.
 - related fix/finding IDs: AUD-PROD-BACKEND-BLUEPRINT-006
+
+## Admin Ops UI V2 - 2026-05-14
+
+- command: `npm run test:admin-ops-ui-v2`
+- result: fail, then pass
+- relevant output summary: Initial red run failed because the new Command Center / Run Detail / Live Logs / Visual QA / Editability / Support Timeline pages did not exist. After implementation, the regression passed and verified all new operations pages and key text/actions.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run build`
+- result: pass
+- relevant output summary: Vite production build passed. Existing warnings remain for missing `/index.css` at build time and large bundle size.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:admin-console-v1`
+- result: fail, then pass
+- relevant output summary: Initial run failed because the old selector for `Support` also matched `Support Timeline`. Test was tightened to exact tab names and then passed.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:client-portal-v1`
+- result: pass
+- relevant output summary: Client portal regression passed after Admin Ops UI V2 changes.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:production-backend-blueprint`
+- result: pass
+- relevant output summary: Production backend blueprint regression passed after Admin Ops UI V2 changes.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:production-infrastructure-v3`
+- result: pass
+- relevant output summary: Production infrastructure regression passed after Admin Ops UI V2 changes.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:production-backend-v2`
+- result: pass
+- relevant output summary: Production backend V2 regression passed after Admin Ops UI V2 changes.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:admin-backend`
+- result: pass
+- relevant output summary: Admin backend regression passed after Admin Ops UI V2 changes.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:gutenberg-parity`
+- result: pass
+- relevant output summary: Gutenberg parity regression passed after Admin Ops UI V2 changes.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:elementor-export`
+- result: pass
+- relevant output summary: Elementor export regression passed after Admin Ops UI V2 changes.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
+
+- command: `npm run test:elementor-output-doctor`
+- result: pass
+- relevant output summary: Elementor output doctor regression passed after Admin Ops UI V2 changes.
+- related fix/finding IDs: AUD-ADMIN-OPS-UI-007
