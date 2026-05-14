@@ -304,3 +304,17 @@
   - Added a visible React SaaS Core panel that runs a sample local conversion job and persists it in browser storage.
   - Added `npm run test:saas-core`.
 - Risk: This is SaaS Core V1, not full hosted SaaS. Auth, billing, remote queues, object storage, and hosted WordPress sandbox infrastructure remain future work.
+
+## SaaS Core V2 Local Pipeline Slice - 2026-05-14
+
+- Changed files: `utils/saas-core/types.ts`, `utils/saas-core/intake.ts`, `utils/saas-core/artifactStore.ts`, `utils/saas-core/jobRunner.ts`, `utils/saas-core/orchestrator.ts`, `components/SaasCorePanel.tsx`, `scripts/saas-core-regression.mjs`, `docs/superpowers/specs/2026-05-13-saas-core-v1-design.md`, `codex-work/*`
+- Reason: Move SaaS Core beyond a sample in-component job by adding reusable intake normalization, artifact storage, and a local executable job runner.
+- Issue IDs fixed: AUD-SAAS-CORE-003
+- Changes:
+  - Added uploaded/static file intake normalization from HTML/CSS/JS/image/font/document files.
+  - Added route extraction from HTML files and asset classification.
+  - Added memory artifact storage with manifest output and deterministic content hashing.
+  - Added a local SaaS conversion job runner that starts jobs, generates lane artifacts, stores QA report artifacts, and completes or fails through the orchestrator.
+  - Extended `completeConversionJob` to accept multiple artifacts while preserving the existing single-artifact call shape.
+  - Updated the SaaS dashboard panel to run the real local pipeline for both sample and uploaded-file intakes.
+- Risk: The generated lane artifacts are local pipeline artifacts/manifests, not hosted WordPress sandbox installs. Real converter lane execution and sandbox preview remain the next larger track.

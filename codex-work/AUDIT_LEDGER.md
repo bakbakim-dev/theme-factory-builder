@@ -489,3 +489,15 @@
 - status: fixed
 - related tests: documentation review; `npm run build`.
 - fix evidence: Added the SaaS Core V1 design and implementation plan under `docs/superpowers/`, both explicitly stating that auth, billing, remote queues, object storage, and hosted sandbox provisioning remain future work.
+
+- ID: AUD-SAAS-CORE-003
+- severity: high
+- lane/scope: SaaS / local conversion pipeline / artifact storage
+- file: `utils/saas-core/intake.ts`; `utils/saas-core/artifactStore.ts`; `utils/saas-core/jobRunner.ts`; `components/SaasCorePanel.tsx`
+- line/range if available: n/a
+- finding: SaaS Core V1 still used an in-component sample job. It had project/job/report models, but no reusable intake normalization, artifact storage seam, or local job runner that could execute a pipeline from selected site files.
+- why it matters: A SaaS foundation must run repeatable jobs from real user input and produce durable artifact manifests. Otherwise the dashboard is only a demo surface, not a product workflow.
+- recommended fix: Add static-site file intake normalization, a swappable artifact store, a local job runner that creates lane-specific artifacts and QA report artifacts, and wire the dashboard panel to run uploaded-file jobs.
+- status: fixed
+- related tests: `npm run test:saas-core`; local Playwright upload smoke; `npm run test:gutenberg-parity`; `npm run test:elementor-export`; `npm run test:elementor-output-doctor`; `npm run build`.
+- fix evidence: SaaS regression now covers uploaded-file intake, artifact storage, local job runner completion, four generated artifacts, and artifact report checks. Browser smoke verified both sample and uploaded-file flows.

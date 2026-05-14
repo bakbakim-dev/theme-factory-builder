@@ -1234,3 +1234,35 @@
 - result: pass
 - relevant output summary: Vite production build passed after mounting the SaaS panel. Existing warnings remain for missing `/index.css` at build time and large bundle size.
 - related fix/finding IDs: AUD-SAAS-CORE-001, AUD-SAAS-CORE-002
+
+## SaaS Core V2 Local Pipeline Slice - 2026-05-14
+
+- command: `npm run test:saas-core`
+- result: pass
+- relevant output summary: Regression now covers static file intake normalization, HTML route extraction, asset classification, memory artifact storage, local job runner completion, lane artifacts for Gutenberg/Elementor/static, QA report artifact generation, and artifact-storage QA checks.
+- related fix/finding IDs: AUD-SAAS-CORE-003
+
+- command: local Playwright smoke against `http://127.0.0.1:5175/`
+- result: pass
+- relevant output summary: Browser smoke ran the sample SaaS pipeline and a real uploaded-file intake flow with two HTML routes plus CSS/JS assets. The UI displayed the uploaded project label, route count, WordPress/static/Elementor/QA artifacts, and persisted the project with four artifacts.
+- related fix/finding IDs: AUD-SAAS-CORE-003
+
+- command: `npm run test:gutenberg-parity`
+- result: pass
+- relevant output summary: Gutenberg parity regression passed after the V2 local pipeline changes.
+- related fix/finding IDs: AUD-SAAS-CORE-003
+
+- command: `npm run test:elementor-export`
+- result: pass
+- relevant output summary: Elementor export regression passed after the V2 local pipeline changes.
+- related fix/finding IDs: AUD-SAAS-CORE-003
+
+- command: `npm run test:elementor-output-doctor`
+- result: pass
+- relevant output summary: Elementor output doctor regression passed after the V2 local pipeline changes.
+- related fix/finding IDs: AUD-SAAS-CORE-003
+
+- command: `npm run build`
+- result: pass
+- relevant output summary: Vite production build passed. Existing warnings remain for missing `/index.css` at build time and large bundle size.
+- related fix/finding IDs: AUD-SAAS-CORE-003

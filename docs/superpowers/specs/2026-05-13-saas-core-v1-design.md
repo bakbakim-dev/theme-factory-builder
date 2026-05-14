@@ -64,3 +64,16 @@ Each SaaS report must include:
 - The dashboard has a visible SaaS readiness panel with scores and next actions.
 - Existing Elementor and Gutenberg regression tests still pass.
 - `NEXT_PROMPT.md`, ledgers, and the plan file identify this as a SaaS Core V1 foundation, not a full production SaaS.
+
+## V2 Pipeline Extension
+
+The first V2 slice connects the SaaS model to an executable local pipeline:
+
+- Browser-selected site files can become a real `SaasIntakeSource`.
+- HTML files are normalized into routes.
+- CSS, JS, images, fonts, documents, and other files are normalized into assets.
+- A local job runner creates lane-specific artifact manifests for Platinum/Gutenberg, Elementor, static output, and QA reports.
+- Artifacts are stored through a swappable artifact store interface.
+- The dashboard can run both the sample pipeline and uploaded-file pipeline.
+
+This still does not provision hosted WordPress sandboxes or call cloud workers. It creates the local seam those systems can plug into.

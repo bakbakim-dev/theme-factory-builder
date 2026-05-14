@@ -324,3 +324,40 @@ Status values: `reviewed`, `partially reviewed`, `needs second pass`, `fixed`, `
 - review status: fixed
 - notes: Added regression coverage for analyzer, QA, job lifecycle, artifact manifest, and repository behavior.
 - related tests: `npm run test:saas-core`.
+
+## SaaS Core V2 Local Pipeline Slice - 2026-05-14
+
+- path: utils/saas-core/intake.ts
+- category: source
+- lane/scope: SaaS / intake normalization
+- review status: fixed
+- notes: Added static-site file intake normalization, HTML-to-route extraction, title/section/widget detection, form/script detection, and asset classification.
+- related tests: `npm run test:saas-core`; local Playwright upload smoke.
+
+- path: utils/saas-core/artifactStore.ts
+- category: source
+- lane/scope: SaaS / artifact storage
+- review status: fixed
+- notes: Added memory artifact store, manifest extraction, byte sizing, and deterministic pseudo-hash support for local pipeline artifacts.
+- related tests: `npm run test:saas-core`.
+
+- path: utils/saas-core/jobRunner.ts
+- category: source
+- lane/scope: SaaS / local job runner
+- review status: fixed
+- notes: Added local job runner that starts jobs, writes lane artifacts, writes QA report artifacts, attaches checks, and completes/fails through the orchestrator.
+- related tests: `npm run test:saas-core`; local Playwright upload smoke.
+
+- path: utils/saas-core/orchestrator.ts
+- category: source
+- lane/scope: SaaS / job orchestration
+- review status: fixed
+- notes: Extended `completeConversionJob` to accept multiple artifacts while preserving the existing single-artifact input shape.
+- related tests: `npm run test:saas-core`.
+
+- path: components/SaasCorePanel.tsx
+- category: source
+- lane/scope: SaaS / dashboard
+- review status: fixed
+- notes: Replaced in-component sample completion with the reusable local pipeline runner and added multi-file upload intake flow.
+- related tests: local Playwright upload smoke; `npm run build`.

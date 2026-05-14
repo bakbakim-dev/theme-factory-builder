@@ -39,6 +39,9 @@ await run(process.execPath, [
   'utils/saas-core/analyzer.ts',
   'utils/saas-core/qa.ts',
   'utils/saas-core/orchestrator.ts',
+  'utils/saas-core/intake.ts',
+  'utils/saas-core/artifactStore.ts',
+  'utils/saas-core/jobRunner.ts',
 ]);
 
 const { analyzeSaasIntake } = await import(pathToFileURL(path.join(compiledDir, 'analyzer.js')).href);
@@ -51,6 +54,9 @@ const {
   createStorageSaasProjectRepository,
   createMemorySaasProjectRepository,
 } = await import(pathToFileURL(path.join(compiledDir, 'orchestrator.js')).href);
+const { createSaasIntakeFromSiteFiles } = await import(pathToFileURL(path.join(compiledDir, 'intake.js')).href);
+const { createMemorySaasArtifactStore } = await import(pathToFileURL(path.join(compiledDir, 'artifactStore.js')).href);
+const { runLocalSaasConversionJob } = await import(pathToFileURL(path.join(compiledDir, 'jobRunner.js')).href);
 
 const sampleIntake = {
   id: 'intake-duty-cleaners',
@@ -177,5 +183,57 @@ const rehydratedRepository = createStorageSaasProjectRepository({
 });
 assert.equal(rehydratedRepository.listProjects()[0].id, 'project-1');
 assert.equal(rehydratedRepository.getProject('project-1')?.jobs[0].artifacts[0].fileName, 'duty-cleaners-wordpress.zip');
+
+const fileIntake = createSaasIntakeFromSiteFiles({
+  id: 'intake-files',
+  label: 'Uploaded static files',
+  sourceSummary: 'Synthetic file upload',
+  files: [
+    { path: 'index.html', content: '<html><body><section><h1>Home</h1><form></form><script src="/app.js"></script></section></body></html>' },
+    { path: 'pricing/index.html', content: '<html><body><section><h1>Pricing</h1><div data-widget="pricing"></div><button role="tab">Deep Cleaning</button></section></body></html>' },
+    { path: 'assets/app.css', content: 'body{font-family:sans-serif}' },
+    { path: 'assets/app.js', content: 'console.log("interactive")' },
+    { path: 'assets/hero.webp', bytes: new Uint8Array([1, 2, 3, 4]) },
+  ],
+});
+assert.equal(fileIntake.routes.length, 2);
+assert.equal(fileIntake.assets.length, 3);
+assert.equal(fileIntake.routes[0].path, '/');
+assert.equal(fileIntake.routes[1].path, '/pricing/');
+assert.equal(fileIntake.routes[0].hasForms, true);
+assert.equal(fileIntake.routes[1].widgetHints.includes('pricing'), true);
+
+const artifactStore = createMemorySaasArtifactStore();
+const runnerIds = ['runner-project', 'runner-job', 'artifact-wp', 'artifact-elementor', 'artifact-static', 'artifact-report'];
+const runnerTimes = ['2026-05-13T11:00:00.000Z', '2026-05-13T11:01:00.000Z', '2026-05-13T11:02:00.000Z', '2026-05-13T11:03:00.000Z'];
+const runnerProject = createSaasProject({
+  name: 'Uploaded Site',
+  intake: fileIntake,
+  selectedLanes: ['gutenberg-native', 'wordpress-elementor', 'static-site'],
+  nextId: () => runnerIds.shift() || 'runner-extra',
+  clock: () => runnerTimes.shift() || '2026-05-13T11:04:00.000Z',
+});
+const runnerJob = createConversionJob(runnerProject, {
+  selectedLanes: ['gutenberg-native', 'wordpress-elementor', 'static-site'],
+  nextId: () => runnerIds.shift() || 'runner-extra',
+  clock: () => runnerTimes.shift() || '2026-05-13T11:05:00.000Z',
+});
+const runnerResult = await runLocalSaasConversionJob({
+  project: runnerProject,
+  job: runnerJob,
+  artifactStore,
+  nextId: () => runnerIds.shift() || 'runner-extra',
+  clock: () => runnerTimes.shift() || '2026-05-13T11:06:00.000Z',
+});
+assert.equal(runnerResult.job.status, 'completed');
+assert.equal(runnerResult.project.status, 'completed');
+assert.equal(runnerResult.job.artifacts.length, 4);
+assert.ok(runnerResult.job.artifacts.some((artifact) => artifact.kind === 'wordpress-package'));
+assert.ok(runnerResult.job.artifacts.some((artifact) => artifact.kind === 'elementor-importer'));
+assert.ok(runnerResult.job.artifacts.some((artifact) => artifact.kind === 'static-site'));
+assert.ok(runnerResult.job.artifacts.some((artifact) => artifact.kind === 'qa-report'));
+assert.equal(artifactStore.listArtifacts().length, 4);
+assert.ok(artifactStore.readArtifact(runnerResult.job.artifacts[0].id)?.content.length > 0);
+assert.ok(runnerResult.job.report?.checks.some((check) => check.id === 'artifact-storage' && check.status === 'passed'));
 
 console.log('saas core regression passed');

@@ -4,12 +4,13 @@ import { analyzeSaasIntake } from '../utils/saas-core/analyzer';
 import { createSaasQaReport } from '../utils/saas-core/qa';
 import {
   attachJobToProject,
-  completeConversionJob,
   createConversionJob,
   createSaasProject,
   createStorageSaasProjectRepository,
-  startConversionJob,
 } from '../utils/saas-core/orchestrator';
+import { createSaasIntakeFromSiteFiles } from '../utils/saas-core/intake';
+import { createMemorySaasArtifactStore } from '../utils/saas-core/artifactStore';
+import { runLocalSaasConversionJob } from '../utils/saas-core/jobRunner';
 import type { SaasConversionJob, SaasIntakeSource, SaasOutputLane, SaasProject, SaasQaReport } from '../utils/saas-core/types';
 
 const SAMPLE_INTAKE: SaasIntakeSource = {
@@ -65,31 +66,27 @@ const buildReport = (intake: SaasIntakeSource): SaasQaReport => {
   });
 };
 
-const runSampleJob = (): SaasProject => {
+const runPipelineForIntake = async (intake: SaasIntakeSource, projectName: string): Promise<SaasProject> => {
   const nextId = makeIdFactory();
   const clock = makeClock();
   const project = createSaasProject({
-    name: 'Sample SaaS Conversion',
-    intake: SAMPLE_INTAKE,
+    name: projectName,
+    intake,
     selectedLanes: LANES,
     nextId,
     clock,
   });
   const queued = createConversionJob(project, { selectedLanes: LANES, nextId, clock });
-  const running = startConversionJob(queued, clock);
-  const completed = completeConversionJob(running, {
+
+  const result = await runLocalSaasConversionJob({
+    project,
+    job: queued,
+    artifactStore: createMemorySaasArtifactStore(),
+    nextId,
     clock,
-    report: buildReport(SAMPLE_INTAKE),
-    artifact: {
-      id: nextId(),
-      kind: 'wordpress-package',
-      label: 'Downloadable WordPress package',
-      fileName: 'sample-wordpress-package.zip',
-      bytes: 2400000,
-      sha256: 'local-preview-artifact',
-    },
   });
-  return attachJobToProject(project, completed);
+
+  return result.project;
 };
 
 const createRepository = () => {
@@ -100,15 +97,52 @@ const createRepository = () => {
 const SaasCorePanel: React.FC = () => {
   const repository = useMemo(createRepository, []);
   const [project, setProject] = useState<SaasProject | null>(() => repository?.listProjects()[0] || null);
+  const [isRunning, setIsRunning] = useState(false);
 
   const analysis = project?.analysis || analyzeSaasIntake(SAMPLE_INTAKE);
   const latestJob: SaasConversionJob | undefined = project?.jobs[0];
   const report = latestJob?.report || buildReport(SAMPLE_INTAKE);
 
-  const handleRun = () => {
-    const nextProject = runSampleJob();
+  const saveProject = (nextProject: SaasProject) => {
     repository?.saveProject(nextProject);
     setProject(nextProject);
+  };
+
+  const handleRun = async () => {
+    setIsRunning(true);
+    try {
+      saveProject(await runPipelineForIntake(SAMPLE_INTAKE, 'Sample SaaS Conversion'));
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  const handleFileIntake = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    if (files.length === 0) return;
+
+    setIsRunning(true);
+    try {
+      const siteFiles = await Promise.all(files.map(async (file) => {
+        const path = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
+        const isText = /\.(html?|css|js|mjs|json|txt|svg)$/i.test(file.name);
+        return {
+          path,
+          content: isText ? await file.text() : undefined,
+          bytes: isText ? undefined : new Uint8Array(await file.arrayBuffer()),
+        };
+      }));
+      const intake = createSaasIntakeFromSiteFiles({
+        id: `upload-${Date.now().toString(36)}`,
+        label: files.length === 1 ? files[0].name : `${files.length} uploaded files`,
+        sourceSummary: 'Browser-selected local site files',
+        files: siteFiles,
+      });
+      saveProject(await runPipelineForIntake(intake, intake.label));
+    } finally {
+      setIsRunning(false);
+      event.target.value = '';
+    }
   };
 
   return (
@@ -133,12 +167,23 @@ const SaasCorePanel: React.FC = () => {
             <button
               type="button"
               onClick={handleRun}
+              disabled={isRunning}
               className="inline-flex items-center justify-center gap-2 rounded-2xl bg-cyan-300 px-5 py-3 text-sm font-black text-slate-950 shadow-lg shadow-cyan-950/40 hover:bg-cyan-200 transition-colors"
             >
               <Play className="w-4 h-4" />
-              Run Sample SaaS Job
+              {isRunning ? 'Running SaaS Job...' : 'Run Sample SaaS Job'}
             </button>
           </div>
+          <label className="mt-5 inline-flex cursor-pointer items-center justify-center rounded-2xl border border-slate-700 bg-slate-950/60 px-4 py-3 text-sm font-bold text-slate-200 hover:border-cyan-400/50 hover:text-cyan-100 transition-colors">
+            Upload Site Files and Run Pipeline
+            <input
+              type="file"
+              multiple
+              className="sr-only"
+              onChange={handleFileIntake}
+              accept=".html,.htm,.css,.js,.mjs,.json,.txt,.svg,.png,.jpg,.jpeg,.webp,.gif,.woff,.woff2"
+            />
+          </label>
         </div>
 
         <div className="grid lg:grid-cols-3 gap-0">
@@ -203,6 +248,7 @@ const SaasCorePanel: React.FC = () => {
               <div className="mt-5 space-y-3">
                 <div className="rounded-2xl bg-slate-950/70 border border-slate-800 p-4">
                   <p className="text-xs uppercase tracking-[0.2em] text-slate-500 font-bold">Latest job</p>
+                  <p className="mt-2 text-sm font-bold text-cyan-100">{project?.name}</p>
                   <p className="mt-2 text-lg font-black text-white">{latestJob.status}</p>
                   <p className="mt-1 text-xs text-slate-500">{latestJob.id}</p>
                 </div>

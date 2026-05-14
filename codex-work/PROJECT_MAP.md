@@ -38,6 +38,7 @@ SaaS Core V1 adds a local-first product foundation around the converter:
 - Artifact manifest tracking.
 - Browser-storage-compatible project persistence.
 - Dashboard panel mounted above the existing converter.
+- V2 local pipeline slice for uploaded/static site files, artifact storage, and reusable local job execution.
 
 This is not full hosted SaaS yet. It intentionally excludes auth, billing, remote queues, object storage, and hosted WordPress sandbox provisioning.
 

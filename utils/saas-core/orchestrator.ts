@@ -72,15 +72,16 @@ export const startConversionJob = (job: SaasConversionJob, clock: () => string):
 
 export const completeConversionJob = (
   job: SaasConversionJob,
-  input: { report: SaasQaReport; artifact: SaasArtifactManifestEntry; clock: () => string }
+  input: { report: SaasQaReport; artifact?: SaasArtifactManifestEntry; artifacts?: SaasArtifactManifestEntry[]; clock: () => string }
 ): SaasConversionJob => {
   const at = input.clock();
+  const artifacts = input.artifacts || (input.artifact ? [input.artifact] : []);
   return {
     ...job,
     status: 'completed',
     updatedAt: at,
     report: input.report,
-    artifacts: [...job.artifacts, input.artifact],
+    artifacts: [...job.artifacts, ...artifacts],
     events: [...job.events, event('job-completed', at, `Conversion completed with ${input.report.summary.releaseStatus} release status.`)],
   };
 };

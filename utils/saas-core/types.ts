@@ -82,6 +82,17 @@ export interface SaasArtifactManifestEntry {
   sha256?: string;
 }
 
+export interface SaasStoredArtifact extends SaasArtifactManifestEntry {
+  content: Uint8Array;
+  createdAt: string;
+}
+
+export interface SaasArtifactStore {
+  saveArtifact(input: Omit<SaasStoredArtifact, 'bytes' | 'sha256'> & { sha256?: string }): SaasArtifactManifestEntry;
+  readArtifact(id: string): SaasStoredArtifact | undefined;
+  listArtifacts(): SaasStoredArtifact[];
+}
+
 export interface SaasJobEvent {
   type: 'job-created' | 'job-started' | 'job-completed' | 'job-failed';
   at: string;
