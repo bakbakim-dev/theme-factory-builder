@@ -126,7 +126,19 @@ const createId = (ctx: ElementorBuildContext, hint: string): string => {
   return hashString(`${ctx.idSeed}:${ctx.sequence}:${hint}`);
 };
 
-const stripDangerousMarkup = (html: string): string => html
+const replaceEmojiImagesWithUnicode = (html: string): string => html.replace(/<img\b[^>]*>/gi, (match) => {
+  const isEmojiClass = /\bclass=["'][^"']*\bemoji\b[^"']*["']/i.test(match) || /\bclass=[^\s>]*\bemoji\b/i.test(match);
+  const isEmojiSrc = /\bsrc=["'][^"']*s\.w\.org\/images\/core\/emoji[^"']*["']/i.test(match) || /\bsrc=[^\s>]*s\.w\.org\/images\/core\/emoji/i.test(match);
+
+  if (!isEmojiClass && !isEmojiSrc) {
+    return match;
+  }
+
+  const altMatch = /\balt=["']([^"']*)["']/i.exec(match) || /\balt=([^\s>]+)/i.exec(match);
+  return altMatch?.[1] || match;
+});
+
+const stripDangerousMarkup = (html: string): string => replaceEmojiImagesWithUnicode(html)
   .replace(/<script\b[\s\S]*?<\/script>/gi, '')
   .replace(/<style\b[\s\S]*?<\/style>/gi, '')
   .replace(/<noscript\b[\s\S]*?<\/noscript>/gi, '');

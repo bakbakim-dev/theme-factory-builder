@@ -458,3 +458,16 @@
   - Added `npm run test:operator-console-redesign`.
   - Updated older regressions to target the new Mission Control label and scoped search input.
 - Risk: This is a substantial visual shell upgrade, but real screenshot images, live logs, provider data, support notes, and editability drilldowns still need provider-backed data sources.
+
+## Antigravity 2.0 Sync - Elementor Emoji Normalization - 2026-06-04
+
+- Changed files: `utils/elementorConverter.ts`, `components/AdminBackendPanel.tsx`, `scripts/emoji-normalization-test.mjs`, `start-theme-factory-ai-isolated.bat`, `package.json`, `codex-work/*`
+- Reason: Bring useful local Antigravity 2.0 workspace changes into the Codex workspace without replacing Codex's fuller project state.
+- Issue IDs fixed: AUD-EL-EMOJI-001
+- Changes:
+  - Added emoji-image normalization in the Elementor converter so WordPress fallback emoji `<img class="emoji" alt="...">` tags become inline Unicode text before conversion.
+  - Preserved regular non-emoji images as Elementor image widgets.
+  - Added `npm run test:emoji-normalization`.
+  - Added the isolated startup batch file for separate builder/admin/UI ports.
+  - Added `VITE_ADMIN_BACKEND_URL` support to the Admin Console so isolated admin backends can be targeted without source edits.
+- Risk: `.env.isolated` was copied locally for workspace parity but intentionally left uncommitted as an environment file. The isolated batch script still depends on the local builder path existing at `C:\Users\Marketplace\Documents\antigravity\whipify 3.0\theme-factory-server`.

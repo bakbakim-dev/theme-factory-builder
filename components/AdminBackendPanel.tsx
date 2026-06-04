@@ -69,7 +69,7 @@ type AdminConsolePage =
   | 'Support'
   | 'API Keys';
 
-const ADMIN_BACKEND_URL = 'http://127.0.0.1:8787';
+const ADMIN_BACKEND_URL = (import.meta as any).env?.VITE_ADMIN_BACKEND_URL || 'http://127.0.0.1:8787';
 const ADMIN_BACKEND_TOKEN_KEY = 'whipify-admin-backend-token';
 
 const emptyStats: AdminStats = {
@@ -217,8 +217,8 @@ const AdminBackendPanel: React.FC = () => {
         authRequired: Boolean(healthJson.authRequired),
         token,
         message: healthJson.authRequired
-          ? 'Authenticated admin console connected on 127.0.0.1:8787.'
-          : 'Admin console connected on 127.0.0.1:8787.',
+          ? `Authenticated admin console connected on ${ADMIN_BACKEND_URL.replace(/^https?:\/\//, '')}.`
+          : `Admin console connected on ${ADMIN_BACKEND_URL.replace(/^https?:\/\//, '')}.`,
         stats: statsJson.stats || emptyStats,
         readiness: readinessJson?.readiness || null,
         projects: projectsJson?.projects || [],

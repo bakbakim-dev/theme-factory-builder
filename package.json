@@ -25,6 +25,7 @@
     "test:elementor-export": "node scripts/elementor-export-regression.mjs",
     "test:elementor-visual-parity": "node scripts/elementor-visual-parity-regression.mjs",
     "test:elementor-output-doctor": "node scripts/elementor-output-doctor-regression.mjs",
+    "test:emoji-normalization": "node scripts/emoji-normalization-test.mjs",
     "doctor:elementor": "node scripts/elementor-output-doctor.mjs",
     "test:block-bindings": "node scripts/block-bindings-regression.mjs",
     "test:site-content-binding-application": "node scripts/site-content-binding-application-regression.mjs",

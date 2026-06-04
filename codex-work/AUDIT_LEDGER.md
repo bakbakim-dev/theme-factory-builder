@@ -599,3 +599,17 @@
 - status: fixed
 - related tests: `npm run test:admin-ops-ui-v2`; `npm run test:admin-console-v1`; `npm run build`; backend and converter guardrails.
 - fix evidence: Admin Ops UI V2 regression verifies Command Center, Run Detail, Live Logs, Visual QA, Editability, and Support Timeline pages plus key actions and status text.
+
+## Antigravity 2.0 Sync - 2026-06-04
+
+- ID: AUD-EL-EMOJI-001
+- severity: medium
+- lane/scope: Elementor / visual fidelity / text normalization
+- file: `utils/elementorConverter.ts`; `scripts/emoji-normalization-test.mjs`
+- line/range if available: n/a
+- finding: WordPress fallback emoji images can appear in captured source HTML as `<img class="emoji" alt="...">`. Without pre-normalization, those images may be treated as normal images instead of inline text, causing oversized/incorrect Elementor output.
+- why it matters: Emojis embedded in pricing notes, CTAs, badges, and microcopy should inherit text flow, size, and typography rather than becoming standalone image widgets.
+- recommended fix: Normalize emoji image tags to their `alt` Unicode characters before dangerous markup stripping and DOM-to-Elementor conversion, while preserving regular images.
+- status: fixed
+- related tests: `npm run test:emoji-normalization`; `npm run test:elementor-export`; `npm run test:elementor-output-doctor`; `npm run build`.
+- fix evidence: Regression verifies fallback emoji images normalize to text and non-emoji images remain image widgets.

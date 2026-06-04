@@ -727,3 +727,33 @@ Status values: `reviewed`, `partially reviewed`, `needs second pass`, `fixed`, `
 - review status: fixed
 - notes: Verifies the redesigned Mission Control shell, sidebar group labels, command search, KPI strip, right rail cards, and navigation into Visual QA/Live Logs.
 - related tests: `npm run test:operator-console-redesign`.
+
+## Antigravity 2.0 Sync - Elementor Emoji Normalization - 2026-06-04
+
+- path: utils/elementorConverter.ts
+- category: source
+- lane/scope: Elementor / converter
+- review status: fixed
+- notes: Added emoji fallback image normalization before markup stripping so emoji images become inline Unicode text while regular images remain image widgets.
+- related tests: `npm run test:emoji-normalization`; `npm run test:elementor-export`; `npm run test:elementor-output-doctor`.
+
+- path: scripts/emoji-normalization-test.mjs
+- category: test
+- lane/scope: Elementor / regression
+- review status: fixed
+- notes: Verifies inline emoji text, WordPress fallback emoji images, alternate attribute ordering, standalone emoji fallback images, and regular image preservation.
+- related tests: `npm run test:emoji-normalization`.
+
+- path: start-theme-factory-ai-isolated.bat
+- category: script
+- lane/scope: tooling / isolated local startup
+- review status: fixed
+- notes: Starts builder, admin backend, and UI on isolated ports and writes `.env.isolated` for local Vite mode.
+- related tests: not executed; path depends on local builder server location.
+
+- path: components/AdminBackendPanel.tsx
+- category: source
+- lane/scope: SaaS / admin UI / isolated backend
+- review status: fixed
+- notes: Admin backend URL can now be configured via `VITE_ADMIN_BACKEND_URL`, preserving default `127.0.0.1:8787`.
+- related tests: `npm run build`.
